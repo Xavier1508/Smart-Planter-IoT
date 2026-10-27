@@ -8,10 +8,18 @@ import 'plant_state.dart';
 import 'plant_telemetry.dart';
 
 class Dashboard extends StatefulWidget {
-  const Dashboard({super.key, required this.render3d, this.telemetry});
+  const Dashboard({
+    super.key,
+    required this.render3d,
+    this.telemetry,
+    this.cloudSettings,
+    this.cloudSetupNotice,
+  });
 
   final bool render3d;
   final Stream<PlantTelemetry>? telemetry;
+  final Widget? cloudSettings;
+  final String? cloudSetupNotice;
 
   @override
   State<Dashboard> createState() => _DashboardState();
@@ -26,6 +34,7 @@ class _DashboardState extends State<Dashboard> {
   var _liveState = const PlantState.waiting();
   var _sourceNotice = 'Perangkat dan cloud belum terhubung.';
   DateTime? _lastRecordedAt;
+  int? _lastSequence;
   StreamSubscription<PlantTelemetry>? _subscription;
   Timer? _expiry;
 
@@ -47,6 +56,7 @@ class _DashboardState extends State<Dashboard> {
     _subscription = null;
     _expiry?.cancel();
     _lastRecordedAt = null;
+    _lastSequence = null;
     _liveState = const PlantState.waiting();
     final source = widget.telemetry;
     _sourceNotice = source == null
@@ -73,10 +83,19 @@ class _DashboardState extends State<Dashboard> {
     }
     final previous = _lastRecordedAt;
     if (previous != null && reading.recordedAt.isBefore(previous)) return;
+    if (previous != null &&
+        reading.recordedAt.isAtSameMomentAs(previous) &&
+        _lastSequence != null &&
+        (reading.sequence == null ||
+            reading.sequence! < _lastSequence! ||
+            (reading.sequence == _lastSequence && _liveState.isLive))) {
+      return;
+    }
     final next = PlantState.fromTelemetry(reading);
     if (!next.hasSensorData) {
       _expiry?.cancel();
       _lastRecordedAt = reading.recordedAt;
+      _lastSequence = reading.sequence;
       setState(() {
         _liveState = const PlantState.waiting();
         _sourceNotice = 'Menunggu pembacaan sensor yang valid.';
@@ -86,6 +105,7 @@ class _DashboardState extends State<Dashboard> {
 
     _expiry?.cancel();
     _lastRecordedAt = reading.recordedAt;
+    _lastSequence = reading.sequence;
     setState(() {
       _liveState = next;
       _sourceNotice = 'Pembacaan sensor terbaru.';
@@ -141,7 +161,8 @@ class _DashboardState extends State<Dashboard> {
           _ => _SettingsPage(
             demo: _demo,
             onDemoChanged: () => setState(() => _demo = !_demo),
-            sourceNotice: _sourceNotice,
+            sourceNotice: widget.cloudSetupNotice ?? _sourceNotice,
+            cloudSettings: widget.cloudSettings,
           ),
         },
       ),
@@ -798,10 +819,12 @@ class _SettingsPage extends StatelessWidget {
     required this.demo,
     required this.onDemoChanged,
     required this.sourceNotice,
+    required this.cloudSettings,
   });
   final bool demo;
   final VoidCallback onDemoChanged;
   final String sourceNotice;
+  final Widget? cloudSettings;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -840,11 +863,12 @@ class _SettingsPage extends StatelessWidget {
         onChanged: (_) => onDemoChanged(),
       ),
       const Divider(height: 32),
-      _SettingLine(
-        icon: Icons.cloud_outlined,
-        title: 'Koneksi cloud',
-        body: sourceNotice,
-      ),
+      cloudSettings ??
+          _SettingLine(
+            icon: Icons.cloud_outlined,
+            title: 'Koneksi cloud',
+            body: sourceNotice,
+          ),
       const _SettingLine(
         icon: Icons.sensors_outlined,
         title: 'Sensor tambahan',

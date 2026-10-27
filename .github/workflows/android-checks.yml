@@ -102,6 +102,7 @@ jobs:
           MOSS_KEYSTORE_PASSWORD: ${{ secrets.MOSS_KEYSTORE_PASSWORD }}
           MOSS_KEY_ALIAS: ${{ secrets.MOSS_KEY_ALIAS }}
           MOSS_KEY_PASSWORD: ${{ secrets.MOSS_KEY_PASSWORD }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -111,6 +112,12 @@ jobs:
               exit 1
             fi
           done
+          if [[ -z "$SUPABASE_PUBLISHABLE_KEY" ]]; then
+            echo '::warning::Supabase publishable key is not configured; this build will remain in demo/offline mode.'
+          elif [[ ! "$SUPABASE_PUBLISHABLE_KEY" =~ ^sb_publishable_[A-Za-z0-9_-]+$ ]]; then
+            echo '::error::Only a Supabase publishable key may be included in the APK.'
+            exit 1
+          fi
           config="android/app/google-services.json"
           export MOSS_KEYSTORE_FILE="$RUNNER_TEMP/moss-release.jks"
           if [[ -e "$config" || -e "$MOSS_KEYSTORE_FILE" ]]; then
@@ -121,7 +128,9 @@ jobs:
           trap 'rm -f "$config" "$MOSS_KEYSTORE_FILE"' EXIT
           printf '%s' "$FIREBASE_ANDROID_CONFIG" > "$config"
           printf '%s' "$MOSS_KEYSTORE_BASE64" | base64 --decode > "$MOSS_KEYSTORE_FILE"
-          flutter build apk --release --flavor beta --no-pub --build-number="$GITHUB_RUN_NUMBER"
+          flutter build apk --release --flavor beta --no-pub \
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define="SUPABASE_PUBLISHABLE_KEY=$SUPABASE_PUBLISHABLE_KEY"
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:

@@ -1,4 +1,4 @@
-/// A sensor sample from a future device data source.
+/// A sensor sample supplied by the device data source.
 ///
 /// [recordedAt] must be a trusted server timestamp, not the ESP32 clock. The
 /// additional water-level and MQ135 sensors are deliberately not represented
@@ -6,6 +6,7 @@
 class PlantTelemetry {
   const PlantTelemetry({
     required this.recordedAt,
+    this.sequence,
     this.soilPercent,
     this.temperatureC,
     this.humidityPercent,
@@ -13,6 +14,9 @@ class PlantTelemetry {
   });
 
   final DateTime recordedAt;
+
+  /// Database row ID, used to break ties between equal server timestamps.
+  final int? sequence;
   final int? soilPercent;
   final double? temperatureC;
   final int? humidityPercent;

@@ -63,6 +63,24 @@ void main() {
     expect(find.byIcon(Icons.history_rounded), findsOneWidget);
   });
 
+  testWidgets('unconfigured cloud is clearly reported in settings', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MossApp(
+        render3d: false,
+        cloudSetupNotice: 'Aplikasi belum dikonfigurasi untuk cloud.',
+      ),
+    );
+    await tester.tap(find.text('Pengaturan'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Aplikasi belum dikonfigurasi untuk cloud.'),
+      findsOneWidget,
+    );
+    expect(find.text('Masuk'), findsNothing);
+  });
+
   testWidgets('dashboard remains usable at a narrow Android width', (
     tester,
   ) async {
@@ -120,6 +138,65 @@ void main() {
     );
     expect(find.text('OFFLINE'), findsOneWidget);
     expect(find.text('Koneksi data terputus.'), findsOneWidget);
+
+    final closing = readings.close();
+    await tester.pump();
+    await closing;
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('equal timestamps use row IDs and recover after disconnect', (
+    tester,
+  ) async {
+    final readings = StreamController<PlantTelemetry>();
+    await tester.pumpWidget(
+      MossApp(render3d: false, telemetry: readings.stream),
+    );
+    await tester.tap(find.text('Tutup'));
+    await tester.pump();
+
+    final now = DateTime.now();
+    void emit(int? sequence, int soilPercent) {
+      readings.add(
+        PlantTelemetry(
+          recordedAt: now,
+          sequence: sequence,
+          soilPercent: soilPercent,
+        ),
+      );
+    }
+
+    emit(42, 42);
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('Kelembapan tanah'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('42%'), findsOneWidget);
+
+    emit(41, 11);
+    emit(null, 12);
+    emit(42, 13);
+    await tester.pump();
+    expect(find.text('42%'), findsOneWidget);
+    expect(find.text('11%'), findsNothing);
+    expect(find.text('12%'), findsNothing);
+    expect(find.text('13%'), findsNothing);
+
+    emit(43, 63);
+    await tester.pump();
+    expect(find.text('63%'), findsOneWidget);
+
+    readings.addError(StateError('connection lost'));
+    await tester.pump();
+    expect(find.text('63%'), findsNothing);
+    emit(42, 42);
+    await tester.pump();
+    expect(find.text('42%'), findsNothing);
+    emit(43, 63);
+    await tester.pump();
+    expect(find.text('63%'), findsOneWidget);
 
     final closing = readings.close();
     await tester.pump();

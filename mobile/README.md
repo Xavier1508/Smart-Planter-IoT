@@ -9,13 +9,13 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 - Mode tanpa simulasi menampilkan nilai kosong, bukan angka sensor palsu.
 - Informasi sensor air dan MQ135 disiapkan sebagai belum terpasang.
 - Kontrol pompa dan lampu belum aktif; riwayat tidak direkayasa.
-- Antarmuka sudah dapat menerima aliran data sensor saat sumber data disediakan;
-  pembacaan tidak valid, kedaluwarsa, atau terputus tidak ditampilkan sebagai
-  data aktif. Integrasi sumber cloud dan ESP32 masih harus dibuat.
+- Fondasi Supabase mencakup tabel perangkat dan pembacaan privat, masuk akun,
+  serta pembaca Realtime di aplikasi. Pembacaan tidak valid, kedaluwarsa, atau
+  terputus tidak ditampilkan sebagai data aktif.
 
 ## Belum tersedia
 
-Koneksi Supabase, Firebase push notification, pembacaan ESP32, kontrol aktuator, penyimpanan offline, dan model machine learning belum diimplementasikan. Jalur Firebase App Distribution disiapkan khusus untuk build tester, tetapi belum terhubung ke project Firebase atau diuji secara menyeluruh. Ekspresi demo menggunakan aturan sederhana, bukan prediksi emosi ilmiah. Model 3D saat ini adalah placeholder geometris orisinal dan belum diuji di berbagai perangkat Android.
+Pasangan perangkat, pengiriman data ESP32 ke Supabase, Firebase push notification, kontrol aktuator, penyimpanan offline, dan model machine learning belum diimplementasikan. Tabel cloud masih kosong dan alur masuk/Realtime belum diuji menyeluruh pada perangkat. Jalur Firebase App Distribution belum diuji secara menyeluruh. Ekspresi demo menggunakan aturan sederhana, bukan prediksi emosi ilmiah. Model 3D saat ini adalah placeholder geometris orisinal dan belum diuji di berbagai perangkat Android.
 
 ## Jalankan
 
@@ -29,6 +29,43 @@ flutter run
 ```
 
 Flutter GPU diaktifkan di manifest Android untuk renderer 3D. Uji kinerja dan kompatibilitas pada perangkat fisik sebelum presentasi. Nilai dalam mode simulasi tidak digunakan sebagai data pelatihan.
+
+## Cloud dan keamanan data
+
+Migrasi `supabase/migrations/20261027164712_planter_foundation.sql` membuat
+`planter_devices` dan `planter_readings` tanpa data contoh. RLS hanya mengizinkan
+akun yang masuk membaca perangkat dan pembacaannya sendiri. Belum ada izin tulis
+untuk aplikasi atau perangkat: metode pairing dan kredensial khusus ESP32 harus
+dirancang sebelum pengiriman diaktifkan. Jangan memasukkan service-role key
+atau password Wi-Fi ke dalam aplikasi atau repositori.
+
+Aplikasi memerlukan **publishable key** Supabase melalui compile-time define
+`SUPABASE_PUBLISHABLE_KEY` untuk menampilkan opsi akun dan mengakses cloud.
+Di GitHub Actions define ini berasal dari repository variable dengan nama yang
+sama. Kunci publishable memang ikut berada di APK dan bukan pengganti RLS;
+**jangan gunakan secret/service-role key**. Jika variable belum diisi, aplikasi
+tetap berjalan dalam mode simulasi/offline. Sesi akun saat ini hanya disimpan
+dalam memori dan pengguna perlu masuk kembali setelah aplikasi ditutup.
+
+Realtime sudah disiapkan untuk `planter_readings`, tetapi pengujian dengan
+akun pengguna, perangkat fisik, dan data asli masih diperlukan. Sebelum mulai
+merekam data otomatis, tentukan interval kirim dan retensi agar kuota gratis
+database tidak habis secara tidak sengaja.
+
+### Rancangan lanjutan (belum aktif)
+
+- Pairing perlu membuktikan akses fisik ke perangkat dan dilakukan oleh akun
+  yang sudah masuk. Kode pairing harus sekali pakai, berumur pendek, serta
+  tidak disimpan dalam source code atau Git.
+- Setiap ESP32 memerlukan kredensial sendiri yang dapat dicabut; backend harus
+  membatasi penulisan pada perangkat itu, memvalidasi nilai, dan membatasi
+  frekuensi permintaan. Kunci service-role tidak digunakan di ESP32 maupun APK.
+- Telemetri dikirim melalui TLS ke layanan cloud, dengan timestamp penerimaan
+  dari server. Gangguan jaringan tidak boleh menghentikan otomasi lokal atau
+  mengubah nilai simulasi menjadi data sensor.
+- Interval, batas penyimpanan, retensi otomatis, dan cara provisioning serta
+  penyimpanan kredensial pada ESP32 masih harus ditentukan dan diuji. Jangan
+  mengaktifkan ingestion sebelum mekanisme tersebut siap dan sesuai kuota.
 
 ## Distribusi privat (belum aktif)
 
