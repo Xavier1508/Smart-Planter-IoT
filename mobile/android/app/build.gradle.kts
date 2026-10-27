@@ -2,7 +2,26 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services") apply false
 }
+
+// Only the private tester variant needs Firebase. A production build can be
+// built without a Firebase configuration or the App Distribution SDK.
+val firebaseConfig = file("google-services.json")
+if (firebaseConfig.isFile) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
+val releaseStoreFile = System.getenv("MOSS_KEYSTORE_FILE")
+val releaseStorePassword = System.getenv("MOSS_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("MOSS_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("MOSS_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 
 android {
     namespace = "io.github.xavier1508.smart_planter"
@@ -29,13 +48,61 @@ android {
         versionName = flutter.versionName
     }
 
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("production") { dimension = "distribution" }
+        create("beta") { dimension = "distribution" }
+    }
+
+    signingConfigs {
+        create("mossRelease") {
+            if (hasReleaseSigning) {
+                storeFile = file(releaseStoreFile!!)
+                storeType = "PKCS12"
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
         }
     }
+
+    buildTypes {
+        release {
+            // Never sign a distributable APK with an ephemeral debug key.
+            signingConfig = signingConfigs.getByName("mossRelease")
+        }
+    }
+}
+
+val verifyReleaseSigning = tasks.register("verifyMossReleaseSigning") {
+    doLast {
+        check(hasReleaseSigning) {
+            "A stable release keystore and all MOSS_KEYSTORE_* / MOSS_KEY_* environment variables are required."
+        }
+        check(file(releaseStoreFile!!).isFile) { "Release keystore file does not exist." }
+    }
+}
+
+val verifyTesterFirebase = tasks.register("verifyMossTesterFirebase") {
+    doLast {
+        check(firebaseConfig.isFile) {
+            "The tester variant requires android/app/google-services.json for the registered Android app."
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.startsWith("pre") && name.endsWith("ReleaseBuild")) {
+        dependsOn(verifyReleaseSigning)
+    }
+    if (name.startsWith("preBeta") && name.endsWith("Build")) {
+        dependsOn(verifyTesterFirebase)
+    }
+}
+
+dependencies {
+    // The self-update SDK must never be included in a Google Play build.
+    add("betaImplementation", "com.google.firebase:firebase-appdistribution:16.0.0-beta21")
 }
 
 kotlin {

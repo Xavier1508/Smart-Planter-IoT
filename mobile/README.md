@@ -12,7 +12,7 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 
 ## Belum tersedia
 
-Koneksi Supabase, Firebase App Distribution dan push notification, pembacaan ESP32, kontrol aktuator, penyimpanan offline, dan model machine learning belum diimplementasikan. Workflow GitHub saat ini hanya menjalankan pemeriksaan kode dan tes, belum mendistribusikan APK. Ekspresi demo menggunakan aturan sederhana, bukan prediksi emosi ilmiah. Model 3D saat ini adalah placeholder geometris orisinal dan belum diuji di berbagai perangkat Android.
+Koneksi Supabase, Firebase push notification, pembacaan ESP32, kontrol aktuator, penyimpanan offline, dan model machine learning belum diimplementasikan. Jalur Firebase App Distribution disiapkan khusus untuk build tester, tetapi belum terhubung ke project Firebase atau diuji secara menyeluruh. Ekspresi demo menggunakan aturan sederhana, bukan prediksi emosi ilmiah. Model 3D saat ini adalah placeholder geometris orisinal dan belum diuji di berbagai perangkat Android.
 
 ## Jalankan
 
@@ -26,3 +26,51 @@ flutter run
 ```
 
 Flutter GPU diaktifkan di manifest Android untuk renderer 3D. Uji kinerja dan kompatibilitas pada perangkat fisik sebelum presentasi. Nilai dalam mode simulasi tidak digunakan sebagai data pelatihan.
+
+## Distribusi privat (belum aktif)
+
+Package Android: `io.github.xavier1508.smart_planter`. Varian default `production`
+tidak berisi SDK self-update App Distribution dan tidak memerlukan konfigurasi
+Firebase. Varian `beta` dipakai **hanya** untuk distribusi privat; jangan
+unggah varian itu ke Google Play. SDK App Distribution Android masih berstatus
+beta. Update APK tetap memerlukan persetujuan pemasangan dari pengguna.
+
+Sebelum distribusi dapat digunakan:
+
+1. Periksa kuota dan anggaran [GitHub Actions](https://docs.github.com/billing/managing-billing-for-github-actions/about-billing-for-github-actions).
+   Repo privat memakai jatah menit gratis sesuai paket akun dan pemakaian
+   berlebih dapat ditagihkan. Atur anggaran sesuai kebutuhan Anda dan pilih
+   penghentian saat batas tercapai sebelum mengaktifkan workflow. Pemeriksaan
+   dan distribusi dinonaktifkan secara default sampai variable
+   `MOSS_CI_ENABLED` diatur ke `true`.
+2. Daftarkan package Android di Firebase, aktifkan App Distribution dan
+   [Firebase App Testers API](https://console.cloud.google.com/apis/library/firebaseapptesters.googleapis.com).
+   Buat grup tester dan tambahkan email penguji. Jika tester perlu undangan,
+   pengguna harus menerimanya.
+3. Siapkan satu keystore release yang tetap dan simpan cadangannya dengan aman.
+   Jangan commit keystore, password, token, atau service-account key. Kehilangan
+   keystore berarti APK baru tidak dapat memperbarui APK yang lama secara langsung.
+   Password yang disimpan dengan Windows DPAPI terikat pada akun Windows yang
+   membuatnya; file `.dpapi` saja bukan cadangan yang dapat dipindahkan ke PC lain.
+4. Konfigurasikan [Workload Identity Federation untuk GitHub Actions](https://github.com/google-github-actions/auth#setting-up-workload-identity-federation)
+   dengan pembatasan ke repo `Xavier1508/Smart-Planter-IoT` dan branch `main`.
+   Berikan service account hanya akses App Distribution yang diperlukan.
+5. Di **GitHub → Settings → Secrets and variables → Actions**, buat secrets:
+   `FIREBASE_ANDROID_CONFIG` (isi `google-services.json`),
+   `MOSS_KEYSTORE_BASE64`, `MOSS_KEYSTORE_PASSWORD`, `MOSS_KEY_ALIAS`, dan
+   `MOSS_KEY_PASSWORD`. Jangan kirim nilainya ke chat.
+6. Buat repository variables `FIREBASE_APP_ID`, `FIREBASE_TESTER_GROUP` (alias
+   grup), `GCP_WORKLOAD_IDENTITY_PROVIDER`, dan `GCP_DISTRIBUTION_SERVICE_ACCOUNT`.
+   Setelah semuanya siap, set `FIREBASE_DISTRIBUTION_ENABLED` ke `true`.
+
+Workflow menjalankan format, analisis, dan tes; distribusi hanya berjalan untuk
+`main` setelah tes sukses dan variabel aktivasi diisi. Setiap run baru memakai
+nomor run GitHub sebagai `versionCode`. Jangan memakai **Re-run jobs** untuk
+mendistribusikan ulang run lama; jalankan **Run workflow** atau push commit baru
+agar nomor versi bertambah. Build tester mencari update saat aplikasi dibuka;
+tidak ada instalasi diam-diam, dan App Distribution bukan notifikasi sensor.
+
+Untuk build tester lokal, file `android/app/google-services.json` yang sesuai
+harus disediakan secara lokal dan diabaikan Git. Build release juga memerlukan
+environment variables `MOSS_KEYSTORE_FILE`, `MOSS_KEYSTORE_PASSWORD`,
+`MOSS_KEY_ALIAS`, dan `MOSS_KEY_PASSWORD`; tidak ada fallback ke debug signing.

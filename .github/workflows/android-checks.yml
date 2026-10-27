@@ -16,6 +16,7 @@ concurrency:
 jobs:
   verify:
     name: Analyze and test Flutter
+    if: ${{ vars.MOSS_CI_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -24,6 +25,8 @@ jobs:
     steps:
       - name: Check out project
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - name: Set up Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
@@ -42,3 +45,100 @@ jobs:
         run: flutter analyze --no-pub
       - name: Test
         run: flutter test --no-pub --reporter expanded
+
+  distribute:
+    name: Distribute private tester APK
+    needs: verify
+    if: >-
+      ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == 'refs/heads/main' && github.run_attempt == '1' &&
+          vars.FIREBASE_DISTRIBUTION_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out project
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.8'
+          channel: stable
+      - name: Resolve locked dependencies
+        working-directory: mobile
+        run: flutter pub get --enforce-lockfile
+      - name: Build signed tester APK
+        working-directory: mobile
+        env:
+          FIREBASE_ANDROID_CONFIG: ${{ secrets.FIREBASE_ANDROID_CONFIG }}
+          MOSS_KEYSTORE_BASE64: ${{ secrets.MOSS_KEYSTORE_BASE64 }}
+          MOSS_KEYSTORE_PASSWORD: ${{ secrets.MOSS_KEYSTORE_PASSWORD }}
+          MOSS_KEY_ALIAS: ${{ secrets.MOSS_KEY_ALIAS }}
+          MOSS_KEY_PASSWORD: ${{ secrets.MOSS_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in FIREBASE_ANDROID_CONFIG MOSS_KEYSTORE_BASE64 MOSS_KEYSTORE_PASSWORD MOSS_KEY_ALIAS MOSS_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required secret $name is not configured."
+              exit 1
+            fi
+          done
+          config="android/app/google-services.json"
+          export MOSS_KEYSTORE_FILE="$RUNNER_TEMP/moss-release.jks"
+          if [[ -e "$config" || -e "$MOSS_KEYSTORE_FILE" ]]; then
+            echo '::error::Refusing to overwrite an existing configuration or keystore.'
+            exit 1
+          fi
+          umask 077
+          trap 'rm -f "$config" "$MOSS_KEYSTORE_FILE"' EXIT
+          printf '%s' "$FIREBASE_ANDROID_CONFIG" > "$config"
+          printf '%s' "$MOSS_KEYSTORE_BASE64" | base64 --decode > "$MOSS_KEYSTORE_FILE"
+          flutter build apk --release --flavor beta --no-pub --build-number="$GITHUB_RUN_NUMBER"
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools@15.34.1
+      - name: Check that this is still the latest main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$current" != "$GITHUB_SHA" ]]; then
+            echo '::error::A newer main commit exists; refusing to publish this older build.'
+            exit 1
+          fi
+      - name: Authenticate to Google Cloud without a service-account key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DISTRIBUTION_SERVICE_ACCOUNT }}
+      - name: Distribute to the configured tester group
+        working-directory: mobile
+        env:
+          FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+          FIREBASE_TESTER_GROUP: ${{ vars.FIREBASE_TESTER_GROUP }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$FIREBASE_APP_ID" || -z "$FIREBASE_TESTER_GROUP" ]]; then
+            echo '::error::FIREBASE_APP_ID and FIREBASE_TESTER_GROUP must be configured.'
+            exit 1
+          fi
+          firebase appdistribution:distribute build/app/outputs/flutter-apk/app-beta-release.apk \
+            --app "$FIREBASE_APP_ID" \
+            --groups "$FIREBASE_TESTER_GROUP" \
+            --release-notes "Commit $GITHUB_SHA"

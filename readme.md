@@ -16,7 +16,7 @@ Sistem pemantauan dan otomasi tanaman _indoor_ pintar berbasis **ESP32**, dileng
 └── .vscode/                       # Pengaturan dan rekomendasi ekstensi VS Code
 ```
 
-Repositori ini berisi proyek firmware ESP32 dan prototipe dashboard Android di `mobile/`. Dashboard saat ini hanya menggunakan simulasi; koneksi sensor, Supabase, notifikasi, dan machine learning belum diimplementasikan. Pin untuk sensor air dan MQ135 masih berupa placeholder nonaktif di `include/extra-sensors.h`. Wi-Fi dan alamat server firmware sengaja dikosongkan sampai pengaturan yang aman tersedia; fungsi cloud belum terhubung. Bagian backend dan frontend web di bawah merupakan panduan dan contoh kode; folder proyek backend dan frontend web belum tersedia di repositori ini.
+Repositori ini berisi proyek firmware ESP32 dan prototipe dashboard Android di `mobile/`. Dashboard saat ini hanya menggunakan simulasi; koneksi sensor, Supabase, notifikasi, dan machine learning belum diimplementasikan. Pin untuk sensor air dan MQ135 masih berupa placeholder nonaktif di `include/extra-sensors.h`. Wi-Fi dan alamat server firmware sengaja dikosongkan sampai pengaturan yang aman tersedia; fungsi cloud belum terhubung. Bagian backend dan frontend web di bawah merupakan panduan dan contoh lama yang masih mengasumsikan server di laptop, bukan arsitektur cloud yang sudah berjalan. Folder proyek backend dan frontend web tersebut belum tersedia di repositori ini.
 
 ---
 
