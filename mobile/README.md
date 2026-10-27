@@ -9,6 +9,9 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 - Mode tanpa simulasi menampilkan nilai kosong, bukan angka sensor palsu.
 - Informasi sensor air dan MQ135 disiapkan sebagai belum terpasang.
 - Kontrol pompa dan lampu belum aktif; riwayat tidak direkayasa.
+- Antarmuka sudah dapat menerima aliran data sensor saat sumber data disediakan;
+  pembacaan tidak valid, kedaluwarsa, atau terputus tidak ditampilkan sebagai
+  data aktif. Integrasi sumber cloud dan ESP32 masih harus dibuat.
 
 ## Belum tersedia
 
@@ -52,16 +55,18 @@ Sebelum distribusi dapat digunakan:
    keystore berarti APK baru tidak dapat memperbarui APK yang lama secara langsung.
    Password yang disimpan dengan Windows DPAPI terikat pada akun Windows yang
    membuatnya; file `.dpapi` saja bukan cadangan yang dapat dipindahkan ke PC lain.
-4. Konfigurasikan [Workload Identity Federation untuk GitHub Actions](https://github.com/google-github-actions/auth#setting-up-workload-identity-federation)
-   dengan pembatasan ke repo `Xavier1508/Smart-Planter-IoT` dan branch `main`.
-   Berikan service account hanya akses App Distribution yang diperlukan.
+4. Siapkan service account khusus dengan peran Firebase App Distribution Admin.
+   Peran ini dapat mengelola rilis dan tester App Distribution dalam project,
+   bukan hanya satu aplikasi. Kunci JSON-nya adalah kredensial jangka panjang:
+   simpan hanya sebagai GitHub repository secret, jangan commit atau bagikan,
+   dan cabut serta ganti jika diduga terpapar. Tinjau aksesnya secara berkala.
 5. Di **GitHub → Settings → Secrets and variables → Actions**, buat secrets:
-   `FIREBASE_ANDROID_CONFIG` (isi `google-services.json`),
+   `FIREBASE_ANDROID_CONFIG` (isi `google-services.json`), `FIREBASE_SERVICE_ACCOUNT`,
    `MOSS_KEYSTORE_BASE64`, `MOSS_KEYSTORE_PASSWORD`, `MOSS_KEY_ALIAS`, dan
    `MOSS_KEY_PASSWORD`. Jangan kirim nilainya ke chat.
 6. Buat repository variables `FIREBASE_APP_ID`, `FIREBASE_TESTER_GROUP` (alias
-   grup), `GCP_WORKLOAD_IDENTITY_PROVIDER`, dan `GCP_DISTRIBUTION_SERVICE_ACCOUNT`.
-   Setelah semuanya siap, set `FIREBASE_DISTRIBUTION_ENABLED` ke `true`.
+   grup). Setelah semuanya siap dan biaya diperiksa, set `MOSS_CI_ENABLED` dan
+   `FIREBASE_DISTRIBUTION_ENABLED` ke `true`.
 
 Workflow menjalankan format, analisis, dan tes; distribusi hanya berjalan untuk
 `main` setelah tes sukses dan variabel aktivasi diisi. Setiap run baru memakai

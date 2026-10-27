@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/moss_app.dart';
+import 'package:smart_planter/src/plant_telemetry.dart';
 
 void main() {
   testWidgets('demo is labelled and scenarios change Moss expression', (
@@ -73,5 +76,132 @@ void main() {
     expect(find.text('Ruang Moss'), findsOneWidget);
     expect(find.text('SIMULASI'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('fresh sensor data is shown and removed on disconnect', (
+    tester,
+  ) async {
+    final readings = StreamController<PlantTelemetry>();
+    await tester.pumpWidget(
+      MossApp(render3d: false, telemetry: readings.stream),
+    );
+    await tester.tap(find.text('Tutup'));
+    await tester.pump();
+    expect(find.text('Menunggu pembacaan sensor.'), findsOneWidget);
+
+    readings.add(
+      PlantTelemetry(
+        recordedAt: DateTime.now(),
+        soilPercent: 24,
+        temperatureC: 26.2,
+        humidityPercent: 65,
+        lightPercent: 40,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('SENSOR'), findsOneWidget);
+    expect(find.text('Sepertinya aku butuh air.'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Kelembapan tanah'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('DATA SENSOR'), findsOneWidget);
+    expect(find.text('24%'), findsOneWidget);
+    expect(find.text('78%'), findsNothing);
+
+    readings.addError(StateError('connection lost'));
+    await tester.pump();
+    expect(find.text('24%'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Ruang Moss'),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('OFFLINE'), findsOneWidget);
+    expect(find.text('Koneksi data terputus.'), findsOneWidget);
+
+    final closing = readings.close();
+    await tester.pump();
+    await closing;
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('stale and invalid readings never remain visible as live', (
+    tester,
+  ) async {
+    final readings = StreamController<PlantTelemetry>();
+    await tester.pumpWidget(
+      MossApp(render3d: false, telemetry: readings.stream),
+    );
+    await tester.tap(find.text('Tutup'));
+    await tester.pump();
+
+    final now = DateTime.now();
+    readings.add(PlantTelemetry(recordedAt: now, soilPercent: 50));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('Kelembapan tanah'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('50%'), findsOneWidget);
+
+    readings.add(
+      PlantTelemetry(
+        recordedAt: now.subtract(const Duration(seconds: 1)),
+        soilPercent: 20,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('50%'), findsOneWidget);
+    expect(find.text('20%'), findsNothing);
+
+    readings.add(
+      PlantTelemetry(
+        recordedAt: now.add(const Duration(milliseconds: 1)),
+        soilPercent: 101,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('50%'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Ruang Moss'),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('OFFLINE'), findsOneWidget);
+    expect(find.text('Menunggu pembacaan sensor yang valid.'), findsOneWidget);
+
+    readings.add(
+      PlantTelemetry(
+        recordedAt: now.add(const Duration(milliseconds: 2)),
+        soilPercent: 45,
+      ),
+    );
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('Kelembapan tanah'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('45%'), findsOneWidget);
+    await tester.pump(const Duration(minutes: 2, seconds: 1));
+    expect(find.text('45%'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Ruang Moss'),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('OFFLINE'), findsOneWidget);
+    expect(
+      find.text('Data sensor sudah lama; menunggu pembaruan.'),
+      findsOneWidget,
+    );
+
+    final closing = readings.close();
+    await tester.pump();
+    await closing;
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

@@ -1,28 +1,125 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'moss_app.dart';
 import 'moss_avatar.dart';
 import 'plant_state.dart';
+import 'plant_telemetry.dart';
 
 class Dashboard extends StatefulWidget {
-  const Dashboard({super.key, required this.render3d});
+  const Dashboard({super.key, required this.render3d, this.telemetry});
 
   final bool render3d;
+  final Stream<PlantTelemetry>? telemetry;
 
   @override
   State<Dashboard> createState() => _DashboardState();
 }
 
 class _DashboardState extends State<Dashboard> {
+  static const _readingMaxAge = Duration(minutes: 2);
+
   var _page = 0;
   var _demo = true;
   var _scenario = DemoScenario.content;
+  var _liveState = const PlantState.waiting();
+  var _sourceNotice = 'Perangkat dan cloud belum terhubung.';
+  DateTime? _lastRecordedAt;
+  StreamSubscription<PlantTelemetry>? _subscription;
+  Timer? _expiry;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToTelemetry();
+  }
+
+  @override
+  void didUpdateWidget(covariant Dashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.telemetry != widget.telemetry) _listenToTelemetry();
+  }
+
+  void _listenToTelemetry() {
+    final previous = _subscription;
+    if (previous != null) unawaited(previous.cancel());
+    _subscription = null;
+    _expiry?.cancel();
+    _lastRecordedAt = null;
+    _liveState = const PlantState.waiting();
+    final source = widget.telemetry;
+    _sourceNotice = source == null
+        ? 'Perangkat dan cloud belum terhubung.'
+        : 'Menunggu pembacaan sensor.';
+    if (source == null) return;
+    _subscription = source.listen(
+      _acceptReading,
+      onError: (Object _, StackTrace _) => _disconnect(),
+      onDone: _disconnect,
+    );
+  }
+
+  void _acceptReading(PlantTelemetry reading) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (!reading.isFreshAt(now, maxAge: _readingMaxAge)) {
+      if (!_liveState.isLive) {
+        setState(() {
+          _sourceNotice = 'Pembacaan terlalu lama atau waktu tidak sesuai.';
+        });
+      }
+      return;
+    }
+    final previous = _lastRecordedAt;
+    if (previous != null && reading.recordedAt.isBefore(previous)) return;
+    final next = PlantState.fromTelemetry(reading);
+    if (!next.hasSensorData) {
+      _expiry?.cancel();
+      _lastRecordedAt = reading.recordedAt;
+      setState(() {
+        _liveState = const PlantState.waiting();
+        _sourceNotice = 'Menunggu pembacaan sensor yang valid.';
+      });
+      return;
+    }
+
+    _expiry?.cancel();
+    _lastRecordedAt = reading.recordedAt;
+    setState(() {
+      _liveState = next;
+      _sourceNotice = 'Pembacaan sensor terbaru.';
+    });
+    final remaining = reading.recordedAt.add(_readingMaxAge).difference(now);
+    _expiry = Timer(remaining, () {
+      if (!mounted) return;
+      setState(() {
+        _liveState = const PlantState.waiting();
+        _sourceNotice = 'Data sensor sudah lama; menunggu pembaruan.';
+      });
+    });
+  }
+
+  void _disconnect() {
+    if (!mounted) return;
+    _expiry?.cancel();
+    setState(() {
+      _liveState = const PlantState.waiting();
+      _sourceNotice = 'Koneksi data terputus.';
+    });
+  }
+
+  @override
+  void dispose() {
+    _expiry?.cancel();
+    final subscription = _subscription;
+    if (subscription != null) unawaited(subscription.cancel());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final state = _demo
-        ? PlantState.demo(_scenario)
-        : const PlantState.waiting();
+    final state = _demo ? PlantState.demo(_scenario) : _liveState;
     return Scaffold(
       body: SafeArea(
         child: switch (_page) {
@@ -30,6 +127,7 @@ class _DashboardState extends State<Dashboard> {
             state: state,
             scenario: _scenario,
             render3d: widget.render3d,
+            sourceNotice: _sourceNotice,
             onScenario: (value) => setState(() => _scenario = value),
             onDemoChanged: () => setState(() => _demo = !_demo),
           ),
@@ -43,6 +141,7 @@ class _DashboardState extends State<Dashboard> {
           _ => _SettingsPage(
             demo: _demo,
             onDemoChanged: () => setState(() => _demo = !_demo),
+            sourceNotice: _sourceNotice,
           ),
         },
       ),
@@ -76,6 +175,7 @@ class _Home extends StatelessWidget {
     required this.state,
     required this.scenario,
     required this.render3d,
+    required this.sourceNotice,
     required this.onScenario,
     required this.onDemoChanged,
   });
@@ -83,6 +183,7 @@ class _Home extends StatelessWidget {
   final PlantState state;
   final DemoScenario scenario;
   final bool render3d;
+  final String sourceNotice;
   final ValueChanged<DemoScenario> onScenario;
   final VoidCallback onDemoChanged;
 
@@ -124,7 +225,7 @@ class _Home extends StatelessWidget {
                       ],
                     ),
                   ),
-                  _StatusPill(demo: state.isDemo),
+                  _StatusPill(demo: state.isDemo, live: state.isLive),
                 ],
               ),
               const SizedBox(height: 22),
@@ -196,7 +297,7 @@ class _Home extends StatelessWidget {
                           ),
                           const SizedBox(height: 7),
                           Text(
-                            mood.explanation,
+                            state.explanation,
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                               fontSize: 13,
@@ -211,7 +312,12 @@ class _Home extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              _Notice(demo: state.isDemo, onToggle: onDemoChanged),
+              _Notice(
+                demo: state.isDemo,
+                live: state.isLive,
+                sourceNotice: sourceNotice,
+                onToggle: onDemoChanged,
+              ),
               if (state.isDemo) ...[
                 const SizedBox(height: 20),
                 const Text(
@@ -260,7 +366,11 @@ class _Home extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    state.isDemo ? 'CONTOH DATA' : 'BELUM TERHUBUNG',
+                    state.isDemo
+                        ? 'CONTOH DATA'
+                        : state.isLive
+                        ? 'DATA SENSOR'
+                        : 'BELUM TERHUBUNG',
                     style: const TextStyle(
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
@@ -284,7 +394,7 @@ class _Home extends StatelessWidget {
                           icon: Icons.water_drop_outlined,
                           title: 'Kelembapan tanah',
                           value: _percent(state.soilPercent),
-                          detail: state.isDemo
+                          detail: state.soilPercent != null
                               ? 'Kondisi tanah'
                               : 'Menunggu sensor',
                           color: const Color(0xFF51859A),
@@ -324,6 +434,8 @@ class _Home extends StatelessWidget {
                           value: _percent(state.lightPercent),
                           detail: state.isDemo
                               ? 'Intensitas contoh'
+                              : state.lightPercent != null
+                              ? 'Pembacaan sensor'
                               : 'Menunggu sensor',
                           color: const Color(0xFFAB843A),
                         ),
@@ -347,7 +459,7 @@ class _Home extends StatelessWidget {
               const _ControlNotice(),
               const SizedBox(height: 22),
               const Text(
-                'Ekspresi Moss saat ini menggunakan aturan contoh, bukan hasil model machine learning.',
+                'Ekspresi Moss menggunakan aturan sederhana, bukan hasil model machine learning.',
                 style: TextStyle(color: muted, fontSize: 11, height: 1.45),
               ),
             ],
@@ -359,32 +471,41 @@ class _Home extends StatelessWidget {
 }
 
 class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.demo});
+  const _StatusPill({required this.demo, required this.live});
   final bool demo;
+  final bool live;
 
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
     decoration: BoxDecoration(
-      color: demo ? const Color(0xFFF0E6CF) : const Color(0xFFE9EAE4),
+      color: demo
+          ? const Color(0xFFF0E6CF)
+          : live
+          ? const Color(0xFFDDE9DA)
+          : const Color(0xFFE9EAE4),
       borderRadius: BorderRadius.circular(30),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          demo ? Icons.science_outlined : Icons.cloud_off_outlined,
+          demo
+              ? Icons.science_outlined
+              : live
+              ? Icons.sensors_rounded
+              : Icons.cloud_off_outlined,
           size: 14,
-          color: demo ? const Color(0xFF8B6937) : muted,
+          color: demo ? const Color(0xFF8B6937) : (live ? forest : muted),
         ),
         const SizedBox(width: 5),
         Text(
-          demo ? 'SIMULASI' : 'OFFLINE',
+          demo ? 'SIMULASI' : (live ? 'SENSOR' : 'OFFLINE'),
           style: TextStyle(
             fontSize: 10,
             letterSpacing: 0.7,
             fontWeight: FontWeight.w800,
-            color: demo ? const Color(0xFF8B6937) : muted,
+            color: demo ? const Color(0xFF8B6937) : (live ? forest : muted),
           ),
         ),
       ],
@@ -393,8 +514,15 @@ class _StatusPill extends StatelessWidget {
 }
 
 class _Notice extends StatelessWidget {
-  const _Notice({required this.demo, required this.onToggle});
+  const _Notice({
+    required this.demo,
+    required this.live,
+    required this.sourceNotice,
+    required this.onToggle,
+  });
   final bool demo;
+  final bool live;
+  final String sourceNotice;
   final VoidCallback onToggle;
 
   @override
@@ -408,16 +536,18 @@ class _Notice extends StatelessWidget {
     child: Row(
       children: [
         Icon(
-          demo ? Icons.science_outlined : Icons.wifi_off_rounded,
+          demo
+              ? Icons.science_outlined
+              : live
+              ? Icons.sensors_rounded
+              : Icons.wifi_off_rounded,
           size: 19,
           color: forest,
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            demo
-                ? 'Simulasi — bukan data sensor.'
-                : 'Perangkat dan cloud belum terhubung.',
+            demo ? 'Simulasi — bukan data sensor.' : sourceNotice,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
@@ -664,9 +794,14 @@ class _InfoPage extends StatelessWidget {
 }
 
 class _SettingsPage extends StatelessWidget {
-  const _SettingsPage({required this.demo, required this.onDemoChanged});
+  const _SettingsPage({
+    required this.demo,
+    required this.onDemoChanged,
+    required this.sourceNotice,
+  });
   final bool demo;
   final VoidCallback onDemoChanged;
+  final String sourceNotice;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -705,10 +840,10 @@ class _SettingsPage extends StatelessWidget {
         onChanged: (_) => onDemoChanged(),
       ),
       const Divider(height: 32),
-      const _SettingLine(
+      _SettingLine(
         icon: Icons.cloud_outlined,
         title: 'Koneksi cloud',
-        body: 'Project Supabase sudah disiapkan; aplikasi belum terhubung.',
+        body: sourceNotice,
       ),
       const _SettingLine(
         icon: Icons.sensors_outlined,

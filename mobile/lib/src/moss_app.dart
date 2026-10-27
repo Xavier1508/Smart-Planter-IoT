@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'dashboard.dart';
+import 'plant_telemetry.dart';
 
 const ink = Color(0xFF213027);
 const forest = Color(0xFF315E48);
@@ -9,10 +10,14 @@ const muted = Color(0xFF6A756B);
 const terracotta = Color(0xFFAE674F);
 
 class MossApp extends StatelessWidget {
-  const MossApp({super.key, this.render3d = true});
+  const MossApp({super.key, this.render3d = true, this.telemetry});
 
   /// Widget tests can exercise the interface without requiring a GPU renderer.
   final bool render3d;
+
+  /// A real device source can be supplied when the cloud integration is ready.
+  /// Null means no source is configured; no simulated values are substituted.
+  final Stream<PlantTelemetry>? telemetry;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +45,7 @@ class MossApp extends StatelessWidget {
           ),
         ),
       ),
-      home: Dashboard(render3d: render3d),
+      home: Dashboard(render3d: render3d, telemetry: telemetry),
     );
   }
 }

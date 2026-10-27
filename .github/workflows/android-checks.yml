@@ -55,10 +55,28 @@ jobs:
           vars.FIREBASE_DISTRIBUTION_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    permissions:
-      contents: read
-      id-token: write
     steps:
+      - name: Check distribution configuration
+        env:
+          FIREBASE_ANDROID_CONFIG: ${{ secrets.FIREBASE_ANDROID_CONFIG }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MOSS_KEYSTORE_BASE64: ${{ secrets.MOSS_KEYSTORE_BASE64 }}
+          MOSS_KEYSTORE_PASSWORD: ${{ secrets.MOSS_KEYSTORE_PASSWORD }}
+          MOSS_KEY_ALIAS: ${{ secrets.MOSS_KEY_ALIAS }}
+          MOSS_KEY_PASSWORD: ${{ secrets.MOSS_KEY_PASSWORD }}
+          FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+          FIREBASE_TESTER_GROUP: ${{ vars.FIREBASE_TESTER_GROUP }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in FIREBASE_ANDROID_CONFIG FIREBASE_SERVICE_ACCOUNT MOSS_KEYSTORE_BASE64 MOSS_KEYSTORE_PASSWORD MOSS_KEY_ALIAS MOSS_KEY_PASSWORD FIREBASE_APP_ID FIREBASE_TESTER_GROUP; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required repository secret or variable $name is not configured."
+              missing=1
+            fi
+          done
+          exit "$missing"
       - name: Check out project
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -121,11 +139,10 @@ jobs:
             echo '::error::A newer main commit exists; refusing to publish this older build.'
             exit 1
           fi
-      - name: Authenticate to Google Cloud without a service-account key
+      - name: Authenticate with the distribution service account
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DISTRIBUTION_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       - name: Distribute to the configured tester group
         working-directory: mobile
         env:

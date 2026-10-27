@@ -1,5 +1,6 @@
-/// This initial dashboard contains demonstration data only. Real telemetry,
-/// calibration and machine learning will be integrated separately.
+import 'plant_telemetry.dart';
+
+/// Plant expressions are simple UI rules, not medical or ML diagnoses.
 enum PlantMood { waiting, content, thirsty, airConcern }
 
 enum DemoScenario { content, thirsty, airConcern }
@@ -7,15 +8,37 @@ enum DemoScenario { content, thirsty, airConcern }
 class PlantState {
   const PlantState({
     required this.isDemo,
+    this.isLive = false,
     this.soilPercent,
     this.waterPercent,
     this.temperatureC,
     this.humidityPercent,
     this.lightPercent,
     this.airChanged = false,
-  });
+  }) : assert(!isDemo || !isLive);
 
   const PlantState.waiting() : this(isDemo: false);
+
+  /// Invalid sensor values are omitted instead of being clamped or presented
+  /// as real measurements. Uninstalled sensors stay unavailable.
+  factory PlantState.fromTelemetry(PlantTelemetry reading) {
+    int? percent(int? value) =>
+        value != null && value >= 0 && value <= 100 ? value : null;
+    final temperature = reading.temperatureC;
+    final validTemperature =
+        temperature != null &&
+        temperature.isFinite &&
+        temperature >= -40 &&
+        temperature <= 80;
+    return PlantState(
+      isDemo: false,
+      isLive: true,
+      soilPercent: percent(reading.soilPercent),
+      temperatureC: validTemperature ? temperature : null,
+      humidityPercent: percent(reading.humidityPercent),
+      lightPercent: percent(reading.lightPercent),
+    );
+  }
 
   factory PlantState.demo(DemoScenario scenario) => switch (scenario) {
     DemoScenario.content => const PlantState(
@@ -46,6 +69,7 @@ class PlantState {
   };
 
   final bool isDemo;
+  final bool isLive;
   final int? soilPercent;
   final int? waterPercent;
   final double? temperatureC;
@@ -53,14 +77,32 @@ class PlantState {
   final int? lightPercent;
   final bool airChanged;
 
+  bool get hasSensorData =>
+      soilPercent != null ||
+      temperatureC != null ||
+      humidityPercent != null ||
+      lightPercent != null;
+
   PlantMood get mood {
-    if (!isDemo) return PlantMood.waiting;
+    if (!isDemo && !isLive) return PlantMood.waiting;
     if ((soilPercent != null && soilPercent! < 30) ||
         (waterPercent != null && waterPercent! < 20)) {
       return PlantMood.thirsty;
     }
     if (airChanged) return PlantMood.airConcern;
+    if (soilPercent == null) return PlantMood.waiting;
     return PlantMood.content;
+  }
+
+  String get explanation {
+    if (!isLive) return mood.explanation;
+    return switch (mood) {
+      PlantMood.waiting => 'Menunggu pembacaan kelembapan tanah.',
+      PlantMood.content =>
+        'Kelembapan tanah tidak berada di bawah ambang kering.',
+      PlantMood.thirsty => 'Kelembapan tanah berada di bawah ambang kering.',
+      PlantMood.airConcern => 'Ada perubahan pada pembacaan udara.',
+    };
   }
 }
 
