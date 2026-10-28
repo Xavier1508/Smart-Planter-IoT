@@ -35,8 +35,15 @@ void main() {
   ) async {
     await tester.pumpWidget(const MossApp(render3d: false));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Tutup'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Tutup'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Ruang Moss'),
+      -150,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('OFFLINE'), findsOneWidget);
     expect(find.text('Halo, aku Moss.'), findsOneWidget);
     expect(find.text('64%'), findsNothing);
@@ -53,6 +60,8 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Tutup'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tutup'));
     await tester.pumpAndSettle();
@@ -102,9 +111,17 @@ void main() {
     await tester.pumpWidget(
       MossApp(render3d: false, telemetry: readings.stream),
     );
+    await tester.ensureVisible(find.text('Tutup'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Tutup'));
     await tester.pump();
     expect(find.text('Menunggu pembacaan sensor.'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Ruang Moss'),
+      -150,
+      scrollable: find.byType(Scrollable).first,
+    );
 
     readings.add(
       PlantTelemetry(
@@ -151,6 +168,8 @@ void main() {
     await tester.pumpWidget(
       MossApp(render3d: false, telemetry: readings.stream),
     );
+    await tester.ensureVisible(find.text('Tutup'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Tutup'));
     await tester.pump();
 
@@ -210,6 +229,8 @@ void main() {
     await tester.pumpWidget(
       MossApp(render3d: false, telemetry: readings.stream),
     );
+    await tester.ensureVisible(find.text('Tutup'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Tutup'));
     await tester.pump();
 

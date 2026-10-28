@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsAction;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/moss_app.dart';
@@ -22,12 +24,36 @@ void main() {
         find.bySemanticsLabel('Grafik simulasi tanah, bukan data sensor'),
         findsOneWidget,
       );
+      final chart = find.byKey(const ValueKey('example-chart'));
+      await tester.ensureVisible(chart);
+      final rect = tester.getRect(chart);
+      await tester.tapAt(Offset(rect.center.dx, rect.center.dy));
+      await tester.pump();
+      expect(find.text('Titik contoh 3: 54%'), findsOneWidget);
+      final node = tester.getSemantics(chart);
+      expect(node.getSemanticsData().value, 'Titik contoh 3: 54 persen');
+      expect(
+        node.getSemanticsData().increasedValue,
+        'Titik contoh 4: 66 persen',
+      );
+      expect(
+        node.getSemanticsData().decreasedValue,
+        'Titik contoh 2: 58 persen',
+      );
+      tester
+          .renderObject(chart)
+          .owner!
+          .semanticsOwner!
+          .performAction(node.id, SemanticsAction.increase);
+      await tester.pump();
+      expect(find.text('Titik contoh 4: 66%'), findsOneWidget);
       await tester.tap(find.text('Cahaya'));
       await tester.pumpAndSettle();
       expect(
         find.bySemanticsLabel('Grafik simulasi cahaya, bukan data sensor'),
         findsOneWidget,
       );
+      expect(find.text('Titik contoh 4: 63%'), findsOneWidget);
     } finally {
       semantics.dispose();
     }
@@ -66,6 +92,8 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.ensureVisible(find.text('Tutup'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Tutup'));
     await tester.pumpAndSettle();
     await tester.tap(

@@ -19,6 +19,7 @@ class Dashboard extends StatefulWidget {
     super.key,
     required this.render3d,
     required this.gaze,
+    required this.atmosphere,
     this.telemetry,
     this.cloudSettings,
     this.cloudSetupNotice,
@@ -32,6 +33,7 @@ class Dashboard extends StatefulWidget {
 
   final bool render3d;
   final MossGaze gaze;
+  final MossAtmosphere atmosphere;
   final Stream<PlantTelemetry>? telemetry;
   final Widget? cloudSettings;
   final String? cloudSetupNotice;
@@ -169,9 +171,12 @@ class _DashboardState extends State<Dashboard> {
             scenario: _scenario,
             render3d: widget.render3d,
             gaze: widget.gaze,
+            atmosphere: widget.atmosphere,
             sourceNotice: _sourceNotice,
             sky: widget.sky,
             automaticSky: widget.appearance.sky == SkyChoice.automatic,
+            selectedSky: widget.appearance.sky,
+            onSkyChanged: widget.onSkyChanged,
             onScenario: (value) => setState(() => _scenario = value),
             onDemoChanged: () => setState(() => _demo = !_demo),
           ),
@@ -226,24 +231,33 @@ class _Home extends StatelessWidget {
     required this.scenario,
     required this.render3d,
     required this.gaze,
+    required this.atmosphere,
     required this.sourceNotice,
     required this.onScenario,
     required this.onDemoChanged,
     required this.sky,
     required this.automaticSky,
+    required this.selectedSky,
+    required this.onSkyChanged,
   });
 
   final PlantState state;
   final DemoScenario scenario;
   final bool render3d;
   final MossGaze gaze;
+  final MossAtmosphere atmosphere;
   final String sourceNotice;
   final ValueChanged<DemoScenario> onScenario;
   final VoidCallback onDemoChanged;
   final SkyAppearance sky;
   final bool automaticSky;
+  final SkyChoice selectedSky;
+  final ValueChanged<SkyChoice> onSkyChanged;
 
   String _percent(int? value) => value == null ? '—' : '$value%';
+
+  void _stepSky({required bool next}) =>
+      onSkyChanged(SkyChoice.step(selectedSky, sky.hour, next: next));
 
   @override
   Widget build(BuildContext context) {
@@ -298,6 +312,9 @@ class _Home extends StatelessWidget {
               const SizedBox(height: 22),
               MossSky(
                 sky: sky,
+                gaze: gaze,
+                atmosphere: atmosphere,
+                onSwipe: (next) => _stepSky(next: next),
                 child: Column(
                   children: [
                     Padding(
@@ -348,7 +365,12 @@ class _Home extends StatelessWidget {
                           child: child,
                         ),
                         child: render3d
-                            ? MossAvatar(mood: mood, sky: sky, gaze: gaze)
+                            ? MossAvatar(
+                                mood: mood,
+                                sky: sky,
+                                gaze: gaze,
+                                atmosphere: atmosphere,
+                              )
                             : Center(
                                 child: Icon(
                                   Icons.spa_outlined,
@@ -356,6 +378,36 @@ class _Home extends StatelessWidget {
                                   color: skyHeaderInk,
                                 ),
                               ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Suasana sebelumnya',
+                            onPressed: () => _stepSky(next: false),
+                            icon: Icon(
+                              Icons.chevron_left_rounded,
+                              color: skyInk,
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              'Geser untuk mengubah suasana',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: skyInk, fontSize: 11),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Suasana berikutnya',
+                            onPressed: () => _stepSky(next: true),
+                            icon: Icon(
+                              Icons.chevron_right_rounded,
+                              color: skyInk,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     Padding(

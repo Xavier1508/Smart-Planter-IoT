@@ -18,7 +18,11 @@ class MossMotion {
   double _reactionSide = 0;
   double _targetReactionSide = -.55;
   double _lookHold = 0;
+  int _nextPose = 0;
+  int _targetPose = 0;
+  final List<double> _poseWeights = [1, 0, 0];
   double windAmplitude = .06;
+  bool idlePersonality = false;
   bool reduceMotion = false;
   MossFrame lastFrame = const MossFrame(
     yaw: 0,
@@ -70,6 +74,8 @@ class MossMotion {
     if (reduceMotion) return;
     final x = horizontal.isFinite ? horizontal.clamp(-1.0, 1.0) : 0.0;
     _targetReactionSide = x.abs() < .12 ? -.55 : -x;
+    _targetPose = _nextPose;
+    _nextPose = (_nextPose + 1) % _poseWeights.length;
     _reactionHold = .38;
   }
 
@@ -109,20 +115,41 @@ class MossMotion {
     _reaction +=
         (reactionTarget - _reaction) * (1 - math.exp(-dt / responseTime));
     _reactionSide += (_targetReactionSide - _reactionSide) * blend;
+    for (var i = 0; i < _poseWeights.length; i++) {
+      final target = i == _targetPose ? 1.0 : 0.0;
+      _poseWeights[i] += (target - _poseWeights[i]) * blend;
+    }
 
     final wind = math.sin(_windTime * 1.2) * windAmplitude;
+    final idleYaw = idlePersonality ? math.sin(_windTime * .43) * .08 : 0.0;
+    final leftIdle = idlePersonality
+        ? math.sin(_windTime * .8) * (.07 + .04 * math.sin(_windTime * .21))
+        : 0.0;
+    final rightIdle = idlePersonality
+        ? math.sin(_windTime * .67 + 1.3) *
+              (.07 + .04 * math.sin(_windTime * .25))
+        : 0.0;
+    final shy = _poseWeights[0];
+    final wave = _poseWeights[1];
+    final hide = _poseWeights[2];
     final idleBlinkTime = _windTime % 5.5;
     final idleBlink = idleBlinkTime > .18
         ? 0.0
         : math.sin((idleBlinkTime / .18) * math.pi);
     lastFrame = MossFrame(
-      yaw: _yaw + _reactionSide * _reaction * .08,
-      pitch: _pitch + _reaction * .10,
+      yaw: _yaw + idleYaw * (1 - _reaction) + _reactionSide * _reaction * .08,
+      pitch: _pitch + _reaction * (.10 * shy + .035 * wave + .13 * hide),
       roll: wind - _reactionSide * _reaction * .085,
       shift: -_yaw / maxYaw * .05 + _reactionSide * _reaction * .035,
       // Both arms pivot toward the chest independently of the body.
-      leftArm: -.35 + _reaction * 1.15 - wind * .2,
-      rightArm: .35 - _reaction * 1.15 - wind * .2,
+      leftArm:
+          -.35 +
+          leftIdle * (1 - _reaction) +
+          _reaction * (1.15 * shy + 1.05 * wave + .35 * hide),
+      rightArm:
+          .35 +
+          rightIdle * (1 - _reaction) -
+          _reaction * (1.15 * shy + .35 * wave + 1.05 * hide),
       blink: math.max(idleBlink, _reaction * .65),
       reaction: _reaction,
     );

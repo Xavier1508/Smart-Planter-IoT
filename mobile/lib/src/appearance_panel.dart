@@ -77,30 +77,44 @@ class AppearancePanel extends StatelessWidget {
         },
       ),
       const SizedBox(height: 12),
-      DropdownButtonFormField<SkyChoice>(
-        key: ValueKey('sky-${settings.sky.name}'),
-        initialValue: settings.sky,
-        isExpanded: true,
-        decoration: const InputDecoration(labelText: 'Suasana waktu Moss'),
-        items: [
-          for (final choice in SkyChoice.values)
-            DropdownMenuItem(value: choice, child: Text(choice.label)),
-        ],
-        onChanged: (value) {
-          if (value != null) onSkyChanged(value);
-        },
+      const Text(
+        'Suasana waktu Moss',
+        style: TextStyle(fontWeight: FontWeight.w600),
       ),
-      if (settings.sky == SkyChoice.custom) ...[
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          key: const ValueKey('pick-moss-time'),
-          onPressed: () => _pickTime(context),
-          icon: const Icon(Icons.schedule_rounded),
-          label: Text(
-            'Jam pilihan: ${TimeOfDay(hour: settings.manualMinute ~/ 60, minute: settings.manualMinute % 60).format(context)}',
-          ),
+      const SizedBox(height: 6),
+      Text(
+        'Geser kartu Moss di halaman utama untuk memilih pagi, siang, sore, atau malam.',
+        style: TextStyle(
+          color: context.mossColors.onSurfaceVariant,
+          fontSize: 12,
+          height: 1.4,
         ),
-      ],
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          OutlinedButton.icon(
+            key: const ValueKey('automatic-moss-time'),
+            onPressed: settings.sky == SkyChoice.automatic
+                ? null
+                : () => onSkyChanged(SkyChoice.automatic),
+            icon: const Icon(Icons.auto_mode_rounded),
+            label: const Text('Ikuti jam HP'),
+          ),
+          OutlinedButton.icon(
+            key: const ValueKey('pick-moss-time'),
+            onPressed: () => _pickTime(context),
+            icon: const Icon(Icons.schedule_rounded),
+            label: Text(
+              settings.sky == SkyChoice.custom
+                  ? 'Jam pilihan: ${TimeOfDay(hour: settings.manualMinute ~/ 60, minute: settings.manualMinute % 60).format(context)}'
+                  : 'Pilih jam sendiri',
+            ),
+          ),
+        ],
+      ),
       const SizedBox(height: 8),
       Text(
         settings.sky == SkyChoice.automatic

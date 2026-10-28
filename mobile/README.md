@@ -5,24 +5,27 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 ## Yang tersedia
 
 - Tampilan Android, karakter 3D bergaya dengan material yang merespons cahaya,
-  dan tiga kondisi **simulasi**. Perubahan visual 0.3.2 masih perlu diuji pada
-  perangkat fisik; karakter tetap model geometris, bukan model fotorealistis.
+  dan tiga kondisi **simulasi**. Perubahan visual sejak 0.3.2 masih perlu diuji
+  pada perangkat fisik; karakter tetap model geometris, bukan fotorealistis.
 - Ikon peluncur Moss dengan versi adaptif untuk Android; desain sumbernya ada di
   [aset identitas visual](assets/branding/moss-icon.svg).
 - Karakter mengikuti posisi jari di dalam layar aplikasi; hanya sentuhan yang
   mengenai geometri karakter atau pot memicu reaksi. Kepala dan tangan bergerak
-  secara terpisah; opsi sistem untuk mengurangi animasi dihormati. Fitur baru
-  ini masih perlu diuji pada renderer dan ponsel fisik.
+  secara terpisah, dengan beberapa pose sentuhan; opsi sistem untuk mengurangi
+  animasi dihormati. Fitur ini masih perlu diuji pada renderer dan ponsel fisik.
 - Tema aplikasi dapat mengikuti sistem atau dipilih terang/gelap. Pengaturan
   tampilan tersimpan secara lokal di Android.
 - Langit, matahari, bulan, bintang, dan warna pencahayaan berubah mengikuti jam
-  lokal ponsel. Suasana waktu atau jam tertentu juga dapat dipilih sendiri di
-  Pengaturan; efek ini bersifat visual dan bukan pembacaan sensor cahaya.
+  lokal ponsel. Geser kartu Moss atau gunakan panah untuk memilih suasana;
+  Pengaturan menyediakan waktu otomatis dan jam pilihan. Pada malam hari ada
+  komet sesekali. Cahaya 3D dan satu shadow map mengikuti suasana; efek ini
+  bersifat visual dan bukan pembacaan sensor cahaya. Kualitas bayangan dan
+  performa belum diuji pada renderer OPPO.
 - Mode tanpa simulasi menampilkan nilai kosong, bukan angka sensor palsu.
 - Informasi sensor air dan MQ135 disiapkan sebagai belum terpasang.
 - Kontrol pompa dan lampu belum aktif; riwayat tidak direkayasa.
-- Halaman riwayat menampilkan grafik dan aktivitas **contoh** hanya saat mode
-  simulasi aktif; data contoh tidak disimpan sebagai riwayat sensor.
+- Halaman riwayat menampilkan grafik interaktif dan aktivitas **contoh** hanya
+  saat mode simulasi aktif; data contoh tidak disimpan sebagai riwayat sensor.
 - Halaman perangkat menyediakan saklar **simulasi lokal**. Saklar tersebut tidak
   mengirim perintah dan tidak dapat mengubah keadaan pompa atau lampu nyata.
 - Pengaturan menampilkan versi/build Android dan membedakan pratinjau lokal dari
@@ -100,13 +103,17 @@ karena tema Android tidak kompatibel. Beta 0.3.1 build 5 dengan perbaikan tema
 berhasil dipasang melalui Firebase App Tester dan versinya diverifikasi lewat
 ADB. Penguji kemudian melaporkan bahwa pembaruan dari dalam Moss ke build 6
 berhasil; versi build 6 belum diverifikasi kembali melalui ADB. Penguji juga
-melaporkan tidak ada indikator unduhan yang terlihat.
+melaporkan tidak ada indikator unduhan yang terlihat. Penguji mengonfirmasi
+melalui Pengaturan Moss bahwa 0.3.2 build 7 sudah terpasang; build 7 belum
+diverifikasi kembali melalui ADB.
 
-Perubahan 0.3.2 menampilkan status dan progres byte dari callback Firebase,
-tetapi belum diuji dengan unduhan nyata. Update dari build 6
-ke 0.3.2 masih menggunakan antarmuka pemutakhir lama; indikator baru baru dapat
-diuji ketika 0.3.2 sudah terpasang dan pembaruan berikutnya tersedia. Build beta
-berjalan dalam mode demo/offline karena publishable key Supabase belum dikonfigurasi.
+Build 7 menampilkan status dan progres byte dari callback Firebase, tetapi
+indikatornya belum diuji dengan unduhan nyata: pembaruan dari build 6 ke build 7
+masih menggunakan pemutakhir lama. Pengujian indikator memerlukan build beta
+berikutnya dan persetujuan pengguna untuk memasangnya. Perubahan swipe, komet,
+grafik, dan pencahayaan disiapkan untuk 0.3.3 dan masih memerlukan pengujian
+pada OPPO. Build beta berjalan dalam mode demo/offline karena publishable key
+Supabase belum dikonfigurasi.
 
 Package Android: `io.github.xavier1508.smart_planter`. Varian default `production`
 tidak berisi SDK self-update App Distribution dan tidak memerlukan konfigurasi

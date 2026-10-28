@@ -18,14 +18,34 @@ class JournalPage extends StatefulWidget {
 
 class _JournalPageState extends State<JournalPage> {
   bool _showSoil = true;
+  int? _selectedPoint;
 
-  List<double> get _points {
-    if (!_showSoil) return const [25, 48, 72, 63, 38];
-    return switch (widget.scenario) {
-      DemoScenario.content => const [61, 58, 54, 66, 64],
-      DemoScenario.thirsty => const [48, 40, 34, 28, 22],
-      DemoScenario.airConcern => const [62, 60, 58, 57, 58],
-    };
+  static const _lightPoints = <double>[25, 48, 72, 63, 38];
+
+  List<double> get _soilPoints => switch (widget.scenario) {
+    DemoScenario.content => const [61, 58, 54, 66, 64],
+    DemoScenario.thirsty => const [48, 40, 34, 28, 22],
+    DemoScenario.airConcern => const [62, 60, 58, 57, 58],
+  };
+
+  List<double> get _points => _showSoil ? _soilPoints : _lightPoints;
+
+  String _pointDescription(int index) =>
+      'Titik contoh ${index + 1}: ${_points[index].round()} persen';
+
+  int get _nextPoint =>
+      ((_selectedPoint ?? -1) + 1).clamp(0, _points.length - 1);
+
+  int get _previousPoint =>
+      ((_selectedPoint ?? 1) - 1).clamp(0, _points.length - 1);
+
+  void _selectPoint(double x, double width) {
+    if (width <= 0 || !x.isFinite) return;
+    final index = (x / width * (_points.length - 1)).round().clamp(
+      0,
+      _points.length - 1,
+    );
+    if (index != _selectedPoint) setState(() => _selectedPoint = index);
   }
 
   @override
@@ -149,18 +169,65 @@ class _JournalPageState extends State<JournalPage> {
                 container: true,
                 label:
                     'Grafik simulasi ${_showSoil ? 'tanah' : 'cahaya'}, bukan data sensor',
+                value: _selectedPoint == null
+                    ? 'Belum ada titik dipilih'
+                    : _pointDescription(_selectedPoint!),
+                increasedValue: _pointDescription(_nextPoint),
+                decreasedValue: _pointDescription(_previousPoint),
+                onIncrease: () => setState(() => _selectedPoint = _nextPoint),
+                onDecrease: () =>
+                    setState(() => _selectedPoint = _previousPoint),
                 child: SizedBox(
                   width: double.infinity,
                   height: 150,
-                  child: CustomPaint(
-                    painter: _ExampleChart(
-                      points: _points,
-                      color: _showSoil
-                          ? context.mossColors.primary
-                          : const Color(0xFFAB843A),
-                      gridColor: context.mossColors.outlineVariant,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      excludeFromSemantics: true,
+                      onTapDown: (details) => _selectPoint(
+                        details.localPosition.dx,
+                        constraints.maxWidth,
+                      ),
+                      onHorizontalDragUpdate: (details) => _selectPoint(
+                        details.localPosition.dx,
+                        constraints.maxWidth,
+                      ),
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween(end: _showSoil ? 0.0 : 1.0),
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 650),
+                        curve: Curves.easeInOutCubic,
+                        builder: (context, value, _) => CustomPaint(
+                          painter: _ExampleChart(
+                            points: [
+                              for (var i = 0; i < _soilPoints.length; i++)
+                                _soilPoints[i] +
+                                    (_lightPoints[i] - _soilPoints[i]) * value,
+                            ],
+                            color: Color.lerp(
+                              context.mossColors.primary,
+                              const Color(0xFFAB843A),
+                              value,
+                            )!,
+                            gridColor: context.mossColors.outlineVariant,
+                            selectedPoint: _selectedPoint,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _selectedPoint == null
+                    ? 'Sentuh grafik untuk melihat nilai contoh.'
+                    : 'Titik contoh ${_selectedPoint! + 1}: ${_points[_selectedPoint!].round()}%',
+                key: const ValueKey('example-chart-detail'),
+                style: TextStyle(
+                  color: context.mossColors.onSurfaceVariant,
+                  fontSize: 12,
                 ),
               ),
               const SizedBox(height: 8),
@@ -286,10 +353,12 @@ class _ExampleChart extends CustomPainter {
     required this.points,
     required this.color,
     required this.gridColor,
+    required this.selectedPoint,
   });
   final List<double> points;
   final Color color;
   final Color gridColor;
+  final int? selectedPoint;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -312,9 +381,31 @@ class _ExampleChart extends CustomPainter {
       if (i == 0) {
         path.moveTo(point.dx, point.dy);
       } else {
-        path.lineTo(point.dx, point.dy);
+        final previous = dots[i - 1];
+        final midpoint = (previous.dx + point.dx) / 2;
+        path.cubicTo(
+          midpoint,
+          previous.dy,
+          midpoint,
+          point.dy,
+          point.dx,
+          point.dy,
+        );
       }
     }
+    final fill = Path.from(path)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [color.withValues(alpha: .22), color.withValues(alpha: .01)],
+        ).createShader(Offset.zero & size),
+    );
     final line = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
@@ -326,11 +417,29 @@ class _ExampleChart extends CustomPainter {
     for (final point in dots) {
       canvas.drawCircle(point, math.min(4.0, size.width / 20), dot);
     }
+    final index = selectedPoint;
+    if (index != null && index >= 0 && index < dots.length) {
+      final selected = dots[index];
+      canvas.drawLine(
+        Offset(selected.dx, 0),
+        Offset(selected.dx, size.height),
+        Paint()
+          ..color = color.withValues(alpha: .28)
+          ..strokeWidth = 1,
+      );
+      canvas.drawCircle(
+        selected,
+        7,
+        Paint()..color = color.withValues(alpha: .22),
+      );
+      canvas.drawCircle(selected, 4, dot);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _ExampleChart oldDelegate) =>
       oldDelegate.points != points ||
       oldDelegate.color != color ||
-      oldDelegate.gridColor != gridColor;
+      oldDelegate.gridColor != gridColor ||
+      oldDelegate.selectedPoint != selectedPoint;
 }

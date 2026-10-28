@@ -19,10 +19,12 @@ class MossAvatar extends StatefulWidget {
     required this.mood,
     required this.sky,
     required this.gaze,
+    required this.atmosphere,
   });
   final PlantMood mood;
   final SkyAppearance sky;
   final MossGaze gaze;
+  final MossAtmosphere atmosphere;
 
   @override
   State<MossAvatar> createState() => _MossAvatarState();
@@ -50,18 +52,40 @@ class _MossAvatarState extends State<MossAvatar>
   final _sunLight = scene.DirectionalLight(
     color: vm.Vector3(1, .84, .65),
     intensity: 0,
+    cacheStaticShadows: false,
+    shadowCascadeCount: 1,
+    shadowMapResolution: 512,
+    shadowMaxDistance: 8,
+    shadowSoftness: .08,
+    shadowDepthBias: .008,
+    shadowNormalBias: .012,
+    shadowAmbientStrength: .12,
   );
   final _moonLight = scene.DirectionalLight(
     color: vm.Vector3(.58, .72, 1),
     intensity: 0,
+    cacheStaticShadows: false,
+    shadowCascadeCount: 1,
+    shadowMapResolution: 512,
+    shadowMaxDistance: 8,
+    shadowSoftness: .08,
+    shadowDepthBias: .008,
+    shadowNormalBias: .012,
+    shadowAmbientStrength: .12,
   );
-  late final _sunKey = scene.DirectionalLightComponent.aimed(
+  late final _sunKey = scene.DirectionalLightComponent(_sunLight);
+  late final _moonKey = scene.DirectionalLightComponent(_moonLight);
+  late final _sunAim = _SkyLightAim(
+    widget.atmosphere,
     _sunLight,
-    vm.Vector3(.75, -1, -1.25),
-  );
-  late final _moonKey = scene.DirectionalLightComponent.aimed(
     _moonLight,
-    vm.Vector3(-.75, -1, -1.25),
+    isSun: true,
+  );
+  late final _moonAim = _SkyLightAim(
+    widget.atmosphere,
+    _sunLight,
+    _moonLight,
+    isSun: false,
   );
   final _motion = MossMotion();
   late final _sway = _Sway(_motion);
@@ -97,6 +121,20 @@ class _MossAvatarState extends State<MossAvatar>
     if (oldWidget.gaze != widget.gaze) {
       oldWidget.gaze.removeListener(_followScreenPointer);
       widget.gaze.addListener(_followScreenPointer);
+    }
+    if (oldWidget.atmosphere != widget.atmosphere) {
+      _sunAim.atmosphere = widget.atmosphere;
+      _moonAim.atmosphere = widget.atmosphere;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _motion.reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_motion.reduceMotion && _touchFeedback.value != 0) {
+      _touchFeedback.stop();
+      _touchFeedback.value = 0;
     }
   }
 
@@ -278,9 +316,7 @@ class _MossAvatarState extends State<MossAvatar>
           _motion.windAmplitude = widget.mood == PlantMood.content
               ? .035
               : .015;
-          _motion.reduceMotion = MediaQuery.disableAnimationsOf(context);
-          _sunLight.intensity = widget.sky.sunOpacity * 1.5;
-          _moonLight.intensity = widget.sky.moonOpacity * .8;
+          _motion.idlePersonality = true;
           final concerned =
               widget.mood == PlantMood.thirsty ||
               widget.mood == PlantMood.airConcern;
@@ -298,12 +334,12 @@ class _MossAvatarState extends State<MossAvatar>
                   environmentIntensity: .65 + widget.sky.sunOpacity * .25,
                   camera: _camera,
                   children: [
-                    // Two inexpensive directional lights match the body shown
-                    // in the sky. No shadow-map passes are enabled here.
+                    // Only the dominant light casts one small, soft shadow map.
                     scene.SceneNode(
                       key: _sceneKey,
-                      components: [_sunKey, _moonKey],
+                      components: [_sunAim, _sunKey],
                     ),
+                    scene.SceneNode(components: [_moonAim, _moonKey]),
                     scene.SceneMesh(
                       geometry: _pot,
                       material: _potColor,
@@ -508,6 +544,42 @@ class _MossAvatarState extends State<MossAvatar>
           );
         },
       ),
+    );
+  }
+}
+
+class _SkyLightAim extends scene.Component {
+  _SkyLightAim(this.atmosphere, this.sun, this.moon, {required this.isSun});
+
+  MossAtmosphere atmosphere;
+  final scene.DirectionalLight sun;
+  final scene.DirectionalLight moon;
+  final bool isSun;
+
+  @override
+  void update(double deltaSeconds) {
+    final sky = atmosphere.current;
+    final sunStrength = sky.sunOpacity * 1.5;
+    final moonStrength = sky.visibleMoonOpacity * .8;
+    if (isSun) {
+      sun.intensity = sunStrength;
+      moon.intensity = moonStrength;
+      sun.castsShadow = sunStrength > .05 && sunStrength >= moonStrength;
+      moon.castsShadow = moonStrength > .05 && moonStrength > sunStrength;
+    }
+    final moonHour = sky.hour < 12 ? sky.hour + 24 : sky.hour;
+    final progress = isSun
+        ? ((sky.hour - 5) / 14).clamp(0.0, 1.0)
+        : ((moonHour - 18) / 12).clamp(0.0, 1.0);
+    final rise = math.sin(progress * math.pi);
+    final direction = vm.Vector3(
+      (isSun ? 1 : -1) * (.8 * (.98 - .14 * rise)),
+      -(.4 + .8 * rise),
+      -1.25,
+    )..normalize();
+    node.rotation = vm.Quaternion.fromTwoVectors(
+      vm.Vector3(0, 0, 1),
+      direction,
     );
   }
 }

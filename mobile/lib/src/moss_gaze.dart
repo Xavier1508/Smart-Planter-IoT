@@ -3,9 +3,16 @@ import 'package:flutter/material.dart';
 
 /// Transient pointer coordinates only; no page content or taps are recorded.
 class MossGaze extends ChangeNotifier {
-  Offset? position;
-  Size? viewport;
-  bool active = false;
+  Offset? _pointerPosition;
+  Size? _pointerViewport;
+  bool _pointerActive = false;
+  Offset? _ambientPosition;
+  Size? _ambientViewport;
+  Object? _ambientOwner;
+
+  Offset? get position => _pointerActive ? _pointerPosition : _ambientPosition;
+  Size? get viewport => _pointerActive ? _pointerViewport : _ambientViewport;
+  bool get active => _pointerActive || _ambientOwner != null;
 
   /// Normalized direction from the rendered face to the last pointer.
   Offset? directionFrom(Offset face) {
@@ -33,16 +40,40 @@ class MossGaze extends ChangeNotifier {
         size.height <= 0) {
       return;
     }
-    position = point;
-    viewport = size;
-    active = true;
+    _pointerPosition = point;
+    _pointerViewport = size;
+    _pointerActive = true;
     notifyListeners();
   }
 
   void release() {
-    if (!active) return;
-    active = false;
+    if (!_pointerActive) return;
+    _pointerActive = false;
     notifyListeners();
+  }
+
+  /// The user's pointer always has priority over visual sky events.
+  void followAmbient(Object owner, Offset point, Size size) {
+    if (!point.dx.isFinite ||
+        !point.dy.isFinite ||
+        !size.width.isFinite ||
+        !size.height.isFinite ||
+        size.width <= 0 ||
+        size.height <= 0) {
+      return;
+    }
+    _ambientOwner = owner;
+    _ambientPosition = point;
+    _ambientViewport = size;
+    if (!_pointerActive) notifyListeners();
+  }
+
+  void releaseAmbient(Object owner) {
+    if (!identical(_ambientOwner, owner)) return;
+    _ambientOwner = null;
+    _ambientPosition = null;
+    _ambientViewport = null;
+    if (!_pointerActive) notifyListeners();
   }
 }
 

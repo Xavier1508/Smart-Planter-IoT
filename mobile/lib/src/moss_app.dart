@@ -57,6 +57,7 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
   Timer? _clockTimer;
   bool _storageUnavailable = false;
   final _gaze = MossGaze();
+  final _atmosphere = MossAtmosphere(SkyAppearance.atHour(12));
   final Stream<Object?> _updateEvents = const EventChannel(
     'moss/update_progress',
   ).receiveBroadcastStream();
@@ -159,6 +160,7 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
     Widget dashboard(Widget? cloudSettings) => Dashboard(
       render3d: widget.render3d,
       gaze: _gaze,
+      atmosphere: _atmosphere,
       telemetry: widget.cloud?.telemetry ?? widget.telemetry,
       cloudSettings: cloudSettings,
       cloudSetupNotice: widget.cloudSetupNotice,
@@ -169,8 +171,9 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
           _updateAppearance(_appearance.copyWith(themeMode: value)),
       onSkyChanged: (value) =>
           _updateAppearance(_appearance.copyWith(sky: value)),
-      onManualTimeChanged: (value) =>
-          _updateAppearance(_appearance.copyWith(manualMinute: value)),
+      onManualTimeChanged: (value) => _updateAppearance(
+        _appearance.copyWith(sky: SkyChoice.custom, manualMinute: value),
+      ),
     );
     return MaterialApp(
       title: 'Moss · Smart Planter',

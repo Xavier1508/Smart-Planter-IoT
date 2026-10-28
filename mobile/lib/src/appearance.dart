@@ -16,6 +16,35 @@ enum SkyChoice {
 
   final String label;
   final double? exampleHour;
+
+  static const presets = <SkyChoice>[
+    dawn,
+    morning,
+    day,
+    evening,
+    night,
+    midnight,
+  ];
+
+  /// A swipe from automatic or custom starts at the nearest visible preset.
+  static SkyChoice step(SkyChoice current, double hour, {required bool next}) {
+    var index = presets.indexOf(current);
+    if (index < 0) {
+      final normalized = hour.isFinite ? ((hour % 24) + 24) % 24 : 12.0;
+      var closest = double.infinity;
+      for (var i = 0; i < presets.length; i++) {
+        final distance = (normalized - presets[i].exampleHour!).abs();
+        final circularDistance = distance < 24 - distance
+            ? distance
+            : 24 - distance;
+        if (circularDistance < closest) {
+          closest = circularDistance;
+          index = i;
+        }
+      }
+    }
+    return presets[(index + (next ? 1 : -1) + presets.length) % presets.length];
+  }
 }
 
 class AppearanceSettings {
@@ -113,6 +142,15 @@ class SkyAppearance {
   final double moonOpacity;
   final double starsOpacity;
 
+  /// A faint decorative moon arrives during late afternoon.
+  double get visibleMoonOpacity {
+    if (hour < 15 || hour >= 18) return moonOpacity;
+    // The normal moon opacity overtakes this gentle ramp before 18:00,
+    // avoiding a visible jump when the early-moon treatment ends.
+    final early = ((hour - 15) / 1.5).clamp(0.0, 1.0) * .18;
+    return early > moonOpacity ? early : moonOpacity;
+  }
+
   static SkyAppearance resolve(
     SkyChoice choice,
     DateTime now, {
@@ -155,6 +193,12 @@ class SkyAppearance {
       starsOpacity: lerp(from.stars, to.stars).clamp(0.0, 1.0),
     );
   }
+}
+
+/// Current visual sky shared with the 3D scene; it contains no sensor data.
+class MossAtmosphere {
+  MossAtmosphere(SkyAppearance initial) : current = initial;
+  SkyAppearance current;
 }
 
 class _SkyFrame {

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smart_planter/src/appearance.dart';
 import 'package:smart_planter/src/moss_gaze.dart';
 import 'package:smart_planter/src/moss_motion.dart';
+import 'package:smart_planter/src/moss_sky.dart';
 
 void main() {
   test('pointer position maps to bounded yaw and pitch', () {
@@ -141,6 +143,68 @@ void main() {
     expect(gaze.directionFrom(face), isNull);
   });
 
+  test('finger takes priority over sky or comet and restores ambient gaze', () {
+    final gaze = MossGaze();
+    addTearDown(gaze.dispose);
+    const screen = Size(400, 800);
+    final sky = Object();
+    final comet = Object();
+    gaze.followAmbient(sky, const Offset(350, 100), screen);
+    expect(gaze.position, const Offset(350, 100));
+    gaze.follow(const Offset(20, 700), screen);
+    gaze.followAmbient(comet, const Offset(200, 120), screen);
+    expect(gaze.position, const Offset(20, 700));
+    gaze.releaseAmbient(sky); // A stale owner cannot cancel the comet.
+    gaze.release();
+    expect(gaze.position, const Offset(200, 120));
+    gaze.releaseAmbient(comet);
+    expect(gaze.active, isFalse);
+  });
+
+  test(
+    'idle head and arms move independently and stop with reduced motion',
+    () {
+      final motion = MossMotion()
+        ..idlePersonality = true
+        ..windAmplitude = 0;
+      final initial = motion.advance(.05);
+      MossFrame later = initial;
+      for (var i = 0; i < 40; i++) {
+        later = motion.advance(.05);
+      }
+      expect((later.yaw - initial.yaw).abs(), greaterThan(.01));
+      expect((later.leftArm - initial.leftArm).abs(), greaterThan(.01));
+      expect((later.rightArm - initial.rightArm).abs(), greaterThan(.01));
+      expect(later.leftArm + later.rightArm, isNot(closeTo(0, .01)));
+      motion.reduceMotion = true;
+      final still = motion.advance(.05);
+      expect(still.yaw, 0);
+      expect(still.leftArm, -.35);
+      expect(still.rightArm, .35);
+    },
+  );
+
+  test('successive touches use three smoothly blended poses', () {
+    final motion = MossMotion()..windAmplitude = 0;
+    final poses = <MossFrame>[];
+    for (var pose = 0; pose < 3; pose++) {
+      motion.tap();
+      var frame = motion.advance(.05);
+      for (var i = 0; i < 5; i++) {
+        frame = motion.advance(.05);
+      }
+      poses.add(frame);
+      for (var i = 0; i < 100; i++) {
+        motion.advance(.05);
+      }
+    }
+    expect(poses[0].leftArm, greaterThan(.2));
+    expect(poses[0].rightArm, lessThan(-.2));
+    expect(poses[1].rightArm, greaterThan(poses[0].rightArm + .3));
+    expect(poses[2].leftArm, lessThan(poses[0].leftArm - .3));
+    expect(poses[2].rightArm, lessThan(-.2));
+  });
+
   testWidgets('screen tracking observes taps without blocking buttons', (
     tester,
   ) async {
@@ -278,6 +342,8 @@ void main() {
     final motion = MossMotion();
     final scroll = ScrollController();
     final gaze = MossGaze();
+    var swipes = 0;
+    var reactions = 0;
     addTearDown(scroll.dispose);
     addTearDown(gaze.dispose);
     await tester.pumpWidget(
@@ -290,11 +356,18 @@ void main() {
               children: [
                 SizedBox(
                   height: 200,
-                  child: MossTouchSurface(
-                    key: const ValueKey('moss-touch'),
-                    motion: motion,
-                    hitTest: (_, _) => true,
-                    child: const ColoredBox(color: Colors.green),
+                  child: MossSky(
+                    sky: SkyAppearance.atHour(12),
+                    onSwipe: (_) => swipes++,
+                    child: MossTouchSurface(
+                      key: const ValueKey('moss-touch'),
+                      motion: motion,
+                      hitTest: (_, _) => true,
+                      onReact: (_) => reactions++,
+                      child: const SizedBox.expand(
+                        child: ColoredBox(color: Colors.green),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 1800),
@@ -310,5 +383,16 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(scroll.offset, greaterThan(0));
+    expect(swipes, 0);
+    expect(reactions, 0);
+    scroll.jumpTo(0);
+    await tester.pump();
+    await tester.drag(
+      find.byKey(const ValueKey('moss-touch')),
+      const Offset(-120, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(swipes, 1);
+    expect(reactions, 0);
   });
 }

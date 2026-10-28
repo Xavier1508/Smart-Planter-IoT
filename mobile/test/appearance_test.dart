@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/appearance.dart';
 import 'package:smart_planter/src/moss_app.dart';
+import 'package:smart_planter/src/moss_gaze.dart';
 import 'package:smart_planter/src/moss_sky.dart';
 
 void main() {
@@ -20,6 +21,23 @@ void main() {
     expect(SkyAppearance.atHour(12).sunOpacity, 1);
     expect(SkyAppearance.atHour(0).moonOpacity, 1);
     expect(SkyAppearance.atHour(0).starsOpacity, greaterThan(0));
+    expect(SkyAppearance.atHour(16.5).visibleMoonOpacity, greaterThan(0));
+    expect(
+      (SkyAppearance.atHour(18).visibleMoonOpacity -
+              SkyAppearance.atHour(17.999).visibleMoonOpacity)
+          .abs(),
+      lessThan(.001),
+    );
+  });
+
+  test('preset stepping wraps and starts near automatic or custom time', () {
+    expect(SkyChoice.step(SkyChoice.midnight, 23, next: true), SkyChoice.dawn);
+    expect(SkyChoice.step(SkyChoice.dawn, 5, next: false), SkyChoice.midnight);
+    expect(
+      SkyChoice.step(SkyChoice.automatic, 12, next: true),
+      SkyChoice.evening,
+    );
+    expect(SkyChoice.step(SkyChoice.custom, .5, next: false), SkyChoice.night);
   });
 
   test('automatic time changes continuously but manual time is fixed', () {
@@ -99,7 +117,9 @@ void main() {
   );
 
   testWidgets('theme and sky can be selected independently', (tester) async {
-    await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.pumpWidget(
+      MossApp(render3d: false, clock: () => DateTime(2026, 1, 1, 12)),
+    );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(DropdownButtonFormField<ThemeMode>));
@@ -110,11 +130,10 @@ void main() {
       Theme.of(tester.element(find.text('Tampilan & suasana'))).brightness,
       Brightness.dark,
     );
-    await tester.tap(find.byType(DropdownButtonFormField<SkyChoice>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sore').last);
-    await tester.pumpAndSettle();
+    expect(find.byType(DropdownButtonFormField<SkyChoice>), findsNothing);
     await tester.tap(find.text('Hari ini'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Suasana berikutnya'));
     await tester.pumpAndSettle();
     final sky = tester.widget<MossSky>(find.byType(MossSky)).sky;
     expect(sky.label, 'Sore');
@@ -139,12 +158,7 @@ void main() {
     (tester) async {
       tester.platformDispatcher.alwaysUse24HourFormatTestValue = false;
       addTearDown(tester.platformDispatcher.clearAlwaysUse24HourTestValue);
-      await tester.pumpWidget(
-        const MossApp(
-          render3d: false,
-          initialAppearance: AppearanceSettings(sky: SkyChoice.custom),
-        ),
-      );
+      await tester.pumpWidget(const MossApp(render3d: false));
       await tester.tap(find.text('Pengaturan'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const ValueKey('pick-moss-time')));
@@ -162,6 +176,38 @@ void main() {
       expect(find.text('TENGAH MALAM · PILIHAN'), findsOneWidget);
     },
   );
+
+  testWidgets('card swipe and accessible arrows select and restore time', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MossApp(render3d: false, clock: () => DateTime(2026, 1, 1, 12)),
+    );
+    expect(find.text('SIANG · JAM HP'), findsOneWidget);
+    await tester.drag(find.byType(MossSky), const Offset(-130, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('SORE · PILIHAN'), findsOneWidget);
+    await tester.tap(find.byTooltip('Suasana berikutnya'));
+    await tester.pumpAndSettle();
+    expect(find.text('MALAM · PILIHAN'), findsOneWidget);
+    await tester.drag(find.byType(MossSky), const Offset(130, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('SORE · PILIHAN'), findsOneWidget);
+    await tester.tap(find.byTooltip('Suasana sebelumnya'));
+    await tester.pumpAndSettle();
+    expect(find.text('SIANG · PILIHAN'), findsOneWidget);
+
+    await tester.tap(find.text('Pengaturan'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('automatic-moss-time')),
+    );
+    await tester.tap(find.byKey(const ValueKey('automatic-moss-time')));
+    await tester.tap(find.text('Hari ini'));
+    await tester.pumpAndSettle();
+    expect(find.text('SIANG · JAM HP'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('restored dark mode remains usable across the app', (
     tester,
@@ -213,6 +259,206 @@ void main() {
       tester.widget<AnimatedContainer>(find.byType(AnimatedContainer)).duration,
       Duration.zero,
     );
+  });
+
+  testWidgets(
+    'sky crosses midnight smoothly and retargets interrupted swipes',
+    (tester) async {
+      final gaze = MossGaze();
+      final atmosphere = MossAtmosphere(SkyAppearance.atHour(23));
+      addTearDown(gaze.dispose);
+      Widget skyAt(double hour) => MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 320,
+              height: 350,
+              child: MossSky(
+                sky: SkyAppearance.atHour(hour),
+                gaze: gaze,
+                atmosphere: atmosphere,
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(skyAt(23));
+      await tester.pumpWidget(skyAt(5));
+      await tester.pump(const Duration(milliseconds: 700));
+      final half = Curves.easeInOutCubic.transform(.5);
+      expect(atmosphere.current.hour, closeTo((23 + 6 * half) % 24, .01));
+      expect(gaze.active, isTrue);
+      expect(
+        gaze.position!.dx,
+        lessThan(tester.getCenter(find.byType(MossSky)).dx),
+      );
+      final interruptedHour = atmosphere.current.hour;
+      await tester.pumpWidget(skyAt(19.5));
+      expect(atmosphere.current.hour, closeTo(interruptedHour, .01));
+      await tester.pump(const Duration(milliseconds: 700));
+      final returnDelta = ((19.5 - interruptedHour + 36) % 24) - 12;
+      expect(
+        atmosphere.current.hour,
+        closeTo((interruptedHour + returnDelta * half + 24) % 24, .01),
+      );
+      expect(
+        gaze.position!.dx,
+        greaterThan(tester.getCenter(find.byType(MossSky)).dx),
+      );
+      await tester.pump(const Duration(milliseconds: 750));
+      expect(atmosphere.current.hour, closeTo(19.5, .01));
+      expect(gaze.active, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'night comet respects lifecycle, ticker mode and reduced motion',
+    (tester) async {
+      final gaze = MossGaze();
+      addTearDown(gaze.dispose);
+      Widget sky({bool reduced = false, bool ticking = true}) => MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(
+            size: const Size(800, 600),
+            disableAnimations: reduced,
+          ),
+          child: TickerMode(
+            enabled: ticking,
+            child: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 320,
+                  height: 350,
+                  child: MossSky(
+                    sky: SkyAppearance.atHour(23),
+                    gaze: gaze,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      Future<void> startComet() async {
+        await tester.pump(const Duration(seconds: 35));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(gaze.active, isTrue);
+      }
+
+      await tester.pumpWidget(sky());
+      await startComet();
+      final firstPosition = gaze.position!;
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gaze.position!.dx, lessThan(firstPosition.dx));
+      expect(gaze.position!.dy, greaterThan(firstPosition.dy));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      expect(gaze.active, isFalse);
+      await tester.pump(const Duration(seconds: 40));
+      expect(gaze.active, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await startComet();
+
+      await tester.pumpWidget(sky(reduced: true));
+      expect(gaze.active, isFalse);
+      await tester.pump(const Duration(seconds: 40));
+      expect(gaze.active, isFalse);
+      await tester.pumpWidget(sky(ticking: false));
+      await tester.pump(const Duration(seconds: 40));
+      expect(gaze.active, isFalse);
+      await tester.pumpWidget(sky());
+      await startComet();
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(gaze.active, isFalse);
+      await tester.pump(const Duration(seconds: 40));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'an interrupted sky settles when motion or activity is disabled',
+    (tester) async {
+      final gaze = MossGaze();
+      final atmosphere = MossAtmosphere(SkyAppearance.atHour(12));
+      addTearDown(gaze.dispose);
+      Widget skyAt(double hour, {bool reduced = false, bool ticking = true}) =>
+          MaterialApp(
+            home: MediaQuery(
+              data: MediaQueryData(
+                size: const Size(800, 600),
+                disableAnimations: reduced,
+              ),
+              child: TickerMode(
+                enabled: ticking,
+                child: SizedBox(
+                  width: 320,
+                  height: 350,
+                  child: MossSky(
+                    sky: SkyAppearance.atHour(hour),
+                    gaze: gaze,
+                    atmosphere: atmosphere,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+              ),
+            ),
+          );
+
+      await tester.pumpWidget(skyAt(12));
+      await tester.pumpWidget(skyAt(23));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(atmosphere.current.hour, isNot(23));
+      expect(gaze.active, isTrue);
+      await tester.pumpWidget(skyAt(23, reduced: true));
+      expect(atmosphere.current.hour, 23);
+      expect(gaze.active, isFalse);
+      await tester.pumpWidget(skyAt(5, reduced: true));
+      expect(atmosphere.current.hour, 5);
+
+      await tester.pumpWidget(skyAt(5));
+      await tester.pumpWidget(skyAt(12));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gaze.active, isTrue);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      expect(atmosphere.current.hour, 12);
+      expect(gaze.active, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+      await tester.pumpWidget(skyAt(23));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gaze.active, isTrue);
+      await tester.pumpWidget(skyAt(23, ticking: false));
+      expect(atmosphere.current.hour, 23);
+      expect(gaze.active, isFalse);
+      await tester.pumpWidget(skyAt(5, ticking: false));
+      expect(atmosphere.current.hour, 5);
+      expect(gaze.active, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('daytime does not schedule a comet', (tester) async {
+    final gaze = MossGaze();
+    addTearDown(gaze.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MossSky(
+          sky: SkyAppearance.atHour(12),
+          gaze: gaze,
+          child: const SizedBox(height: 300),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 70));
+    expect(gaze.active, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('sun and moon stay large and clear of the center of the card', (
