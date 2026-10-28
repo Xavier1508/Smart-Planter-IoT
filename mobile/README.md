@@ -5,10 +5,18 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 ## Yang tersedia
 
 - Tampilan Android, karakter 3D sederhana, dan tiga kondisi **simulasi**.
+- Ikon peluncur Moss dengan versi adaptif untuk Android; desain sumbernya ada di
+  [aset identitas visual](assets/branding/moss-icon.svg).
 - Gerakan angin pelan serta respons terhadap sentuhan, geseran jari, dan pointer; opsi sistem untuk mengurangi animasi dihormati.
 - Mode tanpa simulasi menampilkan nilai kosong, bukan angka sensor palsu.
 - Informasi sensor air dan MQ135 disiapkan sebagai belum terpasang.
 - Kontrol pompa dan lampu belum aktif; riwayat tidak direkayasa.
+- Halaman riwayat menampilkan grafik dan aktivitas **contoh** hanya saat mode
+  simulasi aktif; data contoh tidak disimpan sebagai riwayat sensor.
+- Halaman perangkat menyediakan saklar **simulasi lokal**. Saklar tersebut tidak
+  mengirim perintah dan tidak dapat mengubah keadaan pompa atau lampu nyata.
+- Pengaturan menampilkan versi/build Android dan membedakan pratinjau lokal dari
+  varian beta yang memeriksa pembaruan melalui App Distribution.
 - Fondasi Supabase mencakup tabel perangkat dan pembacaan privat, masuk akun,
   serta pembaca Realtime di aplikasi. Pembacaan tidak valid, kedaluwarsa, atau
   terputus tidak ditampilkan sebagai data aktif.
@@ -29,6 +37,14 @@ flutter run
 ```
 
 Flutter GPU diaktifkan di manifest Android untuk renderer 3D. Uji kinerja dan kompatibilitas pada perangkat fisik sebelum presentasi. Nilai dalam mode simulasi tidak digunakan sebagai data pelatihan.
+
+APK debug lokal hanya untuk melihat pratinjau. APK tersebut tidak menyertakan
+pemeriksaan pembaruan Firebase dan menggunakan package terpisah
+`io.github.xavier1508.smart_planter.preview`, sehingga tidak menggantikan beta
+release. Jika ditandatangani dengan kunci debug sementara, build debug berikutnya
+dengan kunci berbeda juga tidak dapat memperbarui pratinjau yang lama secara
+langsung. Menghapus aplikasi dapat menghapus datanya; jangan hapus aplikasi yang
+ada tanpa memastikan data dan konsekuensinya terlebih dahulu.
 
 ## Cloud dan keamanan data
 
@@ -67,7 +83,7 @@ database tidak habis secara tidak sengaja.
   penyimpanan kredensial pada ESP32 masih harus ditentukan dan diuji. Jangan
   mengaktifkan ingestion sebelum mekanisme tersebut siap dan sesuai kuota.
 
-## Distribusi privat (belum aktif)
+## Distribusi beta privat
 
 Package Android: `io.github.xavier1508.smart_planter`. Varian default `production`
 tidak berisi SDK self-update App Distribution dan tidak memerlukan konfigurasi

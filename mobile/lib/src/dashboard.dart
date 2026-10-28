@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'app_version_panel.dart';
+import 'devices_page.dart';
+import 'journal_page.dart';
 import 'moss_app.dart';
 import 'moss_avatar.dart';
 import 'plant_state.dart';
@@ -151,13 +154,8 @@ class _DashboardState extends State<Dashboard> {
             onScenario: (value) => setState(() => _scenario = value),
             onDemoChanged: () => setState(() => _demo = !_demo),
           ),
-          1 => const _InfoPage(
-            eyebrow: 'JURNAL TANAMAN',
-            title: 'Riwayat',
-            icon: Icons.history_rounded,
-            heading: 'Belum ada riwayat',
-            body: 'Catatan sensor akan muncul di sini setelah perangkat dan cloud terhubung. Data demo tidak disimpan sebagai riwayat.',
-          ),
+          1 => JournalPage(demo: _demo, scenario: _scenario),
+          2 => DevicesPage(state: state),
           _ => _SettingsPage(
             demo: _demo,
             onDemoChanged: () => setState(() => _demo = !_demo),
@@ -179,6 +177,11 @@ class _DashboardState extends State<Dashboard> {
             icon: Icon(Icons.insights_outlined),
             selectedIcon: Icon(Icons.insights),
             label: 'Riwayat',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.sensors_outlined),
+            selectedIcon: Icon(Icons.sensors),
+            label: 'Perangkat',
           ),
           NavigationDestination(
             icon: Icon(Icons.tune_outlined),
@@ -735,80 +738,13 @@ class _ControlNotice extends StatelessWidget {
               ),
               SizedBox(height: 4),
               Text(
-                'Kontrol tersedia setelah ESP32 terhubung.',
+                'Kendali nyata belum tersedia.',
                 style: TextStyle(color: muted, fontSize: 11),
               ),
             ],
           ),
         ),
         Icon(Icons.lock_outline_rounded, size: 18, color: muted),
-      ],
-    ),
-  );
-}
-
-class _InfoPage extends StatelessWidget {
-  const _InfoPage({
-    required this.eyebrow,
-    required this.title,
-    required this.icon,
-    required this.heading,
-    required this.body,
-  });
-  final String eyebrow;
-  final String title;
-  final IconData icon;
-  final String heading;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(24),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          eyebrow,
-          style: const TextStyle(
-            fontSize: 10,
-            letterSpacing: 1.6,
-            fontWeight: FontWeight.w800,
-            color: muted,
-          ),
-        ),
-        const SizedBox(height: 7),
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.8,
-          ),
-        ),
-        Expanded(
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, color: forest, size: 42),
-                const SizedBox(height: 18),
-                Text(
-                  heading,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  body,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: muted, height: 1.5),
-                ),
-              ],
-            ),
-          ),
-        ),
       ],
     ),
   );
@@ -869,6 +805,7 @@ class _SettingsPage extends StatelessWidget {
             title: 'Koneksi cloud',
             body: sourceNotice,
           ),
+      const AppVersionPanel(),
       const _SettingLine(
         icon: Icons.sensors_outlined,
         title: 'Sensor tambahan',

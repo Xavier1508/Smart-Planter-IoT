@@ -46,16 +46,15 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(
-      find.text('Kontrol tersedia setelah ESP32 terhubung.'),
-      findsOneWidget,
-    );
+    expect(find.text('Kendali nyata belum tersedia.'), findsOneWidget);
   });
 
   testWidgets('history is explicitly empty rather than fabricated', (
     tester,
   ) async {
     await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tutup'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Riwayat'));
     await tester.pumpAndSettle();

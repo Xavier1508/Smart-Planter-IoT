@@ -4,6 +4,8 @@ import android.os.SystemClock
 import android.util.Log
 import com.google.firebase.appdistribution.FirebaseAppDistribution
 
+internal const val distributionChannel = "beta"
+
 private const val checkIntervalMs = 15 * 60 * 1000L
 private var lastCheckMs: Long? = null
 private var checkInProgress = false
