@@ -4,10 +4,15 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 
 ## Yang tersedia
 
-- Tampilan Android, karakter 3D sederhana, dan tiga kondisi **simulasi**.
+- Tampilan Android, karakter 3D bergaya dengan material yang merespons cahaya,
+  dan tiga kondisi **simulasi**. Perubahan visual 0.3.2 masih perlu diuji pada
+  perangkat fisik; karakter tetap model geometris, bukan model fotorealistis.
 - Ikon peluncur Moss dengan versi adaptif untuk Android; desain sumbernya ada di
   [aset identitas visual](assets/branding/moss-icon.svg).
-- Karakter merespons arah jari dan sentuhan dengan kedipan, gerakan, dan efek visual; opsi sistem untuk mengurangi animasi dihormati.
+- Karakter mengikuti posisi jari di dalam layar aplikasi; hanya sentuhan yang
+  mengenai geometri karakter atau pot memicu reaksi. Kepala dan tangan bergerak
+  secara terpisah; opsi sistem untuk mengurangi animasi dihormati. Fitur baru
+  ini masih perlu diuji pada renderer dan ponsel fisik.
 - Tema aplikasi dapat mengikuti sistem atau dipilih terang/gelap. Pengaturan
   tampilan tersimpan secara lokal di Android.
 - Langit, matahari, bulan, bintang, dan warna pencahayaan berubah mengikuti jam
@@ -90,13 +95,18 @@ database tidak habis secara tidak sengaja.
 
 ## Distribusi beta privat
 
-Penguji menerima tawaran pembaruan di aplikasi, tetapi catatan ponsel menunjukkan
-crash pada layar pemasangan Firebase karena tema Android tidak kompatibel. Saat
-diperiksa, beta 0.2.0 build 3 masih terpasang; pembaruan 0.3.0 belum berhasil.
-Perbaikan tema disiapkan pada varian beta dan perlu dipasang sekali melalui
-Firebase App Tester sebelum alur pembaruan di dalam aplikasi diuji kembali.
-Build berjalan dalam mode demo/offline karena publishable key Supabase belum
-dikonfigurasi.
+Catatan OPPO menunjukkan beta 0.2.0 build 3 crash pada layar pemasangan Firebase
+karena tema Android tidak kompatibel. Beta 0.3.1 build 5 dengan perbaikan tema
+berhasil dipasang melalui Firebase App Tester dan versinya diverifikasi lewat
+ADB. Penguji kemudian melaporkan bahwa pembaruan dari dalam Moss ke build 6
+berhasil; versi build 6 belum diverifikasi kembali melalui ADB. Penguji juga
+melaporkan tidak ada indikator unduhan yang terlihat.
+
+Perubahan 0.3.2 menampilkan status dan progres byte dari callback Firebase,
+tetapi belum diuji dengan unduhan nyata. Update dari build 6
+ke 0.3.2 masih menggunakan antarmuka pemutakhir lama; indikator baru baru dapat
+diuji ketika 0.3.2 sudah terpasang dan pembaruan berikutnya tersedia. Build beta
+berjalan dalam mode demo/offline karena publishable key Supabase belum dikonfigurasi.
 
 Package Android: `io.github.xavier1508.smart_planter`. Varian default `production`
 tidak berisi SDK self-update App Distribution dan tidak memerlukan konfigurasi

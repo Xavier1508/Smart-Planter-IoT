@@ -13,15 +13,20 @@ class MossMotion {
   double _yaw = 0;
   double _pitch = 0;
   double _windTime = 0;
-  double _tapTime = double.infinity;
+  double _reaction = 0;
+  double _reactionHold = 0;
+  double _reactionSide = 0;
+  double _targetReactionSide = -.55;
+  double _lookHold = 0;
   double windAmplitude = .06;
   bool reduceMotion = false;
   MossFrame lastFrame = const MossFrame(
     yaw: 0,
     pitch: 0,
     roll: 0,
-    bounce: 0,
     shift: 0,
+    leftArm: -.35,
+    rightArm: .35,
     blink: 0,
     reaction: 0,
   );
@@ -38,47 +43,88 @@ class MossMotion {
     }
     final x = ((position.dx / bounds.width) * 2 - 1).clamp(-1.0, 1.0);
     final y = ((position.dy / bounds.height) * 2 - 1).clamp(-1.0, 1.0);
+    _lookHold = 0;
     // Reverse horizontal rotation based on the tester's observed direction.
     targetYaw = -x * maxYaw;
     targetPitch = y * maxPitch;
   }
 
   void release() {
+    _lookHold = 0;
     targetYaw = 0;
     targetPitch = 0;
   }
 
-  void tap() {
-    if (!reduceMotion) _tapTime = 0;
+  /// Briefly hold a gaze after a quick tap, then return to the neutral pose.
+  void releaseAfter(double seconds) {
+    if (!seconds.isFinite || seconds <= 0) {
+      release();
+    } else {
+      _lookHold = seconds;
+    }
+  }
+
+  /// A tap makes Moss gently lean away; repeated taps extend the reaction
+  /// instead of restarting it abruptly. [horizontal] is -1 at the left edge.
+  void tap({double horizontal = 0}) {
+    if (reduceMotion) return;
+    final x = horizontal.isFinite ? horizontal.clamp(-1.0, 1.0) : 0.0;
+    _targetReactionSide = x.abs() < .12 ? -.55 : -x;
+    _reactionHold = .38;
   }
 
   MossFrame advance(double deltaSeconds) {
     final dt = deltaSeconds.isFinite ? deltaSeconds.clamp(0.0, .05) : 0.0;
-    final blend = reduceMotion ? 1.0 : 1 - math.exp(-8 * dt);
+    if (reduceMotion) {
+      _yaw = 0;
+      _pitch = 0;
+      _reaction = 0;
+      _reactionHold = 0;
+      _reactionSide = 0;
+      _lookHold = 0;
+      lastFrame = const MossFrame(
+        yaw: 0,
+        pitch: 0,
+        roll: 0,
+        shift: 0,
+        leftArm: -.35,
+        rightArm: .35,
+        blink: 0,
+        reaction: 0,
+      );
+      return lastFrame;
+    }
+
+    if (_lookHold > 0) {
+      _lookHold -= dt;
+      if (_lookHold <= 0) release();
+    }
+    final blend = 1 - math.exp(-6 * dt);
     _yaw += (targetYaw - _yaw) * blend;
     _pitch += (targetPitch - _pitch) * blend;
     _windTime += dt;
-    _tapTime += dt;
+    final reactionTarget = _reactionHold > 0 ? 1.0 : 0.0;
+    _reactionHold = math.max(0.0, _reactionHold - dt);
+    final responseTime = reactionTarget > _reaction ? .16 : .45;
+    _reaction +=
+        (reactionTarget - _reaction) * (1 - math.exp(-dt / responseTime));
+    _reactionSide += (_targetReactionSide - _reactionSide) * blend;
 
-    final wind = reduceMotion ? 0.0 : math.sin(_windTime * 1.2) * windAmplitude;
-    final reaction = reduceMotion || _tapTime > .65
-        ? 0.0
-        : math.sin((_tapTime / .65) * math.pi);
+    final wind = math.sin(_windTime * 1.2) * windAmplitude;
     final idleBlinkTime = _windTime % 5.5;
-    final idleBlink = reduceMotion || idleBlinkTime > .18
+    final idleBlink = idleBlinkTime > .18
         ? 0.0
         : math.sin((idleBlinkTime / .18) * math.pi);
-    final touchBlink = reduceMotion || _tapTime > .35
-        ? 0.0
-        : math.sin((_tapTime / .35) * math.pi);
     lastFrame = MossFrame(
-      yaw: _yaw,
-      pitch: _pitch,
-      roll: wind + reaction * .055,
-      bounce: reaction * .075,
-      shift: -_yaw / maxYaw * .08,
-      blink: math.max(idleBlink, touchBlink),
-      reaction: reaction,
+      yaw: _yaw + _reactionSide * _reaction * .08,
+      pitch: _pitch + _reaction * .10,
+      roll: wind - _reactionSide * _reaction * .085,
+      shift: -_yaw / maxYaw * .05 + _reactionSide * _reaction * .035,
+      // Both arms pivot toward the chest independently of the body.
+      leftArm: -.35 + _reaction * 1.15 - wind * .2,
+      rightArm: .35 - _reaction * 1.15 - wind * .2,
+      blink: math.max(idleBlink, _reaction * .65),
+      reaction: _reaction,
     );
     return lastFrame;
   }
@@ -89,30 +135,34 @@ class MossFrame {
     required this.yaw,
     required this.pitch,
     required this.roll,
-    required this.bounce,
     required this.shift,
+    required this.leftArm,
+    required this.rightArm,
     required this.blink,
     required this.reaction,
   });
   final double yaw;
   final double pitch;
   final double roll;
-  final double bounce;
   final double shift;
+  final double leftArm;
+  final double rightArm;
   final double blink;
   final double reaction;
 }
 
-/// Listens to pointer events without taking over the scrolling gesture arena.
+/// Detects taps on a caller-provided 3D hit test without taking over scrolling.
 class MossTouchSurface extends StatefulWidget {
   const MossTouchSurface({
     super.key,
     required this.motion,
     required this.child,
+    required this.hitTest,
     this.onReact,
   });
   final MossMotion motion;
   final Widget child;
+  final bool Function(Offset position, Size bounds) hitTest;
   final ValueChanged<Offset>? onReact;
 
   @override
@@ -125,30 +175,35 @@ class _MossTouchSurfaceState extends State<MossTouchSurface> {
   bool _moved = false;
 
   void _startPointer(PointerDownEvent event, Size size) {
-    if (_pointer != null) return;
+    if (_pointer != null || !widget.hitTest(event.localPosition, size)) return;
     _pointer = event.pointer;
     _start = event.position;
     _moved = false;
-    widget.motion.lookAt(event.localPosition, size);
   }
 
-  void _movePointer(PointerMoveEvent event, Size size) {
+  void _movePointer(PointerMoveEvent event) {
     if (event.pointer != _pointer) return;
     if (_start != null && (event.position - _start!).distance > kTouchSlop) {
       _moved = true;
     }
-    widget.motion.lookAt(event.localPosition, size);
   }
 
-  void _endPointer(int pointer, Offset position, {bool cancelled = false}) {
+  void _endPointer(
+    int pointer,
+    Offset position,
+    Size size, {
+    bool cancelled = false,
+  }) {
     if (pointer != _pointer) return;
     if (!cancelled && !_moved) {
-      widget.motion.tap();
+      final horizontal = size.width > 0
+          ? position.dx / size.width * 2 - 1
+          : 0.0;
+      widget.motion.tap(horizontal: horizontal);
       widget.onReact?.call(position);
     }
     _pointer = null;
     _start = null;
-    widget.motion.release();
   }
 
   @override
@@ -162,28 +217,19 @@ class _MossTouchSurfaceState extends State<MossTouchSurface> {
           widget.motion.tap();
           widget.onReact?.call(Offset(size.width / 2, size.height / 2));
         },
-        child: MouseRegion(
-          onHover: (event) {
-            if (_pointer == null) {
-              widget.motion.lookAt(event.localPosition, size);
-            }
-          },
-          onExit: (_) {
-            if (_pointer == null) widget.motion.release();
-          },
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (event) => _startPointer(event, size),
-            onPointerMove: (event) => _movePointer(event, size),
-            onPointerUp: (event) =>
-                _endPointer(event.pointer, event.localPosition),
-            onPointerCancel: (event) => _endPointer(
-              event.pointer,
-              event.localPosition,
-              cancelled: true,
-            ),
-            child: widget.child,
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (event) => _startPointer(event, size),
+          onPointerMove: _movePointer,
+          onPointerUp: (event) =>
+              _endPointer(event.pointer, event.localPosition, size),
+          onPointerCancel: (event) => _endPointer(
+            event.pointer,
+            event.localPosition,
+            size,
+            cancelled: true,
           ),
+          child: widget.child,
         ),
       );
     },

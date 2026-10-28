@@ -22,10 +22,13 @@ class MossSky extends StatelessWidget {
     final sunProgress = ((sky.hour - 5) / 14).clamp(0.0, 1.0);
     final moonHour = sky.hour < 12 ? sky.hour + 24 : sky.hour;
     final moonProgress = ((moonHour - 18) / 12).clamp(0.0, 1.0);
-    Alignment position(double progress) => Alignment(
-      -.82 + 1.64 * progress,
-      .55 - 1.2 * math.sin(progress * math.pi),
-    );
+    Alignment position(double progress, {required bool isSun}) {
+      final arc = math.sin(progress * math.pi);
+      // Keep the bright disc to the side of the centered 3D character, even
+      // when its arc reaches its highest point at noon or midnight.
+      final side = .98 - .08 * arc;
+      return Alignment(isSun ? -side : side, .38 - .70 * arc);
+    }
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(26),
@@ -56,29 +59,43 @@ class MossSky extends StatelessWidget {
               right: 12,
               height: 190,
               child: IgnorePointer(
-                child: Stack(
-                  children: [
-                    AnimatedAlign(
-                      duration: duration,
-                      curve: Curves.easeInOut,
-                      alignment: position(sunProgress),
-                      child: AnimatedOpacity(
-                        duration: duration,
-                        opacity: sky.sunOpacity,
-                        child: const _CelestialBody(isSun: true),
-                      ),
-                    ),
-                    AnimatedAlign(
-                      duration: duration,
-                      curve: Curves.easeInOut,
-                      alignment: position(moonProgress),
-                      child: AnimatedOpacity(
-                        duration: duration,
-                        opacity: sky.moonOpacity,
-                        child: const _CelestialBody(isSun: false),
-                      ),
-                    ),
-                  ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final diameter = math.min(
+                      constraints.maxWidth,
+                      (constraints.maxWidth * .34).clamp(62.0, 94.0),
+                    );
+                    return Stack(
+                      children: [
+                        AnimatedAlign(
+                          duration: duration,
+                          curve: Curves.easeInOut,
+                          alignment: position(sunProgress, isSun: true),
+                          child: AnimatedOpacity(
+                            duration: duration,
+                            opacity: sky.sunOpacity,
+                            child: _CelestialBody(
+                              isSun: true,
+                              diameter: diameter,
+                            ),
+                          ),
+                        ),
+                        AnimatedAlign(
+                          duration: duration,
+                          curve: Curves.easeInOut,
+                          alignment: position(moonProgress, isSun: false),
+                          child: AnimatedOpacity(
+                            duration: duration,
+                            opacity: sky.moonOpacity,
+                            child: _CelestialBody(
+                              isSun: false,
+                              diameter: diameter,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
@@ -91,29 +108,32 @@ class MossSky extends StatelessWidget {
 }
 
 class _CelestialBody extends StatelessWidget {
-  const _CelestialBody({required this.isSun});
+  const _CelestialBody({required this.isSun, required this.diameter});
 
   final bool isSun;
+  final double diameter;
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    width: 76,
-    height: 76,
+    width: diameter,
+    height: diameter,
     child: DecoratedBox(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: RadialGradient(
           colors: [
             (isSun ? const Color(0xFFFFEDB2) : const Color(0xFFDCEAFF))
-                .withValues(alpha: .42),
+                .withValues(alpha: .50),
             Colors.transparent,
           ],
         ),
       ),
       child: Center(
-        child: CustomPaint(
-          size: const Size(34, 34),
-          painter: _CelestialPainter(isSun: isSun),
+        child: SizedBox(
+          key: ValueKey(isSun ? 'moss-sun-disc' : 'moss-moon-disc'),
+          width: diameter * .55,
+          height: diameter * .55,
+          child: CustomPaint(painter: _CelestialPainter(isSun: isSun)),
         ),
       ),
     ),
@@ -128,27 +148,37 @@ class _CelestialPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = size.center(Offset.zero);
+    final unit = size.shortestSide;
     if (isSun) {
-      final paint = Paint()..color = const Color(0xFFFFEAB0);
-      canvas.drawCircle(center, 11, paint);
-      paint
+      final radius = unit * .32;
+      final paint = Paint()
+        ..shader = const RadialGradient(
+          center: Alignment(-.35, -.35),
+          colors: [Color(0xFFFFF6D3), Color(0xFFFFD579)],
+        ).createShader(Rect.fromCircle(center: center, radius: radius));
+      canvas.drawCircle(center, radius, paint);
+      final rays = Paint()
+        ..color = const Color(0xFFFFEAB0)
         ..strokeWidth = 2
         ..strokeCap = StrokeCap.round;
       for (var i = 0; i < 8; i++) {
         final angle = i * math.pi / 4;
         final direction = Offset(math.cos(angle), math.sin(angle));
         canvas.drawLine(
-          center + direction * 14,
-          center + direction * 17,
-          paint,
+          center + direction * (unit * .39),
+          center + direction * (unit * .48),
+          rays,
         );
       }
     } else {
       final outer = Path()
-        ..addOval(Rect.fromCircle(center: center, radius: 13));
+        ..addOval(Rect.fromCircle(center: center, radius: unit * .38));
       final cutout = Path()
         ..addOval(
-          Rect.fromCircle(center: center + const Offset(6, -5), radius: 11),
+          Rect.fromCircle(
+            center: center + Offset(unit * .18, -unit * .15),
+            radius: unit * .32,
+          ),
         );
       canvas.drawPath(
         Path.combine(PathOperation.difference, outer, cutout),

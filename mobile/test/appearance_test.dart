@@ -214,4 +214,58 @@ void main() {
       Duration.zero,
     );
   });
+
+  testWidgets('sun and moon stay large and clear of the center of the card', (
+    tester,
+  ) async {
+    for (final width in [240.0, 276.0, 376.0]) {
+      for (final hour in [5.0, 8.0, 12.0, 16.5, 19.5, 23.0, 0.0, 4.0]) {
+        final sky = SkyAppearance.atHour(hour);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: width,
+                  height: 350,
+                  child: MossSky(sky: sky, child: const SizedBox.expand()),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final card = tester.getRect(find.byType(MossSky));
+        final centerLeft = card.left + card.width * .35;
+        final centerRight = card.left + card.width * .65;
+        if (sky.sunOpacity > .1) {
+          final sun = tester.getRect(
+            find.byKey(const ValueKey('moss-sun-disc')),
+          );
+          expect(
+            sun.width,
+            greaterThan(34),
+            reason: 'sun at $hour, width $width',
+          );
+          expect(sun.right, lessThan(centerLeft), reason: 'sun at $hour');
+          expect(card.contains(sun.topLeft), isTrue);
+          expect(card.contains(sun.bottomRight), isTrue);
+        }
+        if (sky.moonOpacity > .1) {
+          final moon = tester.getRect(
+            find.byKey(const ValueKey('moss-moon-disc')),
+          );
+          expect(
+            moon.width,
+            greaterThan(34),
+            reason: 'moon at $hour, width $width',
+          );
+          expect(moon.left, greaterThan(centerRight), reason: 'moon at $hour');
+          expect(card.contains(moon.topLeft), isTrue);
+          expect(card.contains(moon.bottomRight), isTrue);
+        }
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
 }

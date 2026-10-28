@@ -1,12 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'appearance.dart';
 import 'cloud_account_panel.dart';
 import 'cloud_controller.dart';
 import 'dashboard.dart';
+import 'moss_gaze.dart';
 import 'plant_telemetry.dart';
+import 'update_progress.dart';
 
 const ink = Color(0xFF213027);
 const forest = Color(0xFF315E48);
@@ -53,6 +56,10 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
   late DateTime _now;
   Timer? _clockTimer;
   bool _storageUnavailable = false;
+  final _gaze = MossGaze();
+  final Stream<Object?> _updateEvents = const EventChannel(
+    'moss/update_progress',
+  ).receiveBroadcastStream();
 
   DateTime _readClock() => widget.clock?.call() ?? DateTime.now();
 
@@ -97,6 +104,7 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
   void dispose() {
     _clockTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _gaze.dispose();
     super.dispose();
   }
 
@@ -150,6 +158,7 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
     );
     Widget dashboard(Widget? cloudSettings) => Dashboard(
       render3d: widget.render3d,
+      gaze: _gaze,
       telemetry: widget.cloud?.telemetry ?? widget.telemetry,
       cloudSettings: cloudSettings,
       cloudSetupNotice: widget.cloudSetupNotice,
@@ -169,6 +178,13 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
       themeMode: _appearance.themeMode,
+      builder: (context, child) => MossScreenTracker(
+        gaze: _gaze,
+        child: UpdateProgressHost(
+          events: _updateEvents,
+          child: child ?? const SizedBox.shrink(),
+        ),
+      ),
       home: widget.cloud == null
           ? dashboard(null)
           : ListenableBuilder(

@@ -9,6 +9,7 @@ import 'devices_page.dart';
 import 'journal_page.dart';
 import 'moss_app.dart';
 import 'moss_avatar.dart';
+import 'moss_gaze.dart';
 import 'moss_sky.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
@@ -17,6 +18,7 @@ class Dashboard extends StatefulWidget {
   const Dashboard({
     super.key,
     required this.render3d,
+    required this.gaze,
     this.telemetry,
     this.cloudSettings,
     this.cloudSetupNotice,
@@ -29,6 +31,7 @@ class Dashboard extends StatefulWidget {
   });
 
   final bool render3d;
+  final MossGaze gaze;
   final Stream<PlantTelemetry>? telemetry;
   final Widget? cloudSettings;
   final String? cloudSetupNotice;
@@ -165,6 +168,7 @@ class _DashboardState extends State<Dashboard> {
             state: state,
             scenario: _scenario,
             render3d: widget.render3d,
+            gaze: widget.gaze,
             sourceNotice: _sourceNotice,
             sky: widget.sky,
             automaticSky: widget.appearance.sky == SkyChoice.automatic,
@@ -221,6 +225,7 @@ class _Home extends StatelessWidget {
     required this.state,
     required this.scenario,
     required this.render3d,
+    required this.gaze,
     required this.sourceNotice,
     required this.onScenario,
     required this.onDemoChanged,
@@ -231,6 +236,7 @@ class _Home extends StatelessWidget {
   final PlantState state;
   final DemoScenario scenario;
   final bool render3d;
+  final MossGaze gaze;
   final String sourceNotice;
   final ValueChanged<DemoScenario> onScenario;
   final VoidCallback onDemoChanged;
@@ -246,8 +252,8 @@ class _Home extends StatelessWidget {
     final skyHeaderInk = MossSky.foregroundFor(sky.top);
     final mutedColor = context.mossColors.onSurfaceVariant;
     final tint = Color.lerp(
-      const Color(0x44233665),
-      const Color(0x12FFD38C),
+      const Color(0x19233665),
+      const Color(0x09FFD38C),
       sky.sunOpacity,
     )!;
     final transition = MediaQuery.disableAnimationsOf(context)
@@ -342,7 +348,7 @@ class _Home extends StatelessWidget {
                           child: child,
                         ),
                         child: render3d
-                            ? MossAvatar(mood: mood)
+                            ? MossAvatar(mood: mood, sky: sky, gaze: gaze)
                             : Center(
                                 child: Icon(
                                   Icons.spa_outlined,
