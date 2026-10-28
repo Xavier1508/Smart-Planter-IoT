@@ -37,13 +37,13 @@ class _DevicesPageState extends State<DevicesPage> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
       children: [
-        const Text(
+        Text(
           'SMART PLANTER',
           style: TextStyle(
             fontSize: 10,
             letterSpacing: 1.6,
             fontWeight: FontWeight.w800,
-            color: muted,
+            color: context.mossColors.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 7),
@@ -59,13 +59,17 @@ class _DevicesPageState extends State<DevicesPage> {
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: const Color(0xFFE5EDE1),
+            color: context.mossColors.primaryContainer,
             borderRadius: BorderRadius.circular(20),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.sensors_rounded, color: forest, size: 28),
+              Icon(
+                Icons.sensors_rounded,
+                color: context.mossColors.onPrimaryContainer,
+                size: 28,
+              ),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(
@@ -77,9 +81,10 @@ class _DevicesPageState extends State<DevicesPage> {
                           : state.isLive
                           ? 'Data sensor tersedia'
                           : 'Menunggu data perangkat',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
+                        color: context.mossColors.onPrimaryContainer,
                       ),
                     ),
                     const SizedBox(height: 6),
@@ -87,7 +92,11 @@ class _DevicesPageState extends State<DevicesPage> {
                       state.isDemo
                           ? 'SIMULASI — bukan status ESP32 sebenarnya.'
                           : 'Status pompa dan lampu belum dapat diverifikasi dari aplikasi.',
-                      style: const TextStyle(fontSize: 12, height: 1.4),
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.4,
+                        color: context.mossColors.onPrimaryContainer,
+                      ),
                     ),
                   ],
                 ),
@@ -141,19 +150,23 @@ class _DevicesPageState extends State<DevicesPage> {
         const SizedBox(height: 10),
         if (state.isDemo)
           Material(
-            color: Colors.white,
+            color: context.mossColors.surfaceContainerLowest,
             clipBehavior: Clip.antiAlias,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
-              side: const BorderSide(color: Color(0xFFEBEDE6)),
+              side: BorderSide(color: context.mossColors.outlineVariant),
             ),
             child: Column(
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
                   child: Text(
                     'SIMULASI — saklar ini tidak mengendalikan pompa atau lampu nyata.',
-                    style: TextStyle(color: muted, fontSize: 12, height: 1.4),
+                    style: TextStyle(
+                      color: context.mossColors.onSurfaceVariant,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
                   ),
                 ),
                 SwitchListTile(
@@ -179,18 +192,24 @@ class _DevicesPageState extends State<DevicesPage> {
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0EEE6),
+              color: context.mossColors.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: const Row(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.lock_outline_rounded, color: muted),
-                SizedBox(width: 12),
+                Icon(
+                  Icons.lock_outline_rounded,
+                  color: context.mossColors.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     'Kendali nyata belum tersedia. Aplikasi tidak menyalakan atau mematikan aktuator.',
-                    style: TextStyle(color: muted, height: 1.4),
+                    style: TextStyle(
+                      color: context.mossColors.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                 ),
               ],
@@ -216,17 +235,23 @@ class _SensorRow extends StatelessWidget {
     margin: const EdgeInsets.only(bottom: 8),
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: context.mossColors.surfaceContainerLowest,
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: const Color(0xFFEBEDE6)),
+      border: Border.all(color: context.mossColors.outlineVariant),
     ),
     child: Row(
       children: [
-        Icon(icon, color: forest, size: 20),
+        Icon(icon, color: context.mossColors.primary, size: 20),
         const SizedBox(width: 11),
         Expanded(child: Text(name, style: const TextStyle(fontSize: 13))),
         const SizedBox(width: 8),
-        Text(status, style: const TextStyle(color: muted, fontSize: 10)),
+        Text(
+          status,
+          style: TextStyle(
+            color: context.mossColors.onSurfaceVariant,
+            fontSize: 10,
+          ),
+        ),
       ],
     ),
   );

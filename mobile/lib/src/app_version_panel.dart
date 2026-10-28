@@ -54,7 +54,11 @@ class _AppVersionPanelState extends State<AppVersionPanel> {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.system_update_alt_rounded, color: forest, size: 21),
+        Icon(
+          Icons.system_update_alt_rounded,
+          color: context.mossColors.primary,
+          size: 21,
+        ),
         const SizedBox(width: 13),
         Expanded(
           child: Column(
@@ -69,16 +73,22 @@ class _AppVersionPanelState extends State<AppVersionPanel> {
                 future: _info,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState != ConnectionState.done) {
-                    return const Text(
+                    return Text(
                       'Memeriksa versi aplikasi...',
-                      style: TextStyle(color: muted, fontSize: 12),
+                      style: TextStyle(
+                        color: context.mossColors.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
                     );
                   }
                   final info = snapshot.data;
                   if (info == null) {
-                    return const Text(
+                    return Text(
                       'Info versi tidak tersedia pada perangkat ini.',
-                      style: TextStyle(color: muted, fontSize: 12),
+                      style: TextStyle(
+                        color: context.mossColors.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
                     );
                   }
                   final description = info.channel == 'beta'
@@ -86,8 +96,8 @@ class _AppVersionPanelState extends State<AppVersionPanel> {
                       : 'Varian ini tidak memeriksa pembaruan Firebase secara otomatis.';
                   return Text(
                     'Versi ${info.version} · build ${info.build}\n$description',
-                    style: const TextStyle(
-                      color: muted,
+                    style: TextStyle(
+                      color: context.mossColors.onSurfaceVariant,
                       fontSize: 12,
                       height: 1.4,
                     ),

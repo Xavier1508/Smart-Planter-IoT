@@ -80,11 +80,15 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.cloud_outlined, color: forest, size: 21),
-              SizedBox(width: 13),
-              Text(
+              Icon(
+                Icons.cloud_outlined,
+                color: context.mossColors.primary,
+                size: 21,
+              ),
+              const SizedBox(width: 13),
+              const Text(
                 'Koneksi cloud',
                 style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
               ),
@@ -93,7 +97,11 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
           const SizedBox(height: 8),
           Text(
             widget.controller.status,
-            style: const TextStyle(color: muted, fontSize: 12, height: 1.4),
+            style: TextStyle(
+              color: context.mossColors.onSurfaceVariant,
+              fontSize: 12,
+              height: 1.4,
+            ),
           ),
           if (widget.controller.signedIn) ...[
             const SizedBox(height: 8),
@@ -143,14 +151,23 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                 ),
               ],
             ),
-            const Text(
+            Text(
               'Sesi hanya tersimpan selama aplikasi terbuka.',
-              style: TextStyle(color: muted, fontSize: 11),
+              style: TextStyle(
+                color: context.mossColors.onSurfaceVariant,
+                fontSize: 11,
+              ),
             ),
           ],
           if (_message != null) ...[
             const SizedBox(height: 8),
-            Text(_message!, style: const TextStyle(color: muted, fontSize: 12)),
+            Text(
+              _message!,
+              style: TextStyle(
+                color: context.mossColors.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
           ],
         ],
       ),

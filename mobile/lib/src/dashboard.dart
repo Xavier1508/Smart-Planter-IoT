@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'appearance.dart';
+import 'appearance_panel.dart';
 import 'app_version_panel.dart';
 import 'devices_page.dart';
 import 'journal_page.dart';
 import 'moss_app.dart';
 import 'moss_avatar.dart';
+import 'moss_sky.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
 
@@ -17,12 +20,24 @@ class Dashboard extends StatefulWidget {
     this.telemetry,
     this.cloudSettings,
     this.cloudSetupNotice,
+    required this.appearance,
+    required this.sky,
+    required this.storageUnavailable,
+    required this.onThemeChanged,
+    required this.onSkyChanged,
+    required this.onManualTimeChanged,
   });
 
   final bool render3d;
   final Stream<PlantTelemetry>? telemetry;
   final Widget? cloudSettings;
   final String? cloudSetupNotice;
+  final AppearanceSettings appearance;
+  final SkyAppearance sky;
+  final bool storageUnavailable;
+  final ValueChanged<ThemeMode> onThemeChanged;
+  final ValueChanged<SkyChoice> onSkyChanged;
+  final ValueChanged<int> onManualTimeChanged;
 
   @override
   State<Dashboard> createState() => _DashboardState();
@@ -151,6 +166,8 @@ class _DashboardState extends State<Dashboard> {
             scenario: _scenario,
             render3d: widget.render3d,
             sourceNotice: _sourceNotice,
+            sky: widget.sky,
+            automaticSky: widget.appearance.sky == SkyChoice.automatic,
             onScenario: (value) => setState(() => _scenario = value),
             onDemoChanged: () => setState(() => _demo = !_demo),
           ),
@@ -161,6 +178,11 @@ class _DashboardState extends State<Dashboard> {
             onDemoChanged: () => setState(() => _demo = !_demo),
             sourceNotice: widget.cloudSetupNotice ?? _sourceNotice,
             cloudSettings: widget.cloudSettings,
+            appearance: widget.appearance,
+            storageUnavailable: widget.storageUnavailable,
+            onThemeChanged: widget.onThemeChanged,
+            onSkyChanged: widget.onSkyChanged,
+            onManualTimeChanged: widget.onManualTimeChanged,
           ),
         },
       ),
@@ -202,6 +224,8 @@ class _Home extends StatelessWidget {
     required this.sourceNotice,
     required this.onScenario,
     required this.onDemoChanged,
+    required this.sky,
+    required this.automaticSky,
   });
 
   final PlantState state;
@@ -210,12 +234,25 @@ class _Home extends StatelessWidget {
   final String sourceNotice;
   final ValueChanged<DemoScenario> onScenario;
   final VoidCallback onDemoChanged;
+  final SkyAppearance sky;
+  final bool automaticSky;
 
   String _percent(int? value) => value == null ? '—' : '$value%';
 
   @override
   Widget build(BuildContext context) {
     final mood = state.mood;
+    final skyInk = MossSky.foregroundFor(sky.bottom);
+    final skyHeaderInk = MossSky.foregroundFor(sky.top);
+    final mutedColor = context.mossColors.onSurfaceVariant;
+    final tint = Color.lerp(
+      const Color(0x44233665),
+      const Color(0x12FFD38C),
+      sky.sunOpacity,
+    )!;
+    final transition = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 1200);
     return CustomScrollView(
       slivers: [
         SliverPadding(
@@ -224,7 +261,7 @@ class _Home extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -234,11 +271,11 @@ class _Home extends StatelessWidget {
                             fontSize: 10,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 2.0,
-                            color: muted,
+                            color: mutedColor,
                           ),
                         ),
-                        SizedBox(height: 4),
-                        Text(
+                        const SizedBox(height: 4),
+                        const Text(
                           'Ruang Moss',
                           style: TextStyle(
                             fontSize: 25,
@@ -253,41 +290,39 @@ class _Home extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 22),
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE5EDE1),
-                  borderRadius: BorderRadius.circular(26),
-                ),
+              MossSky(
+                sky: sky,
                 child: Column(
                   children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
                       child: Row(
                         children: [
-                          const Icon(
-                            Icons.eco_outlined,
-                            color: forest,
-                            size: 17,
-                          ),
+                          Icon(Icons.eco_outlined, color: skyInk, size: 17),
                           const SizedBox(width: 7),
                           Expanded(
                             child: Text(
                               mood.label.toUpperCase(),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 1.2,
-                                color: forest,
+                                color: skyHeaderInk,
                               ),
                             ),
                           ),
-                          const Text(
-                            '01  /  MOSS',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.1,
-                              color: muted,
+                          Flexible(
+                            child: Text(
+                              '${sky.label.toUpperCase()} · ${automaticSky ? 'JAM HP' : 'PILIHAN'}',
+                              textAlign: TextAlign.end,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: .6,
+                                color: skyHeaderInk,
+                              ),
                             ),
                           ),
                         ],
@@ -296,15 +331,26 @@ class _Home extends StatelessWidget {
                     SizedBox(
                       height: 235,
                       width: double.infinity,
-                      child: render3d
-                          ? MossAvatar(mood: mood)
-                          : const Center(
-                              child: Icon(
-                                Icons.spa_outlined,
-                                size: 88,
-                                color: forest,
+                      child: TweenAnimationBuilder<Color?>(
+                        tween: ColorTween(end: tint),
+                        duration: transition,
+                        builder: (context, color, child) => ColorFiltered(
+                          colorFilter: ColorFilter.mode(
+                            color!,
+                            BlendMode.srcATop,
+                          ),
+                          child: child,
+                        ),
+                        child: render3d
+                            ? MossAvatar(mood: mood)
+                            : Center(
+                                child: Icon(
+                                  Icons.spa_outlined,
+                                  size: 88,
+                                  color: skyHeaderInk,
+                                ),
                               ),
-                            ),
+                      ),
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
@@ -313,20 +359,21 @@ class _Home extends StatelessWidget {
                           Text(
                             mood.message,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w700,
                               letterSpacing: -0.6,
+                              color: skyInk,
                             ),
                           ),
                           const SizedBox(height: 7),
                           Text(
                             state.explanation,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
                               height: 1.4,
-                              color: muted,
+                              color: skyInk,
                             ),
                           ),
                         ],
@@ -344,13 +391,13 @@ class _Home extends StatelessWidget {
               ),
               if (state.isDemo) ...[
                 const SizedBox(height: 20),
-                const Text(
+                Text(
                   'COBA KONDISI MOSS',
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.4,
-                    color: muted,
+                    color: mutedColor,
                   ),
                 ),
                 const SizedBox(height: 9),
@@ -395,11 +442,11 @@ class _Home extends StatelessWidget {
                         : state.isLive
                         ? 'DATA SENSOR'
                         : 'BELUM TERHUBUNG',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 1,
-                      color: muted,
+                      color: mutedColor,
                     ),
                   ),
                 ],
@@ -482,9 +529,9 @@ class _Home extends StatelessWidget {
               const SizedBox(height: 12),
               const _ControlNotice(),
               const SizedBox(height: 22),
-              const Text(
+              Text(
                 'Ekspresi Moss menggunakan aturan sederhana, bukan hasil model machine learning.',
-                style: TextStyle(color: muted, fontSize: 11, height: 1.45),
+                style: TextStyle(color: mutedColor, fontSize: 11, height: 1.45),
               ),
             ],
           ),
@@ -553,9 +600,9 @@ class _Notice extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: context.mossColors.surfaceContainerLowest,
       borderRadius: BorderRadius.circular(15),
-      border: Border.all(color: const Color(0xFFE6E9DF)),
+      border: Border.all(color: context.mossColors.outlineVariant),
     ),
     child: Row(
       children: [
@@ -566,7 +613,7 @@ class _Notice extends StatelessWidget {
               ? Icons.sensors_rounded
               : Icons.wifi_off_rounded,
           size: 19,
-          color: forest,
+          color: context.mossColors.primary,
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -597,14 +644,16 @@ class _ScenarioChip extends StatelessWidget {
     selected: selected,
     onSelected: (_) => onTap(),
     showCheckmark: false,
-    selectedColor: forest,
-    backgroundColor: Colors.white,
+    selectedColor: context.mossColors.primaryContainer,
+    backgroundColor: context.mossColors.surfaceContainerLowest,
     labelStyle: TextStyle(
-      color: selected ? Colors.white : ink,
+      color: selected
+          ? context.mossColors.onPrimaryContainer
+          : context.mossColors.onSurface,
       fontSize: 12,
       fontWeight: FontWeight.w600,
     ),
-    side: BorderSide(color: selected ? forest : const Color(0xFFE0E5DC)),
+    side: BorderSide(color: context.mossColors.outlineVariant),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
   );
 }
@@ -627,9 +676,9 @@ class _Metric extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(15),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: context.mossColors.surfaceContainerLowest,
       borderRadius: BorderRadius.circular(17),
-      border: Border.all(color: const Color(0xFFEBEDE6)),
+      border: Border.all(color: context.mossColors.outlineVariant),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -640,8 +689,8 @@ class _Metric extends StatelessWidget {
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: muted,
+          style: TextStyle(
+            color: context.mossColors.onSurfaceVariant,
             fontSize: 11,
             fontWeight: FontWeight.w600,
           ),
@@ -660,7 +709,10 @@ class _Metric extends StatelessWidget {
           detail,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: muted, fontSize: 11),
+          style: TextStyle(
+            color: context.mossColors.onSurfaceVariant,
+            fontSize: 11,
+          ),
         ),
       ],
     ),
@@ -675,13 +727,13 @@ class _AirRow extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: context.mossColors.surfaceContainerLowest,
       borderRadius: BorderRadius.circular(17),
-      border: Border.all(color: const Color(0xFFEBEDE6)),
+      border: Border.all(color: context.mossColors.outlineVariant),
     ),
     child: Row(
       children: [
-        const Icon(Icons.air_rounded, color: forest),
+        Icon(Icons.air_rounded, color: context.mossColors.primary),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -696,17 +748,20 @@ class _AirRow extends StatelessWidget {
                 state.isDemo
                     ? 'Kondisi contoh, bukan pembacaan CO₂'
                     : 'Belum dipasang dan belum dikalibrasi',
-                style: const TextStyle(fontSize: 11, color: muted),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: context.mossColors.onSurfaceVariant,
+                ),
               ),
             ],
           ),
         ),
         Text(
           state.isDemo ? (state.airChanged ? 'BERUBAH' : 'STABIL') : '—',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.w800,
-            color: forest,
+            color: context.mossColors.primary,
           ),
         ),
       ],
@@ -721,30 +776,40 @@ class _ControlNotice extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: const Color(0xFFF0EEE6),
+      color: context.mossColors.surfaceContainerHighest,
       borderRadius: BorderRadius.circular(17),
     ),
-    child: const Row(
+    child: Row(
       children: [
-        Icon(Icons.power_settings_new_rounded, color: muted),
-        SizedBox(width: 12),
+        Icon(
+          Icons.power_settings_new_rounded,
+          color: context.mossColors.onSurfaceVariant,
+        ),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
+              const Text(
                 'Pompa & lampu',
                 style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
               ),
-              SizedBox(height: 4),
+              const SizedBox(height: 4),
               Text(
                 'Kendali nyata belum tersedia.',
-                style: TextStyle(color: muted, fontSize: 11),
+                style: TextStyle(
+                  color: context.mossColors.onSurfaceVariant,
+                  fontSize: 11,
+                ),
               ),
             ],
           ),
         ),
-        Icon(Icons.lock_outline_rounded, size: 18, color: muted),
+        Icon(
+          Icons.lock_outline_rounded,
+          size: 18,
+          color: context.mossColors.onSurfaceVariant,
+        ),
       ],
     ),
   );
@@ -756,23 +821,33 @@ class _SettingsPage extends StatelessWidget {
     required this.onDemoChanged,
     required this.sourceNotice,
     required this.cloudSettings,
+    required this.appearance,
+    required this.storageUnavailable,
+    required this.onThemeChanged,
+    required this.onSkyChanged,
+    required this.onManualTimeChanged,
   });
   final bool demo;
   final VoidCallback onDemoChanged;
   final String sourceNotice;
   final Widget? cloudSettings;
+  final AppearanceSettings appearance;
+  final bool storageUnavailable;
+  final ValueChanged<ThemeMode> onThemeChanged;
+  final ValueChanged<SkyChoice> onSkyChanged;
+  final ValueChanged<int> onManualTimeChanged;
 
   @override
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(24),
     children: [
-      const Text(
+      Text(
         'PREFERENSI',
         style: TextStyle(
           fontSize: 10,
           letterSpacing: 1.6,
           fontWeight: FontWeight.w800,
-          color: muted,
+          color: context.mossColors.onSurfaceVariant,
         ),
       ),
       const SizedBox(height: 7),
@@ -791,12 +866,20 @@ class _SettingsPage extends StatelessWidget {
           'Mode simulasi',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
-        subtitle: const Text(
+        subtitle: Text(
           'Coba ekspresi Moss tanpa perangkat.',
-          style: TextStyle(color: muted),
+          style: TextStyle(color: context.mossColors.onSurfaceVariant),
         ),
         value: demo,
         onChanged: (_) => onDemoChanged(),
+      ),
+      const Divider(height: 32),
+      AppearancePanel(
+        settings: appearance,
+        storageUnavailable: storageUnavailable,
+        onThemeChanged: onThemeChanged,
+        onSkyChanged: onSkyChanged,
+        onManualTimeChanged: onManualTimeChanged,
       ),
       const Divider(height: 32),
       cloudSettings ??
@@ -841,7 +924,7 @@ class _SettingLine extends StatelessWidget {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: forest, size: 21),
+        Icon(icon, color: context.mossColors.primary, size: 21),
         const SizedBox(width: 13),
         Expanded(
           child: Column(
@@ -857,7 +940,11 @@ class _SettingLine extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 body,
-                style: const TextStyle(color: muted, fontSize: 12, height: 1.4),
+                style: TextStyle(
+                  color: context.mossColors.onSurfaceVariant,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
               ),
             ],
           ),

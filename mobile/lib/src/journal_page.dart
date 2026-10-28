@@ -32,13 +32,13 @@ class _JournalPageState extends State<JournalPage> {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
     children: [
-      const Text(
+      Text(
         'JURNAL TANAMAN',
         style: TextStyle(
           fontSize: 10,
           letterSpacing: 1.6,
           fontWeight: FontWeight.w800,
-          color: muted,
+          color: context.mossColors.onSurfaceVariant,
         ),
       ),
       const SizedBox(height: 7),
@@ -51,9 +51,12 @@ class _JournalPageState extends State<JournalPage> {
         ),
       ),
       const SizedBox(height: 8),
-      const Text(
+      Text(
         'Lihat perjalanan kecil tanamanmu di sini.',
-        style: TextStyle(color: muted, height: 1.4),
+        style: TextStyle(
+          color: context.mossColors.onSurfaceVariant,
+          height: 1.4,
+        ),
       ),
       const SizedBox(height: 22),
       if (!widget.demo)
@@ -62,14 +65,17 @@ class _JournalPageState extends State<JournalPage> {
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: const Color(0xFFF3EAD7),
+            color: context.mossColors.secondaryContainer,
             borderRadius: BorderRadius.circular(18),
           ),
-          child: const Row(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.science_outlined, color: Color(0xFF8B6937)),
-              SizedBox(width: 12),
+              Icon(
+                Icons.science_outlined,
+                color: context.mossColors.onSecondaryContainer,
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -77,16 +83,20 @@ class _JournalPageState extends State<JournalPage> {
                     Text(
                       'RIWAYAT SIMULASI',
                       style: TextStyle(
-                        color: Color(0xFF76572E),
+                        color: context.mossColors.onSecondaryContainer,
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
                         letterSpacing: .8,
                       ),
                     ),
-                    SizedBox(height: 5),
+                    const SizedBox(height: 5),
                     Text(
                       'Grafik dan aktivitas ini hanya contoh. Tidak ada data sensor yang disimpan.',
-                      style: TextStyle(fontSize: 12, height: 1.4),
+                      style: TextStyle(
+                        color: context.mossColors.onSecondaryContainer,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
                     ),
                   ],
                 ),
@@ -98,9 +108,9 @@ class _JournalPageState extends State<JournalPage> {
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: context.mossColors.surfaceContainerLowest,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFEBEDE6)),
+            border: Border.all(color: context.mossColors.outlineVariant),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -110,9 +120,12 @@ class _JournalPageState extends State<JournalPage> {
                 style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'Pola ilustrasi, bukan pengukuran.',
-                style: TextStyle(color: muted, fontSize: 12),
+                style: TextStyle(
+                  color: context.mossColors.onSurfaceVariant,
+                  fontSize: 12,
+                ),
               ),
               const SizedBox(height: 12),
               Wrap(
@@ -142,27 +155,36 @@ class _JournalPageState extends State<JournalPage> {
                   child: CustomPaint(
                     painter: _ExampleChart(
                       points: _points,
-                      color: _showSoil ? forest : const Color(0xFFAB843A),
+                      color: _showSoil
+                          ? context.mossColors.primary
+                          : const Color(0xFFAB843A),
+                      gridColor: context.mossColors.outlineVariant,
                     ),
                   ),
                 ),
               ),
               const SizedBox(height: 8),
-              const Row(
+              Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Expanded(
                     child: Text(
                       'Awal contoh',
-                      style: TextStyle(color: muted, fontSize: 10),
+                      style: TextStyle(
+                        color: context.mossColors.onSurfaceVariant,
+                        fontSize: 10,
+                      ),
                     ),
                   ),
-                  SizedBox(width: 8),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Akhir contoh',
                       textAlign: TextAlign.end,
-                      style: TextStyle(color: muted, fontSize: 10),
+                      style: TextStyle(
+                        color: context.mossColors.onSurfaceVariant,
+                        fontSize: 10,
+                      ),
                     ),
                   ),
                 ],
@@ -198,23 +220,30 @@ class _EmptyJournal extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 38),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: context.mossColors.surfaceContainerLowest,
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: const Color(0xFFEBEDE6)),
+      border: Border.all(color: context.mossColors.outlineVariant),
     ),
-    child: const Column(
+    child: Column(
       children: [
-        Icon(Icons.history_rounded, color: forest, size: 42),
-        SizedBox(height: 16),
-        Text(
+        Icon(
+          Icons.history_rounded,
+          color: context.mossColors.primary,
+          size: 42,
+        ),
+        const SizedBox(height: 16),
+        const Text(
           'Belum ada riwayat',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
-        SizedBox(height: 8),
+        const SizedBox(height: 8),
         Text(
           'Riwayat sensor nyata belum tersedia. Data simulasi tidak disimpan sebagai riwayat.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: muted, height: 1.5),
+          style: TextStyle(
+            color: context.mossColors.onSurfaceVariant,
+            height: 1.5,
+          ),
         ),
       ],
     ),
@@ -234,16 +263,16 @@ class _ExampleEvent extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     elevation: 0,
-    color: Colors.white,
+    color: context.mossColors.surfaceContainerLowest,
     margin: const EdgeInsets.only(bottom: 8),
     child: ListTile(
-      leading: Icon(icon, color: forest),
+      leading: Icon(icon, color: context.mossColors.primary),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
       subtitle: Text(subtitle),
-      trailing: const Text(
+      trailing: Text(
         'CONTOH',
         style: TextStyle(
-          color: muted,
+          color: context.mossColors.onSurfaceVariant,
           fontSize: 10,
           fontWeight: FontWeight.w700,
         ),
@@ -253,14 +282,19 @@ class _ExampleEvent extends StatelessWidget {
 }
 
 class _ExampleChart extends CustomPainter {
-  const _ExampleChart({required this.points, required this.color});
+  const _ExampleChart({
+    required this.points,
+    required this.color,
+    required this.gridColor,
+  });
   final List<double> points;
   final Color color;
+  final Color gridColor;
 
   @override
   void paint(Canvas canvas, Size size) {
     final grid = Paint()
-      ..color = const Color(0xFFE9EEE8)
+      ..color = gridColor
       ..strokeWidth = 1;
     for (var i = 0; i < 4; i++) {
       final y = size.height * i / 3;
@@ -296,5 +330,7 @@ class _ExampleChart extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ExampleChart oldDelegate) =>
-      oldDelegate.points != points || oldDelegate.color != color;
+      oldDelegate.points != points ||
+      oldDelegate.color != color ||
+      oldDelegate.gridColor != gridColor;
 }

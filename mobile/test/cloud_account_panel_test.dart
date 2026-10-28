@@ -24,6 +24,8 @@ void main() {
     expect(find.text('Masuk untuk melihat perangkat Anda.'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
     expect(find.text('Kata sandi'), findsOneWidget);
+    await tester.ensureVisible(find.text('Masuk'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Masuk'));
     await tester.pump();
     expect(

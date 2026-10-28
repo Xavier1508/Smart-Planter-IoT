@@ -7,7 +7,12 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 - Tampilan Android, karakter 3D sederhana, dan tiga kondisi **simulasi**.
 - Ikon peluncur Moss dengan versi adaptif untuk Android; desain sumbernya ada di
   [aset identitas visual](assets/branding/moss-icon.svg).
-- Gerakan angin pelan serta respons terhadap sentuhan, geseran jari, dan pointer; opsi sistem untuk mengurangi animasi dihormati.
+- Karakter merespons arah jari dan sentuhan dengan kedipan, gerakan, dan efek visual; opsi sistem untuk mengurangi animasi dihormati.
+- Tema aplikasi dapat mengikuti sistem atau dipilih terang/gelap. Pengaturan
+  tampilan tersimpan secara lokal di Android.
+- Langit, matahari, bulan, bintang, dan warna pencahayaan berubah mengikuti jam
+  lokal ponsel. Suasana waktu atau jam tertentu juga dapat dipilih sendiri di
+  Pengaturan; efek ini bersifat visual dan bukan pembacaan sensor cahaya.
 - Mode tanpa simulasi menampilkan nilai kosong, bukan angka sensor palsu.
 - Informasi sensor air dan MQ135 disiapkan sebagai belum terpasang.
 - Kontrol pompa dan lampu belum aktif; riwayat tidak direkayasa.

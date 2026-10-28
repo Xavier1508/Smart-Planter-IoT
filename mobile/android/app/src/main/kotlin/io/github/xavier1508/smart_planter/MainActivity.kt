@@ -8,6 +8,32 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val appearance = getSharedPreferences("moss_appearance", MODE_PRIVATE)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/appearance")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "read" -> result.success(mapOf(
+                        "theme" to appearance.getString("theme", "system"),
+                        "sky" to appearance.getString("sky", "automatic"),
+                        "manualMinute" to appearance.getInt("manualMinute", 720),
+                    ))
+                    "write" -> {
+                        val theme = call.argument<String>("theme")
+                        val sky = call.argument<String>("sky")
+                        val manualMinute = call.argument<Int>("manualMinute")
+                        val themes = setOf("system", "light", "dark")
+                        val skies = setOf("automatic", "dawn", "morning", "day", "evening", "night", "midnight", "custom")
+                        if (theme == null || sky == null || manualMinute == null || theme !in themes || sky !in skies || manualMinute !in 0..1439) {
+                            result.error("invalid", "Display settings are invalid.", null)
+                        } else {
+                            appearance.edit().putString("theme", theme).putString("sky", sky)
+                                .putInt("manualMinute", manualMinute).apply()
+                            result.success(null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/build_info")
             .setMethodCallHandler { call, result ->
                 if (call.method != "read") {

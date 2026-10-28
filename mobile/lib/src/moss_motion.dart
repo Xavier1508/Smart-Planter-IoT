@@ -16,6 +16,15 @@ class MossMotion {
   double _tapTime = double.infinity;
   double windAmplitude = .06;
   bool reduceMotion = false;
+  MossFrame lastFrame = const MossFrame(
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+    bounce: 0,
+    shift: 0,
+    blink: 0,
+    reaction: 0,
+  );
 
   /// The character follows the pointer without requiring a 3D hit-test.
   void lookAt(Offset position, Size bounds) {
@@ -29,7 +38,8 @@ class MossMotion {
     }
     final x = ((position.dx / bounds.width) * 2 - 1).clamp(-1.0, 1.0);
     final y = ((position.dy / bounds.height) * 2 - 1).clamp(-1.0, 1.0);
-    targetYaw = x * maxYaw;
+    // Reverse horizontal rotation based on the tester's observed direction.
+    targetYaw = -x * maxYaw;
     targetPitch = y * maxPitch;
   }
 
@@ -51,10 +61,26 @@ class MossMotion {
     _tapTime += dt;
 
     final wind = reduceMotion ? 0.0 : math.sin(_windTime * 1.2) * windAmplitude;
-    final bounce = reduceMotion || _tapTime > .45
+    final reaction = reduceMotion || _tapTime > .65
         ? 0.0
-        : math.sin((_tapTime / .45) * math.pi) * .045;
-    return MossFrame(yaw: _yaw, pitch: _pitch, roll: wind, bounce: bounce);
+        : math.sin((_tapTime / .65) * math.pi);
+    final idleBlinkTime = _windTime % 5.5;
+    final idleBlink = reduceMotion || idleBlinkTime > .18
+        ? 0.0
+        : math.sin((idleBlinkTime / .18) * math.pi);
+    final touchBlink = reduceMotion || _tapTime > .35
+        ? 0.0
+        : math.sin((_tapTime / .35) * math.pi);
+    lastFrame = MossFrame(
+      yaw: _yaw,
+      pitch: _pitch,
+      roll: wind + reaction * .055,
+      bounce: reaction * .075,
+      shift: -_yaw / maxYaw * .08,
+      blink: math.max(idleBlink, touchBlink),
+      reaction: reaction,
+    );
+    return lastFrame;
   }
 }
 
@@ -64,11 +90,17 @@ class MossFrame {
     required this.pitch,
     required this.roll,
     required this.bounce,
+    required this.shift,
+    required this.blink,
+    required this.reaction,
   });
   final double yaw;
   final double pitch;
   final double roll;
   final double bounce;
+  final double shift;
+  final double blink;
+  final double reaction;
 }
 
 /// Listens to pointer events without taking over the scrolling gesture arena.
@@ -77,9 +109,11 @@ class MossTouchSurface extends StatefulWidget {
     super.key,
     required this.motion,
     required this.child,
+    this.onReact,
   });
   final MossMotion motion;
   final Widget child;
+  final ValueChanged<Offset>? onReact;
 
   @override
   State<MossTouchSurface> createState() => _MossTouchSurfaceState();
@@ -106,9 +140,12 @@ class _MossTouchSurfaceState extends State<MossTouchSurface> {
     widget.motion.lookAt(event.localPosition, size);
   }
 
-  void _endPointer(int pointer, {bool cancelled = false}) {
+  void _endPointer(int pointer, Offset position, {bool cancelled = false}) {
     if (pointer != _pointer) return;
-    if (!cancelled && !_moved) widget.motion.tap();
+    if (!cancelled && !_moved) {
+      widget.motion.tap();
+      widget.onReact?.call(position);
+    }
     _pointer = null;
     _start = null;
     widget.motion.release();
@@ -121,7 +158,10 @@ class _MossTouchSurfaceState extends State<MossTouchSurface> {
       return Semantics(
         button: true,
         label: 'Karakter Moss; sentuh atau geser untuk berinteraksi',
-        onTap: widget.motion.tap,
+        onTap: () {
+          widget.motion.tap();
+          widget.onReact?.call(Offset(size.width / 2, size.height / 2));
+        },
         child: MouseRegion(
           onHover: (event) {
             if (_pointer == null) {
@@ -135,9 +175,13 @@ class _MossTouchSurfaceState extends State<MossTouchSurface> {
             behavior: HitTestBehavior.opaque,
             onPointerDown: (event) => _startPointer(event, size),
             onPointerMove: (event) => _movePointer(event, size),
-            onPointerUp: (event) => _endPointer(event.pointer),
-            onPointerCancel: (event) =>
-                _endPointer(event.pointer, cancelled: true),
+            onPointerUp: (event) =>
+                _endPointer(event.pointer, event.localPosition),
+            onPointerCancel: (event) => _endPointer(
+              event.pointer,
+              event.localPosition,
+              cancelled: true,
+            ),
             child: widget.child,
           ),
         ),

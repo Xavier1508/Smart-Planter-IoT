@@ -10,18 +10,22 @@ void main() {
     expect(motion.targetPitch, 0);
 
     motion.lookAt(const Offset(300, -50), const Size(200, 100));
-    expect(motion.targetYaw, MossMotion.maxYaw);
+    expect(motion.targetYaw, -MossMotion.maxYaw);
     expect(motion.targetPitch, -MossMotion.maxPitch);
     motion.lookAt(const Offset(double.nan, 0), const Size(200, 100));
+    expect(motion.targetYaw, -MossMotion.maxYaw);
+    motion.lookAt(const Offset(0, 100), const Size(200, 100));
     expect(motion.targetYaw, MossMotion.maxYaw);
+    expect(motion.targetPitch, MossMotion.maxPitch);
   });
 
   test('movement eases toward the pointer and settles after release', () {
     final motion = MossMotion();
     motion.lookAt(const Offset(200, 100), const Size(200, 100));
     final first = motion.advance(.05);
-    expect(first.yaw, greaterThan(0));
-    expect(first.yaw, lessThan(MossMotion.maxYaw));
+    expect(first.yaw, lessThan(0));
+    expect(first.yaw, greaterThan(-MossMotion.maxYaw));
+    expect(first.shift, greaterThan(0));
     for (var i = 0; i < 40; i++) {
       motion.advance(.05);
     }
@@ -36,12 +40,17 @@ void main() {
 
   test('tap reacts but reduced-motion suppresses wind and bounce', () {
     final motion = MossMotion()..tap();
-    expect(motion.advance(.05).bounce, greaterThan(0));
+    final touched = motion.advance(.05);
+    expect(touched.bounce, greaterThan(0));
+    expect(touched.blink, greaterThan(0));
+    expect(touched.reaction, greaterThan(0));
     motion.reduceMotion = true;
     motion.tap();
     final frame = motion.advance(.05);
     expect(frame.bounce, 0);
     expect(frame.roll, 0);
+    expect(frame.blink, 0);
+    expect(frame.reaction, 0);
   });
 
   testWidgets('touch and drag track the finger, then return to rest', (
@@ -67,10 +76,38 @@ void main() {
     final bounds = tester.getRect(find.byType(MossTouchSurface));
     final gesture = await tester.startGesture(bounds.center);
     await gesture.moveTo(bounds.centerRight);
-    expect(motion.targetYaw, closeTo(MossMotion.maxYaw, .001));
+    expect(motion.targetYaw, closeTo(-MossMotion.maxYaw, .001));
     await gesture.up();
     expect(motion.targetYaw, 0);
     expect(motion.targetPitch, 0);
+  });
+
+  testWidgets('a tap reacts, while a drag does not trigger a touch effect', (
+    tester,
+  ) async {
+    final motion = MossMotion();
+    var reactions = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 200,
+            height: 100,
+            child: MossTouchSurface(
+              motion: motion,
+              onReact: (_) => reactions++,
+              child: const ColoredBox(color: Colors.green),
+            ),
+          ),
+        ),
+      ),
+    );
+    final surface = find.byType(MossTouchSurface);
+    await tester.tap(surface);
+    expect(reactions, 1);
+    expect(motion.advance(.05).reaction, greaterThan(0));
+    await tester.drag(surface, const Offset(40, 0));
+    expect(reactions, 1);
   });
 
   testWidgets('dragging over Moss still permits vertical page scrolling', (

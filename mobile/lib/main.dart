@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'src/appearance.dart';
 import 'src/cloud_config.dart';
 import 'src/cloud_controller.dart';
 import 'src/moss_app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  const appearanceStore = AppearanceStore();
+  final appearance = await appearanceStore.read();
   final config = CloudConfig.environment;
   CloudController? cloud;
   String? notice;
@@ -31,5 +34,12 @@ Future<void> main() async {
   } else {
     notice = 'Aplikasi belum dikonfigurasi untuk cloud.';
   }
-  runApp(MossApp(cloud: cloud, cloudSetupNotice: notice));
+  runApp(
+    MossApp(
+      cloud: cloud,
+      cloudSetupNotice: notice,
+      initialAppearance: appearance,
+      appearanceStore: appearanceStore,
+    ),
+  );
 }

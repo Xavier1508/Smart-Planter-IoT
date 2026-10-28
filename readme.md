@@ -21,6 +21,8 @@ Data simulasi bukan hasil pengukuran sensor dan tidak disimpan sebagai riwayat s
 Prototipe Android menyediakan beberapa bagian untuk menggambarkan pengalaman penggunaan yang direncanakan:
 
 - Halaman utama dengan karakter Moss dan pilihan kondisi tanaman dalam mode simulasi.
+- Karakter merespons sentuhan dan gerakan jari; suasana langit dapat mengikuti jam ponsel atau dipilih secara manual.
+- Pilihan tema terang, gelap, atau mengikuti sistem.
 - Tampilan contoh kelembapan tanah, air, suhu, cahaya, dan kondisi udara yang ditandai sebagai simulasi.
 - Halaman riwayat dengan grafik dan aktivitas contoh yang hanya ditampilkan dalam mode simulasi.
 - Halaman perangkat dengan status sensor dan saklar simulasi lokal untuk pompa dan lampu.
