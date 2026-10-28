@@ -110,6 +110,8 @@ tasks.configureEach {
 dependencies {
     // The self-update SDK must never be included in a Google Play build.
     add("betaImplementation", "com.google.firebase:firebase-appdistribution:16.0.0-beta21")
+    // Its installer activity inherits the application theme and needs AppCompat.
+    add("betaImplementation", "androidx.appcompat:appcompat:1.7.1")
 }
 
 kotlin {

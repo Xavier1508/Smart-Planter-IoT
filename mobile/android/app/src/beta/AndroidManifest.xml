@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- The tester build needs network access for update checks and downloads. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Firebase's install activity inherits the application theme. -->
+    <application android:theme="@style/MossBetaAppTheme" />
 </manifest>
