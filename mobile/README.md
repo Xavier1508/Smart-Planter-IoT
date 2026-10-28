@@ -85,6 +85,11 @@ database tidak habis secara tidak sengaja.
 
 ## Distribusi beta privat
 
+Build beta pertama telah lulus pemeriksaan Flutter dan dikirim ke grup penguji.
+Pemasangan dan pembaruan antarversi pada ponsel masih perlu diuji; status
+Firebase App Testers API juga belum diverifikasi. Build pertama berjalan dalam
+mode demo/offline karena publishable key Supabase belum dikonfigurasi.
+
 Package Android: `io.github.xavier1508.smart_planter`. Varian default `production`
 tidak berisi SDK self-update App Distribution dan tidak memerlukan konfigurasi
 Firebase. Varian `beta` dipakai **hanya** untuk distribusi privat; jangan

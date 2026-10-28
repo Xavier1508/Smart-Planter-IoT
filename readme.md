@@ -44,7 +44,7 @@ Pembacaan DHT belum diaktifkan sampai jenis sensor dan sambungannya diperiksa. W
 
 Supabase digunakan sebagai fondasi autentikasi, penyimpanan data perangkat, dan pembaruan data melalui Realtime. Akses ke data perangkat dibatasi berdasarkan pemilik akun. Penyambungan perangkat, pengiriman data ESP32 yang aman, dan pengujian alur lengkap dari perangkat ke aplikasi masih dalam tahap perencanaan.
 
-Pengaturan distribusi beta privat melalui Firebase App Distribution telah disiapkan, tetapi belum diverifikasi secara menyeluruh. APK pratinjau debug lokal tidak memeriksa pembaruan Firebase otomatis. Pemeriksaan dan distribusi melalui GitHub Actions juga perlu ditinjau pengaturan serta batas biayanya sebelum digunakan.
+Build beta pertama telah melewati pemeriksaan GitHub Actions dan dikirim ke grup penguji Firebase App Distribution. Pemasangan beta dan pembaruan antarversi pada ponsel masih perlu diuji. APK pratinjau debug lokal tidak memeriksa pembaruan Firebase otomatis. Penggunaan GitHub Actions tetap perlu memperhatikan kuota dan batas biaya akun.
 
 ## Keselamatan perangkat keras
 
@@ -79,7 +79,7 @@ Pemasangan pada ponsel tetap memerlukan persetujuan pengguna. Pratinjau lokal ya
 - [include](include/) berisi konfigurasi dan komponen pendukung firmware.
 - [lib](lib/) berisi pustaka khusus proyek.
 - [test](test/) berisi pengujian firmware.
-- [GitHub Actions](.github/workflows/) berisi alur pemeriksaan dan rancangan distribusi aplikasi.
+- [GitHub Actions](.github/workflows/) berisi alur pemeriksaan dan distribusi aplikasi.
 
 ## Privasi dan keamanan data
 
