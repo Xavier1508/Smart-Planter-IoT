@@ -1,0 +1,9 @@
+simulation: cloud-readings-error-fixture
+routing: path
+mocks:
+  - routeKey: supabase
+    path: ../mocks/supabase-readings/config.yaml
+    scenarios:
+      - overrides:
+          conditions:
+            error: { status_code: 503 }

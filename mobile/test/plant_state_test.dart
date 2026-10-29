@@ -8,6 +8,7 @@ void main() {
     expect(state.isDemo, isFalse);
     expect(state.soilPercent, isNull);
     expect(state.waterPercent, isNull);
+    expect(state.uvIndex, isNull);
     expect(state.mood, PlantMood.waiting);
   });
 
@@ -49,6 +50,8 @@ void main() {
     expect(state.isLive, isTrue);
     expect(state.mood, PlantMood.thirsty);
     expect(state.explanation, isNot(contains('Contoh')));
+    expect(state.explanation, contains('belum diverifikasi'));
+    expect(state.explanation, contains('bukan diagnosis'));
     expect(state.waterPercent, isNull);
     expect(state.airChanged, isFalse);
   });
@@ -77,6 +80,24 @@ void main() {
     );
     expect(state.hasSensorData, isTrue);
     expect(state.mood, PlantMood.waiting);
+  });
+
+  test('UV values are range checked without inferring soil condition', () {
+    PlantState fromUv(double value) => PlantState.fromTelemetry(
+      PlantTelemetry(recordedAt: DateTime.utc(2026), uvIndex: value),
+    );
+
+    for (final value in [0.0, 3.5, 25.0]) {
+      final state = fromUv(value);
+      expect(state.uvIndex, value);
+      expect(state.hasSensorData, isTrue);
+      expect(state.mood, PlantMood.waiting);
+    }
+    for (final value in [-0.1, 25.1, double.nan, double.infinity]) {
+      final state = fromUv(value);
+      expect(state.uvIndex, isNull);
+      expect(state.hasSensorData, isFalse);
+    }
   });
 
   test('old readings and far-future timestamps are not fresh', () {

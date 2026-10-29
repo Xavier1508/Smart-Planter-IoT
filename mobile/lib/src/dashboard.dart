@@ -510,6 +510,17 @@ class _Home extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
+              if (state.isLive) ...[
+                Text(
+                  'Nilai sensor belum diverifikasi; tanah dan cahaya berupa skala relatif.',
+                  style: TextStyle(
+                    color: mutedColor,
+                    fontSize: 11,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               LayoutBuilder(
                 builder: (context, constraints) {
                   final columnWidth = (constraints.maxWidth - 10) / 2;
@@ -524,7 +535,9 @@ class _Home extends StatelessWidget {
                           title: 'Kelembapan tanah',
                           value: _percent(state.soilPercent),
                           detail: state.soilPercent != null
-                              ? 'Kondisi tanah'
+                              ? state.isDemo
+                                    ? 'Kondisi tanah'
+                                    : 'Skala belum diverifikasi'
                               : 'Menunggu sensor',
                           color: const Color(0xFF51859A),
                         ),
@@ -537,7 +550,7 @@ class _Home extends StatelessWidget {
                           value: _percent(state.waterPercent),
                           detail: state.isDemo
                               ? 'Level simulasi'
-                              : 'Belum dipasang',
+                              : 'Belum tersedia',
                           color: const Color(0xFF568896),
                         ),
                       ),
@@ -564,9 +577,23 @@ class _Home extends StatelessWidget {
                           detail: state.isDemo
                               ? 'Intensitas contoh'
                               : state.lightPercent != null
-                              ? 'Pembacaan sensor'
+                              ? 'Skala belum diverifikasi'
                               : 'Menunggu sensor',
                           color: const Color(0xFFAB843A),
+                        ),
+                      ),
+                      SizedBox(
+                        width: constraints.maxWidth,
+                        child: _Metric(
+                          icon: Icons.wb_twilight_rounded,
+                          title: 'UV (perkiraan)',
+                          value: state.uvIndex?.toStringAsFixed(1) ?? '—',
+                          detail: state.uvIndex == null
+                              ? 'Menunggu data sensor'
+                              : state.isDemo
+                              ? 'Contoh, bukan sensor'
+                              : 'Belum diverifikasi',
+                          color: const Color(0xFF967144),
                         ),
                       ),
                     ],
@@ -805,7 +832,7 @@ class _AirRow extends StatelessWidget {
               Text(
                 state.isDemo
                     ? 'Kondisi contoh, bukan pembacaan CO₂'
-                    : 'Belum dipasang dan belum dikalibrasi',
+                    : 'Belum tersedia dan belum dikalibrasi',
                 style: TextStyle(
                   fontSize: 11,
                   color: context.mossColors.onSurfaceVariant,
@@ -960,7 +987,7 @@ class _SettingsPage extends StatelessWidget {
       const _SettingLine(
         icon: Icons.psychology_outlined,
         title: 'Ekspresi Moss',
-        body: 'Saat ini menggunakan aturan simulasi, bukan prediksi ML.',
+        body: 'Prediksi ML: N/A. Ekspresi menggunakan aturan sederhana, bukan model terlatih.',
       ),
     ],
   );

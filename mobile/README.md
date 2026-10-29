@@ -22,7 +22,8 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
   bersifat visual dan bukan pembacaan sensor cahaya. Kualitas bayangan dan
   performa belum diuji pada renderer OPPO.
 - Mode tanpa simulasi menampilkan nilai kosong, bukan angka sensor palsu.
-- Informasi sensor air dan MQ135 disiapkan sebagai belum terpasang.
+- Sensor air dan MQ135 ditampilkan sebagai belum tersedia; pemasangan fisik
+  tidak membuktikan hasil pembacaannya siap digunakan.
 - Kontrol pompa dan lampu belum aktif; riwayat tidak direkayasa.
 - Halaman riwayat menampilkan grafik interaktif dan aktivitas **contoh** hanya
   saat mode simulasi aktif; data contoh tidak disimpan sebagai riwayat sensor.
@@ -33,10 +34,21 @@ Dashboard Flutter untuk pendamping tanaman Moss. Tahap ini adalah **prototipe an
 - Fondasi Supabase mencakup tabel perangkat dan pembacaan privat, masuk akun,
   serta pembaca Realtime di aplikasi. Pembacaan tidak valid, kedaluwarsa, atau
   terputus tidak ditampilkan sebagai data aktif.
+- Dukungan lokal untuk kolom `uv_index` sudah disiapkan pada pembaca dan
+  dashboard. Nilai UV yang diterima diberi label **perkiraan, belum diverifikasi**;
+  pemeriksaan rentang tidak membuktikan kalibrasi. Dekoder dan model diuji
+  secara lokal dengan data contoh; tampilan dan Realtime belum diuji. Perubahan
+  ini belum membuat ESP32 mengirim data ke cloud.
+- Ekspor CSV ML disiapkan lewat tombol **Salin CSV ML** di pengaturan cloud.
+  Ekspor meminta sampai 1.000 pembacaan terbaru dari perangkat yang dipilih dan
+  menyalinnya ke papan klip hanya setelah pengguna menekan tombol. Pengguna juga
+  melihat jumlah baris berlabel manual; ekspor cloud saat ini tidak mengambil
+  label sehingga jumlahnya nol. Data ini bersifat privat. Jalur HTTP ekspor dan
+  kegagalan 503 diuji dengan [fixture lokal](postman/README.md), bukan cloud asli.
 
 ## Belum tersedia
 
-Pasangan perangkat, pengiriman data ESP32 ke Supabase, Firebase push notification, kontrol aktuator, penyimpanan offline, dan model machine learning belum diimplementasikan. Tabel cloud masih kosong dan alur masuk/Realtime belum diuji menyeluruh pada perangkat. Jalur Firebase App Distribution belum diuji secara menyeluruh. Ekspresi demo menggunakan aturan sederhana, bukan prediksi emosi ilmiah. Model 3D saat ini adalah placeholder geometris orisinal dan belum diuji di berbagai perangkat Android.
+Pasangan perangkat, pengiriman data ESP32 ke Supabase, Firebase push notification, kontrol aktuator, penyimpanan offline, dan model machine learning belum diimplementasikan. Pada pemeriksaan read-only 29 Oktober 2026, kedua tabel cloud kosong; alur masuk/Realtime belum diuji menyeluruh pada perangkat. Jalur Firebase App Distribution belum diuji secara menyeluruh. Ekspresi demo menggunakan aturan sederhana, bukan prediksi emosi ilmiah. Model 3D saat ini adalah placeholder geometris orisinal dan belum diuji di berbagai perangkat Android.
 
 ## Jalankan
 
@@ -81,6 +93,58 @@ akun pengguna, perangkat fisik, dan data asli masih diperlukan. Sebelum mulai
 merekam data otomatis, tentukan interval kirim dan retensi agar kuota gratis
 database tidak habis secara tidak sengaja.
 
+Kolom `uv_index` sudah ada pada migrasi fondasi; tidak ada migrasi baru dalam
+perubahan ini. Rumus UV historis pada firmware belum boleh dianggap hasil
+kalibrasi atau dikirim sebagai pengukuran terverifikasi. Jenis modul, kondisi
+referensi, konversi, dan kalibrasi masih harus dibuktikan.
+
+Kontrak pembacaan yang diharapkan: `soil_percent` dan `light_percent` hanya
+dipakai untuk hasil yang telah dikalibrasi; `temperature_c` dan
+`humidity_percent` perlu berasal dari model dan pembacaan DHT yang diverifikasi;
+`uv_index` pada tampilan tetap diberi label belum diverifikasi. Nilai hilang
+tetap `null`. Pembacaan ADC atau estimasi historis tidak boleh diubah menjadi
+hasil fisik tepercaya hanya karena angkanya berada dalam rentang database.
+
+### Dataset dan rencana ML
+
+CSV versi 1 (`lib/src/ml_dataset.dart`) menyertakan waktu server, ID pembacaan,
+identitas perangkat opsional, versi firmware/kalibrasi opsional, serta fitur
+tanah, suhu, kelembapan udara, cahaya, UV, level air, dan ADC MQ. Fitur yang
+tidak tersedia dibiarkan kosong dengan penanda `missing=1`; angka nol valid
+tetap nol. Nilai yang ada diberi kualitas `unverified`, bukan dianggap telah
+terkalibrasi. Label dan sumber label tetap kosong sampai ada observasi atau
+tinjauan manusia; ekspor tidak menggunakan data simulasi atau membuat label.
+Rata-rata/perubahan tanah dan rata-rata cahaya satu jam dihitung dari baris
+saat ini dan sebelumnya untuk satu perangkat, disertai jumlah sampel. Awal
+ekspor 1.000 baris dapat kekurangan riwayat sebelum rentang tersebut; penanda
+dan jumlah sampel tidak boleh diabaikan. Serializer dan fitur rolling telah
+diuji lokal dengan data contoh, bukan dengan data cloud atau perangkat.
+
+Ekstraksi log serial historis menggunakan kolom sumber dan `time_quality` yang
+sama, tetapi waktu per sampel, ID server, dan labelnya kosong karena tidak
+tercatat. Angka UV dari rumus lama disimpan terpisah sebagai `uv_legacy_proxy`,
+bukan indeks UV terverifikasi; fitur satu jam tidak dibuat tanpa waktu. Data
+historis tersebut hanya untuk eksplorasi, bukan bukti kinerja model deret waktu.
+
+Untuk data nyata yang cukup, kandidat awal adalah **XGBoost berbasis pohon**
+dengan fitur historis/rolling yang hanya menggunakan data masa lalu. Pohon
+XGBoost dapat mempelajari arah untuk nilai hilang; fitur yang selalu kosong
+selama pelatihan tetap tidak memberi informasi, sehingga pemasangan sensor baru
+memerlukan data dan evaluasi ulang. Gunakan pemisahan kronologis dengan jeda
+sesuai jendela fitur, uji pada perangkat/periode berbeda bila tersedia, dan
+bandingkan dengan baseline sederhana menggunakan metrik sesuai target. Jangan
+gunakan label masa depan, simulasi, atau ambang yang sama sebagai label yang
+diklaim independen.
+
+Model belum dilatih, belum diintegrasikan ke karakter, dan belum boleh
+mengendalikan pompa. Mode aturan Moss saat ini tetap diberi label bukan ML.
+Penggunaan model hanya setelah ada label yang relevan, evaluasi, penanganan
+data hilang/kedaluwarsa, dan pengujian runtime yang memadai.
+
+Referensi: [XGBoost dan nilai hilang](https://xgboost.readthedocs.io/en/stable/faq.html),
+[benchmark model tabular NeurIPS](https://papers.neurips.cc/paper_files/paper/2022/file/0378c7692da36807bdec87ab043cdadc-Paper-Datasets_and_Benchmarks.pdf),
+dan [pemisahan data deret waktu](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html).
+
 ### Rancangan lanjutan (belum aktif)
 
 - Pairing perlu membuktikan akses fisik ke perangkat dan dilakukan oleh akun
@@ -95,6 +159,44 @@ database tidak habis secara tidak sengaja.
 - Interval, batas penyimpanan, retensi otomatis, dan cara provisioning serta
   penyimpanan kredensial pada ESP32 masih harus ditentukan dan diuji. Jangan
   mengaktifkan ingestion sebelum mekanisme tersebut siap dan sesuai kuota.
+
+#### Batas implementasi pairing saat ini
+
+Paket ESP32 yang terpasang memiliki antarmuka provisioning BLE dan Security 1
+dengan proof-of-possession; header `manager.h` pada paket ini hanya menyebut
+Security 0 dan 1. Dokumentasi Espressif versi terbaru merekomendasikan Security 2
+untuk produksi, tetapi keberadaannya pada framework ini belum terbukti. Tidak
+boleh memakai Security 0 atau Security 1 tanpa PoP untuk mengirim kredensial.
+Klien provisioning di Moss, pertukaran PoP yang terikat pada perangkat fisik,
+dan mekanisme kredensial perangkat di backend belum diimplementasikan.
+`WiFiClientSecure` menyediakan verifikasi sertifikat, tetapi jalur TLS, waktu
+untuk memvalidasi sertifikat, dan pergantian CA belum diuji. Jangan memakai
+`setInsecure()` sebagai jalan pintas.
+
+Saat meninjau [kode sumber library provisioning Android Espressif
+`lib-2.4.4`](https://github.com/espressif/esp-idf-provisioning-android/blob/lib-2.4.4/provisioning/src/main/java/com/espressif/provisioning/ESPDevice.java#L707-L749),
+terlihat perintah log debug yang mencetak PoP dan pemilihan versi keamanan
+berdasarkan informasi dari perangkat, termasuk Security 0. Ini adalah pengamatan
+kode sumber, bukan pengujian paket biner. Jangan mengintegrasikan library ini
+apa adanya: pastikan PoP tidak tercatat dan terapkan kebijakan yang menolak
+mode tanpa autentikasi/enkripsi, lalu uji perilaku pada build yang dipakai.
+
+Wi-Fi dan kredensial perangkat yang disimpan di flash bisa diakses oleh pihak
+yang memperoleh akses fisik jika perlindungan penyimpanan tidak dikonfigurasi.
+Status enkripsi flash/NVS papan belum diperiksa. Mengaktifkan fitur keamanan
+perangkat keras dapat membatasi flashing berikutnya dan tidak dilakukan otomatis.
+Sebelum aktivasi dibutuhkan tes pairing kedaluwarsa/sekali pakai, isolasi akun,
+revokasi, pembatasan frekuensi, penanganan koneksi gagal, dan peninjauan kuota.
+
+Dashboard saat ini menandai data lebih dari dua menit sebagai kedaluwarsa.
+Misalnya, interval satu menit menghasilkan sampai 1.440 baris per perangkat per
+hari dan batas ekspor 1.000 baris mencakup kurang dari 17 jam; angka ini bukan
+keputusan retensi. Selaraskan interval, indikator kesegaran, batas penyimpanan,
+ekspor data dan anggaran sebelum menyalakan pengiriman otomatis. Tidak ada data
+yang dihapus otomatis dalam rancangan yang tersedia saat ini.
+
+Referensi: [provisioning Espressif](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/provisioning/provisioning.html),
+[enkripsi flash ESP32](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html).
 
 ## Distribusi beta privat
 

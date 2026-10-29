@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'cloud_controller.dart';
 import 'moss_app.dart';
@@ -65,6 +66,35 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
     }
   }
 
+  Future<void> _copyTrainingCsv() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final generation = widget.controller.sessionGeneration;
+    try {
+      final result = await widget.controller.exportTrainingCsv();
+      if (!mounted || generation != widget.controller.sessionGeneration) return;
+      if (result.count == 0) {
+        setState(() => _message = 'Belum ada data sensor untuk CSV.');
+      } else {
+        await Clipboard.setData(ClipboardData(text: result.csv));
+        if (mounted && generation == widget.controller.sessionGeneration) {
+          setState(() {
+            _message =
+                '${result.count} baris disalin. '
+                'Label manual: ${result.summary.manuallyLabeled}. '
+                'CSV berisi data privat; model ML belum tersedia.';
+          });
+        }
+      }
+    } catch (_) {
+      if (mounted) setState(() => _message = 'CSV belum dapat disalin.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   void dispose() {
     _email.dispose();
@@ -112,11 +142,22 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                   onPressed: _busy ? null : widget.controller.refreshDevice,
                   child: const Text('Periksa perangkat'),
                 ),
+                OutlinedButton(
+                  onPressed: _busy || !widget.controller.canExportCsv
+                      ? null
+                      : _copyTrainingCsv,
+                  child: const Text('Salin CSV ML'),
+                ),
                 TextButton(
                   onPressed: _busy ? null : _signOut,
                   child: const Text('Keluar'),
                 ),
               ],
+            ),
+            const Text(
+              'CSV menyalin hingga 1.000 pembacaan terbaru ke papan klip. '
+              'Simpan dan bagikan sebagai data privat.',
+              style: TextStyle(fontSize: 11),
             ),
           ] else ...[
             const SizedBox(height: 12),

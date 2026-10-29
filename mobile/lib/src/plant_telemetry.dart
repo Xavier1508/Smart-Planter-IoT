@@ -2,7 +2,7 @@
 ///
 /// [recordedAt] must be a trusted server timestamp, not the ESP32 clock. The
 /// additional water-level and MQ135 sensors are deliberately not represented
-/// here until they have been installed and calibrated.
+/// here until their readings have been verified and calibrated.
 class PlantTelemetry {
   const PlantTelemetry({
     required this.recordedAt,
@@ -11,6 +11,7 @@ class PlantTelemetry {
     this.temperatureC,
     this.humidityPercent,
     this.lightPercent,
+    this.uvIndex,
   });
 
   final DateTime recordedAt;
@@ -21,6 +22,9 @@ class PlantTelemetry {
   final double? temperatureC;
   final int? humidityPercent;
   final int? lightPercent;
+
+  /// Source-reported UV index estimate; calibration is not verified here.
+  final double? uvIndex;
 
   /// Reject old readings and timestamps too far in the future. Allow a small
   /// amount of clock skew between the phone and the server.

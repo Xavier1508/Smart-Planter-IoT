@@ -1,0 +1,5 @@
+simulation: cloud-readings-fixture
+routing: path
+mocks:
+  - routeKey: supabase
+    path: ../mocks/supabase-readings/config.yaml

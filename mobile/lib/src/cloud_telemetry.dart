@@ -2,12 +2,21 @@ import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'cloud_reading_decoder.dart';
+import 'ml_dataset.dart';
 import 'plant_telemetry.dart';
 
 class PlanterDevice {
   const PlanterDevice({required this.id, required this.name});
   final String id;
   final String name;
+}
+
+class MlCsvExport {
+  const MlCsvExport({required this.csv, required this.summary});
+  final String csv;
+  final MlDatasetSummary summary;
+  int get count => summary.rows;
 }
 
 /// Reads only rows permitted by the current user's database policy.
@@ -28,6 +37,33 @@ class CloudTelemetry {
     final name = row['display_name'];
     if (id is! String || name is! String) throw const FormatException();
     return PlanterDevice(id: id, name: name);
+  }
+
+  /// An explicitly requested, bounded export. RLS still controls every row;
+  /// unlabelled rows stay unlabelled and no device readings are fabricated.
+  Future<MlCsvExport> exportTrainingCsv(String deviceId) async {
+    final rows = await client
+        .from('planter_readings')
+        .select(
+          'id, device_id, recorded_at, soil_percent, temperature_c, '
+          'humidity_percent, light_percent, uv_index',
+        )
+        .eq('device_id', deviceId)
+        .order('recorded_at', ascending: false)
+        .order('id', ascending: false)
+        .limit(1000)
+        .timeout(const Duration(seconds: 15));
+    final samples = <MlDatasetRow>[];
+    for (final row in rows.reversed) {
+      if (row['device_id'] != deviceId) throw const FormatException();
+      samples.add(
+        MlDatasetRow(reading: decodeReading(row), deviceRef: deviceId),
+      );
+    }
+    return MlCsvExport(
+      csv: MlDatasetCsv.encode(samples),
+      summary: MlDatasetSummary.fromRows(samples),
+    );
   }
 
   /// Subscribe before the first snapshot; reload it on every reconnect. The
@@ -66,7 +102,7 @@ class CloudTelemetry {
             .from('planter_readings')
             .select(
               'id, device_id, recorded_at, soil_percent, temperature_c, '
-              'humidity_percent, light_percent',
+              'humidity_percent, light_percent, uv_index',
             )
             .eq('device_id', deviceId)
             .order('recorded_at', ascending: false)
@@ -138,33 +174,8 @@ class CloudTelemetry {
   }
 
   /// Only server timestamps with an explicit timezone are accepted.
-  static PlantTelemetry decodeReading(Map<String, dynamic> row) {
-    final rawTime = row['recorded_at'];
-    if (rawTime is! String ||
-        !RegExp(r'(?:[zZ]|[+-]\d\d(?::?\d\d)?)$').hasMatch(rawTime)) {
-      throw const FormatException('Missing server timestamp');
-    }
-    final time = DateTime.tryParse(rawTime);
-    if (time == null) throw const FormatException('Invalid server timestamp');
-
-    int? integer(Object? value) =>
-        value is num && value.isFinite && value == value.truncateToDouble()
-        ? value.toInt()
-        : null;
-    double? decimal(Object? value) =>
-        value is num && value.isFinite ? value.toDouble() : null;
-    final sequence = integer(row['id']);
-    if (sequence == null) throw const FormatException('Missing row ID');
-
-    return PlantTelemetry(
-      recordedAt: time,
-      sequence: sequence,
-      soilPercent: integer(row['soil_percent']),
-      temperatureC: decimal(row['temperature_c']),
-      humidityPercent: integer(row['humidity_percent']),
-      lightPercent: integer(row['light_percent']),
-    );
-  }
+  static PlantTelemetry decodeReading(Map<String, dynamic> row) =>
+      decodeCloudReading(row);
 }
 
 /// Never includes URLs, tokens, or response bodies in UI errors.

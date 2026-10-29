@@ -135,6 +135,12 @@ void main() {
     await tester.pump();
     expect(find.text('SENSOR'), findsOneWidget);
     expect(find.text('Sepertinya aku butuh air.'), findsOneWidget);
+    expect(
+      find.text(
+        'Estimasi tanah di bawah ambang; belum diverifikasi dan bukan diagnosis.',
+      ),
+      findsOneWidget,
+    );
     await tester.scrollUntilVisible(
       find.text('Kelembapan tanah'),
       200,
@@ -142,6 +148,12 @@ void main() {
     );
     expect(find.text('DATA SENSOR'), findsOneWidget);
     expect(find.text('24%'), findsOneWidget);
+    expect(
+      find.text(
+        'Nilai sensor belum diverifikasi; tanah dan cahaya berupa skala relatif.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('78%'), findsNothing);
 
     readings.addError(StateError('connection lost'));
@@ -154,6 +166,38 @@ void main() {
     );
     expect(find.text('OFFLINE'), findsOneWidget);
     expect(find.text('Koneksi data terputus.'), findsOneWidget);
+
+    final closing = readings.close();
+    await tester.pump();
+    await closing;
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('UV estimate is labelled unverified and cleared on disconnect', (
+    tester,
+  ) async {
+    final readings = StreamController<PlantTelemetry>();
+    await tester.pumpWidget(
+      MossApp(render3d: false, telemetry: readings.stream),
+    );
+    await tester.ensureVisible(find.text('Tutup'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tutup'));
+    await tester.pump();
+
+    readings.add(PlantTelemetry(recordedAt: DateTime.now(), uvIndex: 3.5));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('UV (perkiraan)'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('3.5'), findsOneWidget);
+    expect(find.text('Belum diverifikasi'), findsOneWidget);
+
+    readings.addError(StateError('connection lost'));
+    await tester.pump();
+    expect(find.text('3.5'), findsNothing);
 
     final closing = readings.close();
     await tester.pump();

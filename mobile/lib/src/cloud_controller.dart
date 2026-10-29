@@ -20,18 +20,22 @@ class CloudController extends ChangeNotifier {
   final CloudTelemetry _telemetrySource;
   late final StreamSubscription<AuthState> _authSubscription;
   String? _userId;
+  String? _deviceId;
   int _generation = 0;
   bool _disposed = false;
   String status = 'Masuk untuk melihat perangkat Anda.';
   Stream<PlantTelemetry>? telemetry;
 
   bool get signedIn => _userId != null;
+  bool get canExportCsv => !_disposed && _userId != null && _deviceId != null;
+  int get sessionGeneration => _generation;
 
   Future<void> _setUser(String? userId, {bool force = false}) async {
     if (_disposed || (!force && userId == _userId)) return;
     _userId = userId;
     final generation = ++_generation;
     telemetry = null;
+    _deviceId = null;
     status = userId == null
         ? 'Masuk untuk melihat perangkat Anda.'
         : 'Mencari perangkat Anda...';
@@ -43,6 +47,7 @@ class CloudController extends ChangeNotifier {
       if (device == null) {
         status = 'Belum ada perangkat yang dipasangkan.';
       } else {
+        _deviceId = device.id;
         telemetry = _telemetrySource.watchDevice(device.id);
         status = 'Perangkat: ${device.name}';
       }
@@ -57,12 +62,24 @@ class CloudController extends ChangeNotifier {
     if (_disposed) return;
     ++_generation;
     _userId = null;
+    _deviceId = null;
     telemetry = null;
     status = 'Sesi tidak tersedia. Silakan masuk kembali.';
     notifyListeners();
   }
 
   Future<void> refreshDevice() => _setUser(_userId, force: true);
+
+  Future<MlCsvExport> exportTrainingCsv() async {
+    final deviceId = _deviceId;
+    final generation = _generation;
+    if (!canExportCsv || deviceId == null) throw const CloudReadException();
+    final result = await _telemetrySource.exportTrainingCsv(deviceId);
+    if (_disposed || generation != _generation || deviceId != _deviceId) {
+      throw const CloudReadException();
+    }
+    return result;
+  }
 
   Future<void> signIn(String email, String password) => client.auth
       .signInWithPassword(email: email, password: password)

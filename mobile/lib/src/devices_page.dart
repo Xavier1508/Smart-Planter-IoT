@@ -31,7 +31,7 @@ class _DevicesPageState extends State<DevicesPage> {
     String status(bool available) => state.isDemo
         ? 'Simulasi'
         : available
-        ? 'Data tersedia'
+        ? 'Belum diverifikasi'
         : 'Belum ada data';
 
     return ListView(
@@ -127,20 +127,24 @@ class _DevicesPageState extends State<DevicesPage> {
           name: 'Cahaya',
           status: status(state.lightPercent != null),
         ),
-        const _SensorRow(
+        _SensorRow(
           icon: Icons.wb_twilight_rounded,
           name: 'UV',
-          status: 'Belum ada data',
+          status: state.uvIndex == null
+              ? 'Belum ada data'
+              : state.isDemo
+              ? 'Simulasi'
+              : 'Belum diverifikasi',
         ),
         const _SensorRow(
           icon: Icons.water_drop_outlined,
           name: 'Level air',
-          status: 'Belum dipasang',
+          status: 'Belum tersedia',
         ),
         const _SensorRow(
           icon: Icons.air_rounded,
           name: 'Sensor udara MQ135',
-          status: 'Belum dipasang',
+          status: 'Belum tersedia',
         ),
         const SizedBox(height: 22),
         Text(

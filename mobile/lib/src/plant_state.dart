@@ -14,6 +14,7 @@ class PlantState {
     this.temperatureC,
     this.humidityPercent,
     this.lightPercent,
+    this.uvIndex,
     this.airChanged = false,
   }) : assert(!isDemo || !isLive);
 
@@ -30,6 +31,9 @@ class PlantState {
         temperature.isFinite &&
         temperature >= -40 &&
         temperature <= 80;
+    final uv = reading.uvIndex;
+    // This bounds the stored value; it does not verify sensor calibration.
+    final validUv = uv != null && uv.isFinite && uv >= 0 && uv <= 25;
     return PlantState(
       isDemo: false,
       isLive: true,
@@ -37,6 +41,7 @@ class PlantState {
       temperatureC: validTemperature ? temperature : null,
       humidityPercent: percent(reading.humidityPercent),
       lightPercent: percent(reading.lightPercent),
+      uvIndex: validUv ? uv : null,
     );
   }
 
@@ -75,13 +80,15 @@ class PlantState {
   final double? temperatureC;
   final int? humidityPercent;
   final int? lightPercent;
+  final double? uvIndex;
   final bool airChanged;
 
   bool get hasSensorData =>
       soilPercent != null ||
       temperatureC != null ||
       humidityPercent != null ||
-      lightPercent != null;
+      lightPercent != null ||
+      uvIndex != null;
 
   PlantMood get mood {
     if (!isDemo && !isLive) return PlantMood.waiting;
@@ -99,8 +106,8 @@ class PlantState {
     return switch (mood) {
       PlantMood.waiting => 'Menunggu pembacaan kelembapan tanah.',
       PlantMood.content =>
-        'Kelembapan tanah tidak berada di bawah ambang kering.',
-      PlantMood.thirsty => 'Kelembapan tanah berada di bawah ambang kering.',
+        'Estimasi tanah tidak berada di bawah ambang; belum diverifikasi.',
+      PlantMood.thirsty => 'Estimasi tanah di bawah ambang; belum diverifikasi dan bukan diagnosis.',
       PlantMood.airConcern => 'Ada perubahan pada pembacaan udara.',
     };
   }
