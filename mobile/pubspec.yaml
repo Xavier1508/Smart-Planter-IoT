@@ -1,7 +1,7 @@
 name: smart_planter
 description: "Dashboard Android untuk Smart Planter dan karakter Moss."
 publish_to: 'none'
-version: 0.3.3+1
+version: 0.3.4+9
 
 environment:
   sdk: ^3.13.7
@@ -21,3 +21,5 @@ dev_dependencies:
 flutter:
   default-flavor: production
   uses-material-design: true
+  assets:
+    - assets/ml/pattern-models.json

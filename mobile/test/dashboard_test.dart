@@ -1,11 +1,373 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smart_planter/src/local_wifi.dart';
 import 'package:smart_planter/src/moss_app.dart';
 import 'package:smart_planter/src/plant_telemetry.dart';
 
+class FixtureLocalWifi extends LocalWifiController {
+  FixtureLocalWifi({this.waterAdc = 1200});
+
+  final int? waterAdc;
+
+  @override
+  Future<void> connect() async {
+    snapshot = SerialSensorSnapshot.parse('''
+      {"type":"sample","uptime_ms":5000,
+       "dht":{"temperature_c":28.7,"humidity_percent":74,"status":"unverified"},
+       "adc":{"soil_raw":1000,"soil_status":"unverified","soil_relative_percent":44,
+              "light_raw":2000,"light_relative_percent":51,"uv_raw":0,"status":"unverified"},
+       "water_level":{"adc_raw":$waterAdc,"relative_percent":null,"status":"unverified",
+         "observation_scale":{"relative_percent":50,"basis":"operator_reported_window_means",
+           "quality":"unverified","use_for_control":false}},
+       "mq135":{"adc_raw":null,"digital_raw":1,"adc_status":"adc_read_failed","status":"unverified"},
+       "pump_cmd":false,"growlight_cmd":false,
+       "lighting_rule":{"candidate":"unavailable","status":"diagnostic_only_unverified",
+                        "use_for_control":false}}
+    ''');
+    status = LocalWifiStatus.live;
+    message = 'Wi-Fi lokal: sampel terbaru diterima di ponsel.';
+    notifyListeners();
+  }
+
+  void loseConnection() {
+    snapshot = null;
+    status = LocalWifiStatus.disconnected;
+    message = 'Koneksi Wi-Fi lokal terputus.';
+    notifyListeners();
+  }
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late String bundledModel;
+
+  setUpAll(() async {
+    bundledModel = await rootBundle.loadString('assets/ml/pattern-models.json');
+  });
+
+  testWidgets(
+    'local Wi-Fi selection shows fixture data and clears it on loss',
+    (tester) async {
+      final wifi = FixtureLocalWifi();
+      addTearDown(wifi.dispose);
+      await tester.pumpWidget(
+        MossApp(
+          render3d: false,
+          localWifi: wifi,
+          modelAssetLoader: () async => bundledModel,
+        ),
+      );
+      await tester.tap(find.text('Pengaturan'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Hubungkan Wi-Fi lokal'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Hubungkan Wi-Fi lokal'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Hari ini'));
+      await tester.pumpAndSettle();
+      expect(find.text('SENSOR'), findsOneWidget);
+      expect(find.text('POLA SINTETIS'), findsOneWidget);
+      expect(find.text('Pola tanah relatif rendah.'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Wi-Fi lokal: sampel terbaru diterima di ponsel.'),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        find.text('Wi-Fi lokal: sampel terbaru diterima di ponsel.'),
+        findsOneWidget,
+      );
+      await tester.scrollUntilVisible(
+        find.text('Air (relatif)'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('44%'), findsOneWidget);
+      expect(find.text('~50%'), findsOneWidget);
+      expect(find.text('UV (skala ADC)'), findsOneWidget);
+      expect(find.text('~0%'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Sensor udara MQ135'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Analog gagal · digital 1'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('ML XGBoost · sintetis'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.textContaining('Skor model sintetis'), findsOneWidget);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text('Perangkat'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Aturan lampu (pratinjau): belum tersedia'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Pompa: OFF diminta'), findsOneWidget);
+      expect(find.text('Lampu: OFF diminta'), findsOneWidget);
+      await tester.tap(find.text('Hari ini'));
+      await tester.pumpAndSettle();
+
+      wifi.loseConnection();
+      await tester.pump();
+      expect(find.text('44%'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.text('Ruang Moss'),
+        -200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('OFFLINE'), findsOneWidget);
+      expect(find.text('Koneksi Wi-Fi lokal terputus.'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  for (final waterAdc in <int?>[null, 0]) {
+    testWidgets('local model waits when water ADC is $waterAdc', (
+      tester,
+    ) async {
+      final wifi = FixtureLocalWifi(waterAdc: waterAdc);
+      addTearDown(wifi.dispose);
+      await tester.pumpWidget(
+        MossApp(
+          render3d: false,
+          localWifi: wifi,
+          modelAssetLoader: () async => bundledModel,
+        ),
+      );
+      await tester.tap(find.text('Pengaturan'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Hubungkan Wi-Fi lokal'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Hubungkan Wi-Fi lokal'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Hari ini'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('ML XGBoost · sintetis'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        find.text('Menunggu data tanah, air, dan cahaya yang dapat dibaca.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Skor model sintetis'), findsNothing);
+    });
+  }
+
+  testWidgets('malformed model is reported without a fabricated score', (
+    tester,
+  ) async {
+    final wifi = FixtureLocalWifi();
+    addTearDown(wifi.dispose);
+    await tester.pumpWidget(
+      MossApp(
+        render3d: false,
+        localWifi: wifi,
+        modelAssetLoader: () async => '{}',
+      ),
+    );
+    await tester.tap(find.text('Pengaturan'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Hubungkan Wi-Fi lokal'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Hubungkan Wi-Fi lokal'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hari ini'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('ML XGBoost · sintetis'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Model tidak tersedia.'), findsOneWidget);
+    expect(find.textContaining('Skor model sintetis'), findsNothing);
+  });
+
+  testWidgets('serial rule previews are shown without claiming relay control', (
+    tester,
+  ) async {
+    const sample = '''
+      {"type":"sample","uptime_ms":5000,
+       "adc":{"soil_raw":1000,"soil_status":"unverified","soil_relative_percent":40,
+              "light_raw":2000,"light_relative_percent":51,"uv_raw":0,"status":"unverified"},
+       "water_level":{"adc_raw":0,"relative_percent":null,"status":"unverified"},
+       "control_preview":{"mode":"diagnostic_only","basis":"relative_unverified",
+                          "pump_on":true,"growlight_on":true,"water_low":null}}
+    ''';
+    await tester.pumpWidget(
+      const MossApp(render3d: false, initialSerialJson: sample),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Perangkat'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Air <20%: Belum tersedia'),
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Pompa <50%: Menyala (pratinjau)'), findsOneWidget);
+    expect(find.text('Lampu <60%: Menyala (pratinjau)'), findsOneWidget);
+    expect(find.text('Air <20%: Belum tersedia'), findsOneWidget);
+    expect(
+      find.textContaining('bukan perintah, status relay, atau notifikasi live'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('packaged serial snapshot starts as offline data, not demo', (
+    tester,
+  ) async {
+    const sample = '''
+      {"type":"sample","uptime_ms":12345,
+       "dht":{"temperature_c":23.4,"humidity_percent":62.5,"status":"unverified"},
+       "adc":{"soil_raw":800,"soil_status":"unverified","soil_relative_percent":32,
+              "light_raw":2000,"light_relative_percent":51,"uv_raw":0,"status":"unverified"},
+       "water_level":{"adc_raw":0,"status":"unverified"},
+       "mq135":{"adc_raw":4095,"digital_raw":1,"adc_status":"unverified","status":"unverified"}}
+    ''';
+    await tester.pumpWidget(
+      const MossApp(render3d: false, initialSerialJson: sample),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('SERIAL'), findsOneWidget);
+    expect(find.text('SIMULASI'), findsNothing);
+    expect(find.text('SENSOR'), findsNothing);
+    expect(
+      find.text('Data serial tersimpan; waktu pembacaan tidak diketahui.'),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Air (relatif)'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('32%'), findsOneWidget);
+    expect(find.text('UV (skala ADC)'), findsOneWidget);
+    expect(find.text('~0%'), findsOneWidget);
+  });
+
+  testWidgets('invalid packaged snapshot does not silently enable demo', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MossApp(render3d: false, initialSerialJson: '{}'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('OFFLINE'), findsOneWidget);
+    expect(find.text('SIMULASI'), findsNothing);
+    expect(
+      find.text('Snapshot serial tidak valid; menunggu sumber data.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('pasted serial snapshot is visible but never labelled live', (
+    tester,
+  ) async {
+    var reads = 0;
+    var clipboard = 'not a serial sample';
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') {
+        reads++;
+        return {'text': clipboard};
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.tap(find.text('Pengaturan'));
+    await tester.pumpAndSettle();
+    expect(reads, 0);
+    await tester.scrollUntilVisible(
+      find.text('Tempel data serial'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Tempel data serial'));
+    await tester.pumpAndSettle();
+    expect(reads, 1);
+    expect(
+      find.text('Salin satu baris JSON sample dari monitor serial.'),
+      findsOneWidget,
+    );
+
+    clipboard = '''
+      {"type":"sample","uptime_ms":12345,
+       "dht":{"temperature_c":23.4,"humidity_percent":62.5,"status":"unverified"},
+       "adc":{"soil_raw":800,"soil_status":"unverified","soil_relative_percent":32,
+              "light_raw":2000,"light_relative_percent":51,"uv_raw":0,"status":"unverified"},
+       "water_level":{"adc_raw":0,"status":"unverified"},
+       "mq135":{"adc_raw":4095,"digital_raw":1,"adc_status":"unverified","status":"unverified"}}
+    ''';
+    await tester.tap(find.text('Tempel data serial'));
+    await tester.pumpAndSettle();
+    expect(reads, 2);
+    expect(find.text('SERIAL'), findsOneWidget);
+    expect(find.text('SENSOR'), findsNothing);
+    expect(
+      find.text('Data serial tersimpan; waktu pembacaan tidak diketahui.'),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Air (relatif)'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('32%'), findsOneWidget);
+    expect(find.text('UV (skala ADC)'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Sensor udara MQ135'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('~100% ADC'), findsOneWidget);
+    expect(find.text('ADC 4095 · bukan kualitas udara'), findsOneWidget);
+    await tester.tap(find.text('Pengaturan'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Hapus snapshot'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Hapus snapshot'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hari ini'));
+    await tester.pumpAndSettle();
+    expect(find.text('OFFLINE'), findsOneWidget);
+    expect(find.text('SERIAL'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('demo is labelled and scenarios change Moss expression', (
     tester,
   ) async {

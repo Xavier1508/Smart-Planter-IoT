@@ -1,5 +1,6 @@
 .pio
 .opencode-tmp/
+/include/planter-calibration.local.h
 /analysis/
 # Local credentials and generated Firebase configuration must not be committed.
 .env

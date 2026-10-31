@@ -7,6 +7,7 @@ import 'appearance.dart';
 import 'cloud_account_panel.dart';
 import 'cloud_controller.dart';
 import 'dashboard.dart';
+import 'local_wifi.dart';
 import 'moss_gaze.dart';
 import 'plant_telemetry.dart';
 import 'update_progress.dart';
@@ -28,9 +29,14 @@ class MossApp extends StatefulWidget {
     this.telemetry,
     this.cloud,
     this.cloudSetupNotice,
+    this.localWifi,
+    this.modelAssetLoader,
     this.initialAppearance = const AppearanceSettings(),
     this.appearanceStore,
     this.clock,
+    this.initialSerialJson = const String.fromEnvironment(
+      'MOSS_SERIAL_SNAPSHOT',
+    ),
   }) : assert(telemetry == null || cloud == null);
 
   /// Widget tests can exercise the interface without requiring a GPU renderer.
@@ -41,11 +47,20 @@ class MossApp extends StatefulWidget {
   final Stream<PlantTelemetry>? telemetry;
   final CloudController? cloud;
   final String? cloudSetupNotice;
+
+  /// Optional injected local transport for tests; the default is the ESP32 AP.
+  final LocalWifiController? localWifi;
+
+  /// Optional model asset source; defaults to the bundled local model.
+  final Future<String> Function()? modelAssetLoader;
   final AppearanceSettings initialAppearance;
   final AppearanceStore? appearanceStore;
 
   /// Allows time-dependent appearance to be tested without changing the clock.
   final DateTime Function()? clock;
+
+  /// Optional explicitly supplied snapshot, never a live connection.
+  final String initialSerialJson;
 
   @override
   State<MossApp> createState() => _MossAppState();
@@ -162,8 +177,11 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
       gaze: _gaze,
       atmosphere: _atmosphere,
       telemetry: widget.cloud?.telemetry ?? widget.telemetry,
+      initialSerialJson: widget.initialSerialJson,
       cloudSettings: cloudSettings,
       cloudSetupNotice: widget.cloudSetupNotice,
+      localWifi: widget.localWifi,
+      modelAssetLoader: widget.modelAssetLoader,
       appearance: _appearance,
       sky: sky,
       storageUnavailable: _storageUnavailable,

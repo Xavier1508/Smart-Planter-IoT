@@ -1,18 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'appearance.dart';
 import 'appearance_panel.dart';
 import 'app_version_panel.dart';
 import 'devices_page.dart';
 import 'journal_page.dart';
+import 'local_wifi.dart';
 import 'moss_app.dart';
 import 'moss_avatar.dart';
 import 'moss_gaze.dart';
 import 'moss_sky.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
+import 'synthetic_xgboost.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({
@@ -21,8 +24,11 @@ class Dashboard extends StatefulWidget {
     required this.gaze,
     required this.atmosphere,
     this.telemetry,
+    this.initialSerialJson = '',
     this.cloudSettings,
     this.cloudSetupNotice,
+    this.localWifi,
+    this.modelAssetLoader,
     required this.appearance,
     required this.sky,
     required this.storageUnavailable,
@@ -35,8 +41,11 @@ class Dashboard extends StatefulWidget {
   final MossGaze gaze;
   final MossAtmosphere atmosphere;
   final Stream<PlantTelemetry>? telemetry;
+  final String initialSerialJson;
   final Widget? cloudSettings;
   final String? cloudSetupNotice;
+  final LocalWifiController? localWifi;
+  final Future<String> Function()? modelAssetLoader;
   final AppearanceSettings appearance;
   final SkyAppearance sky;
   final bool storageUnavailable;
@@ -55,22 +64,107 @@ class _DashboardState extends State<Dashboard> {
   var _demo = true;
   var _scenario = DemoScenario.content;
   var _liveState = const PlantState.waiting();
+  PlantState? _serialSnapshot;
+  String? _serialMessage;
   var _sourceNotice = 'Perangkat dan cloud belum terhubung.';
   DateTime? _lastRecordedAt;
   int? _lastSequence;
   StreamSubscription<PlantTelemetry>? _subscription;
   Timer? _expiry;
+  late LocalWifiController _localWifi;
+  late bool _ownsLocalWifi;
+  StreamSubscription<void>? _localWifiChanges;
+  bool _useLocalWifi = false;
+  SyntheticXgboostModel? _syntheticModel;
+  bool _modelLoadFinished = false;
 
   @override
   void initState() {
     super.initState();
+    _attachLocalWifi(widget.localWifi);
+    unawaited(_loadSyntheticModel());
     _listenToTelemetry();
+    if (widget.initialSerialJson.isNotEmpty) {
+      _demo = false;
+      try {
+        _serialSnapshot = PlantState.fromSerial(
+          SerialSensorSnapshot.parse(widget.initialSerialJson),
+        );
+      } catch (_) {
+        _sourceNotice = 'Snapshot serial tidak valid; menunggu sumber data.';
+      }
+    }
   }
 
   @override
   void didUpdateWidget(covariant Dashboard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.telemetry != widget.telemetry) _listenToTelemetry();
+    if (oldWidget.localWifi != widget.localWifi) {
+      final previous = _localWifiChanges;
+      if (previous != null) unawaited(previous.cancel());
+      if (_ownsLocalWifi) _localWifi.dispose();
+      _useLocalWifi = false;
+      _attachLocalWifi(widget.localWifi);
+    }
+  }
+
+  void _attachLocalWifi(LocalWifiController? controller) {
+    _ownsLocalWifi = controller == null;
+    _localWifi = controller ?? LocalWifiController();
+    _localWifiChanges = _localWifi.changes.listen((_) => _onLocalWifiChanged());
+  }
+
+  void _onLocalWifiChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSyntheticModel() async {
+    SyntheticXgboostModel? model;
+    try {
+      final json =
+          await (widget.modelAssetLoader?.call() ??
+              rootBundle.loadString('assets/ml/pattern-models.json'));
+      model = SyntheticXgboostModel.parse(json);
+    } catch (_) {
+      // Missing or malformed models are never replaced with a fabricated result.
+    }
+    if (!mounted) return;
+    setState(() {
+      _syntheticModel = model;
+      _modelLoadFinished = true;
+    });
+  }
+
+  SyntheticPrediction? _predictLocal(SerialSensorSnapshot? sample) {
+    if (sample == null || _syntheticModel == null) return null;
+    bool nonRail(int? raw) => raw != null && raw > 0 && raw < 4095;
+    if (!nonRail(sample.soilAdc) ||
+        !nonRail(sample.waterAdc) ||
+        !nonRail(sample.lightAdc)) {
+      return null;
+    }
+    return _syntheticModel!.predict(
+      soilPercent: sample.soilRelativePercent,
+      waterObservationPercent: sample.waterObservationPercent,
+      lightPercent: sample.lightRelativePercent,
+      // The real device currently emits raw UV ADC, not a calibrated index.
+      uvIndex: null,
+    );
+  }
+
+  void _connectLocalWifi() {
+    setState(() {
+      _useLocalWifi = true;
+      _serialSnapshot = null;
+      _demo = false;
+    });
+    unawaited(_localWifi.connect());
+  }
+
+  void _disconnectLocalWifi() {
+    _localWifi.disconnect();
+    setState(() => _useLocalWifi = false);
   }
 
   void _listenToTelemetry() {
@@ -152,9 +246,41 @@ class _DashboardState extends State<Dashboard> {
     });
   }
 
+  Future<void> _importSerialSnapshot() async {
+    try {
+      final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = clipboard?.text;
+      if (text == null) throw const FormatException();
+      final snapshot = SerialSensorSnapshot.parse(text.trim());
+      if (!mounted) return;
+      _localWifi.disconnect();
+      setState(() {
+        _useLocalWifi = false;
+        _serialSnapshot = PlantState.fromSerial(snapshot);
+        _serialMessage = null;
+        _demo = false;
+        _page = 0;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _serialMessage = 'Salin satu baris JSON sample dari monitor serial.';
+        });
+      }
+    }
+  }
+
+  void _clearSerialSnapshot() => setState(() {
+    _serialSnapshot = null;
+    _serialMessage = null;
+  });
+
   @override
   void dispose() {
     _expiry?.cancel();
+    final localChanges = _localWifiChanges;
+    if (localChanges != null) unawaited(localChanges.cancel());
+    if (_ownsLocalWifi) _localWifi.dispose();
     final subscription = _subscription;
     if (subscription != null) unawaited(subscription.cancel());
     super.dispose();
@@ -162,7 +288,17 @@ class _DashboardState extends State<Dashboard> {
 
   @override
   Widget build(BuildContext context) {
-    final state = _demo ? PlantState.demo(_scenario) : _liveState;
+    final localSample = _localWifi.snapshot;
+    final state = _demo
+        ? PlantState.demo(_scenario)
+        : _useLocalWifi
+        ? (localSample == null
+              ? const PlantState.waiting()
+              : PlantState.fromLocalWifi(
+                  localSample,
+                  syntheticPrediction: _predictLocal(localSample),
+                ))
+        : (_serialSnapshot ?? _liveState);
     return Scaffold(
       body: SafeArea(
         child: switch (_page) {
@@ -172,7 +308,13 @@ class _DashboardState extends State<Dashboard> {
             render3d: widget.render3d,
             gaze: widget.gaze,
             atmosphere: widget.atmosphere,
-            sourceNotice: _sourceNotice,
+            sourceNotice: state.isSerialSnapshot
+                ? 'Data serial tersimpan; waktu ukur tidak diketahui. Bukan live.'
+                : _useLocalWifi
+                ? _localWifi.message
+                : _sourceNotice,
+            modelAvailable: _syntheticModel != null,
+            modelLoadFinished: _modelLoadFinished,
             sky: widget.sky,
             automaticSky: widget.appearance.sky == SkyChoice.automatic,
             selectedSky: widget.appearance.sky,
@@ -187,6 +329,15 @@ class _DashboardState extends State<Dashboard> {
             onDemoChanged: () => setState(() => _demo = !_demo),
             sourceNotice: widget.cloudSetupNotice ?? _sourceNotice,
             cloudSettings: widget.cloudSettings,
+            serialMessage: _serialMessage,
+            hasSerialSnapshot: _serialSnapshot != null,
+            onImportSerial: _importSerialSnapshot,
+            onClearSerial: _clearSerialSnapshot,
+            localSelected: _useLocalWifi,
+            localStatus: _localWifi.status,
+            localMessage: _localWifi.message,
+            onConnectLocal: _connectLocalWifi,
+            onDisconnectLocal: _disconnectLocalWifi,
             appearance: widget.appearance,
             storageUnavailable: widget.storageUnavailable,
             onThemeChanged: widget.onThemeChanged,
@@ -233,6 +384,8 @@ class _Home extends StatelessWidget {
     required this.gaze,
     required this.atmosphere,
     required this.sourceNotice,
+    required this.modelAvailable,
+    required this.modelLoadFinished,
     required this.onScenario,
     required this.onDemoChanged,
     required this.sky,
@@ -247,6 +400,8 @@ class _Home extends StatelessWidget {
   final MossGaze gaze;
   final MossAtmosphere atmosphere;
   final String sourceNotice;
+  final bool modelAvailable;
+  final bool modelLoadFinished;
   final ValueChanged<DemoScenario> onScenario;
   final VoidCallback onDemoChanged;
   final SkyAppearance sky;
@@ -306,7 +461,11 @@ class _Home extends StatelessWidget {
                       ],
                     ),
                   ),
-                  _StatusPill(demo: state.isDemo, live: state.isLive),
+                  _StatusPill(
+                    demo: state.isDemo,
+                    live: state.isLive,
+                    snapshot: state.isSerialSnapshot,
+                  ),
                 ],
               ),
               const SizedBox(height: 22),
@@ -325,7 +484,7 @@ class _Home extends StatelessWidget {
                           const SizedBox(width: 7),
                           Expanded(
                             child: Text(
-                              mood.label.toUpperCase(),
+                              state.moodLabel.toUpperCase(),
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w800,
@@ -415,7 +574,7 @@ class _Home extends StatelessWidget {
                       child: Column(
                         children: [
                           Text(
-                            mood.message,
+                            state.moodMessage,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 22,
@@ -499,6 +658,8 @@ class _Home extends StatelessWidget {
                         ? 'CONTOH DATA'
                         : state.isLive
                         ? 'DATA SENSOR'
+                        : state.isSerialSnapshot
+                        ? 'DATA SERIAL'
                         : 'BELUM TERHUBUNG',
                     style: TextStyle(
                       fontSize: 9,
@@ -510,7 +671,7 @@ class _Home extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              if (state.isLive) ...[
+              if (state.isLive || state.isSerialSnapshot) ...[
                 Text(
                   'Nilai sensor belum diverifikasi; tanah dan cahaya berupa skala relatif.',
                   style: TextStyle(
@@ -533,11 +694,17 @@ class _Home extends StatelessWidget {
                         child: _Metric(
                           icon: Icons.water_drop_outlined,
                           title: 'Kelembapan tanah',
-                          value: _percent(state.soilPercent),
+                          value: state.soilPercent != null
+                              ? _percent(state.soilPercent)
+                              : '—',
                           detail: state.soilPercent != null
                               ? state.isDemo
                                     ? 'Kondisi tanah'
+                                    : state.soilAdc != null
+                                    ? 'ADC ${state.soilAdc} · perkiraan'
                                     : 'Skala belum diverifikasi'
+                              : state.soilAdc != null
+                              ? 'ADC ${state.soilAdc} · belum dapat diestimasi'
                               : 'Menunggu sensor',
                           color: const Color(0xFF51859A),
                         ),
@@ -546,10 +713,20 @@ class _Home extends StatelessWidget {
                         width: columnWidth,
                         child: _Metric(
                           icon: Icons.waves_rounded,
-                          title: 'Air dalam wadah',
-                          value: _percent(state.waterPercent),
+                          title: 'Air (relatif)',
+                          value: state.waterPercent != null
+                              ? _percent(state.waterPercent)
+                              : state.waterObservationPercent != null
+                              ? '~${_percent(state.waterObservationPercent)}'
+                              : '—',
                           detail: state.isDemo
                               ? 'Level simulasi'
+                              : state.waterPercent != null
+                              ? 'ADC ${state.waterAdc} · belum diverifikasi'
+                              : state.waterObservationPercent != null
+                              ? 'Rendah–hampir penuh · perkiraan'
+                              : state.waterAdc != null
+                              ? 'ADC ${state.waterAdc} · belum dapat diestimasi'
                               : 'Belum tersedia',
                           color: const Color(0xFF568896),
                         ),
@@ -573,9 +750,15 @@ class _Home extends StatelessWidget {
                         child: _Metric(
                           icon: Icons.wb_sunny_outlined,
                           title: 'Cahaya',
-                          value: _percent(state.lightPercent),
+                          value: state.lightPercent != null
+                              ? _percent(state.lightPercent)
+                              : '—',
                           detail: state.isDemo
                               ? 'Intensitas contoh'
+                              : state.lightAdc != null
+                              ? state.lightPercent != null
+                                    ? 'ADC ${state.lightAdc} · perkiraan'
+                                    : 'ADC mentah'
                               : state.lightPercent != null
                               ? 'Skala belum diverifikasi'
                               : 'Menunggu sensor',
@@ -586,9 +769,18 @@ class _Home extends StatelessWidget {
                         width: constraints.maxWidth,
                         child: _Metric(
                           icon: Icons.wb_twilight_rounded,
-                          title: 'UV (perkiraan)',
-                          value: state.uvIndex?.toStringAsFixed(1) ?? '—',
-                          detail: state.uvIndex == null
+                          title: state.uvAdc == null
+                              ? 'UV (perkiraan)'
+                              : 'UV (skala ADC)',
+                          value:
+                              (state.uvAdcPercent == null
+                                  ? null
+                                  : '~${state.uvAdcPercent}%') ??
+                              state.uvIndex?.toStringAsFixed(1) ??
+                              '—',
+                          detail: state.uvAdc != null
+                              ? 'ADC ${state.uvAdc} · bukan indeks UV'
+                              : state.uvIndex == null
                               ? 'Menunggu data sensor'
                               : state.isDemo
                               ? 'Contoh, bukan sensor'
@@ -602,6 +794,12 @@ class _Home extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               _AirRow(state: state),
+              const SizedBox(height: 10),
+              _SyntheticMlCard(
+                state: state,
+                modelAvailable: modelAvailable,
+                modelLoadFinished: modelLoadFinished,
+              ),
               const SizedBox(height: 23),
               const Text(
                 'Perangkat',
@@ -615,7 +813,9 @@ class _Home extends StatelessWidget {
               const _ControlNotice(),
               const SizedBox(height: 22),
               Text(
-                'Ekspresi Moss menggunakan aturan sederhana, bukan hasil model machine learning.',
+                state.syntheticPrediction == null
+                    ? 'Ekspresi Moss menggunakan aturan sederhana, bukan hasil model machine learning.'
+                    : 'Ekspresi Moss mengikuti model sintetis; bukan diagnosis tanaman.',
                 style: TextStyle(color: mutedColor, fontSize: 11, height: 1.45),
               ),
             ],
@@ -627,9 +827,14 @@ class _Home extends StatelessWidget {
 }
 
 class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.demo, required this.live});
+  const _StatusPill({
+    required this.demo,
+    required this.live,
+    required this.snapshot,
+  });
   final bool demo;
   final bool live;
+  final bool snapshot;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -656,7 +861,9 @@ class _StatusPill extends StatelessWidget {
         ),
         const SizedBox(width: 5),
         Text(
-          demo ? 'SIMULASI' : (live ? 'SENSOR' : 'OFFLINE'),
+          demo
+              ? 'SIMULASI'
+              : (live ? 'SENSOR' : (snapshot ? 'SERIAL' : 'OFFLINE')),
           style: TextStyle(
             fontSize: 10,
             letterSpacing: 0.7,
@@ -832,6 +1039,12 @@ class _AirRow extends StatelessWidget {
               Text(
                 state.isDemo
                     ? 'Kondisi contoh, bukan pembacaan CO₂'
+                    : state.mqAdcStatus == 'adc_read_failed'
+                    ? 'Analog gagal · digital ${state.mqDigital ?? '—'}'
+                    : state.mqAdc != null
+                    ? 'ADC ${state.mqAdc} · bukan kualitas udara'
+                    : state.mqDigital != null
+                    ? 'Digital ${state.mqDigital} · analog belum tersedia'
                     : 'Belum tersedia dan belum dikalibrasi',
                 style: TextStyle(
                   fontSize: 11,
@@ -842,7 +1055,13 @@ class _AirRow extends StatelessWidget {
           ),
         ),
         Text(
-          state.isDemo ? (state.airChanged ? 'BERUBAH' : 'STABIL') : '—',
+          state.isDemo
+              ? (state.airChanged ? 'BERUBAH' : 'STABIL')
+              : state.mqAdcPercent != null
+              ? '~${state.mqAdcPercent}% ADC'
+              : state.mqDigital != null
+              ? 'D ${state.mqDigital}'
+              : '—',
           style: TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.w800,
@@ -852,6 +1071,70 @@ class _AirRow extends StatelessWidget {
       ],
     ),
   );
+}
+
+class _SyntheticMlCard extends StatelessWidget {
+  const _SyntheticMlCard({
+    required this.state,
+    required this.modelAvailable,
+    required this.modelLoadFinished,
+  });
+
+  final PlantState state;
+  final bool modelAvailable;
+  final bool modelLoadFinished;
+
+  @override
+  Widget build(BuildContext context) {
+    final prediction = state.syntheticPrediction;
+    final description = !modelLoadFinished
+        ? 'Menyiapkan model.'
+        : !modelAvailable
+        ? 'Model tidak tersedia.'
+        : !state.isLocalLive
+        ? 'Hubungkan sensor melalui Wi-Fi lokal untuk menjalankan model.'
+        : prediction == null
+        ? 'Menunggu data tanah, air, dan cahaya yang dapat dibaca.'
+        : 'Pola: ${state.moodMessage}';
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: context.mossColors.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: context.mossColors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'ML XGBoost · sintetis',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 5),
+          Text(description, style: const TextStyle(fontSize: 12)),
+          if (prediction != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Skor model sintetis ${(prediction.score * 100).round()}% · bukan akurasi sensor',
+              style: TextStyle(
+                color: context.mossColors.onSurfaceVariant,
+                fontSize: 11,
+              ),
+            ),
+          ],
+          const SizedBox(height: 5),
+          Text(
+            'Dilatih dengan data buatan dan aturan; bukan diagnosis tanaman atau kendali relay. UV nyata belum terkalibrasi.',
+            style: TextStyle(
+              color: context.mossColors.onSurfaceVariant,
+              fontSize: 11,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ControlNotice extends StatelessWidget {
@@ -906,6 +1189,15 @@ class _SettingsPage extends StatelessWidget {
     required this.onDemoChanged,
     required this.sourceNotice,
     required this.cloudSettings,
+    required this.serialMessage,
+    required this.hasSerialSnapshot,
+    required this.onImportSerial,
+    required this.onClearSerial,
+    required this.localSelected,
+    required this.localStatus,
+    required this.localMessage,
+    required this.onConnectLocal,
+    required this.onDisconnectLocal,
     required this.appearance,
     required this.storageUnavailable,
     required this.onThemeChanged,
@@ -916,6 +1208,15 @@ class _SettingsPage extends StatelessWidget {
   final VoidCallback onDemoChanged;
   final String sourceNotice;
   final Widget? cloudSettings;
+  final String? serialMessage;
+  final bool hasSerialSnapshot;
+  final VoidCallback onImportSerial;
+  final VoidCallback onClearSerial;
+  final bool localSelected;
+  final LocalWifiStatus localStatus;
+  final String localMessage;
+  final VoidCallback onConnectLocal;
+  final VoidCallback onDisconnectLocal;
   final AppearanceSettings appearance;
   final bool storageUnavailable;
   final ValueChanged<ThemeMode> onThemeChanged;
@@ -973,11 +1274,64 @@ class _SettingsPage extends StatelessWidget {
             title: 'Koneksi cloud',
             body: sourceNotice,
           ),
+      const Text(
+        'Wi-Fi lokal ESP32',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 5),
+      const Text(
+        'Pilih Wi-Fi Moss pada ponsel menggunakan sandi di LCD ESP32, '
+        'lalu hubungkan di sini. Data tetap di jaringan lokal; jaringan ini '
+        'tidak menyediakan internet.',
+        style: TextStyle(fontSize: 12, height: 1.4),
+      ),
+      Text(localMessage, style: const TextStyle(fontSize: 12)),
+      Wrap(
+        spacing: 8,
+        children: [
+          OutlinedButton(
+            onPressed: localStatus == LocalWifiStatus.connecting
+                ? null
+                : onConnectLocal,
+            child: const Text('Hubungkan Wi-Fi lokal'),
+          ),
+          if (localSelected)
+            TextButton(
+              onPressed: onDisconnectLocal,
+              child: const Text('Putuskan Wi-Fi lokal'),
+            ),
+        ],
+      ),
+      const Divider(height: 32),
+      const Text('Data serial', style: TextStyle(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 5),
+      const Text(
+        'Salin satu baris JSON sample dari ESP32, lalu tempel di sini. '
+        'Snapshot bukan live. Data tempel hanya di memori; data bawaan APK dapat muncul kembali saat dibuka.',
+        style: TextStyle(fontSize: 12, height: 1.4),
+      ),
+      Wrap(
+        spacing: 8,
+        children: [
+          OutlinedButton(
+            onPressed: onImportSerial,
+            child: const Text('Tempel data serial'),
+          ),
+          if (hasSerialSnapshot)
+            TextButton(
+              onPressed: onClearSerial,
+              child: const Text('Hapus snapshot'),
+            ),
+        ],
+      ),
+      if (serialMessage != null)
+        Text(serialMessage!, style: const TextStyle(fontSize: 12)),
+      const Divider(height: 32),
       const AppVersionPanel(),
       const _SettingLine(
         icon: Icons.sensors_outlined,
         title: 'Sensor tambahan',
-        body: 'Sensor air dan MQ135 menunggu pemasangan dan konfigurasi pin.',
+        body: 'Impor serial menampilkan ADC air dan MQ mentah, bukan hasil terkalibrasi.',
       ),
       const _SettingLine(
         icon: Icons.notifications_none_rounded,

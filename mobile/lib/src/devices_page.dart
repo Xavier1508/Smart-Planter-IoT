@@ -80,6 +80,8 @@ class _DevicesPageState extends State<DevicesPage> {
                           ? 'Pratinjau perangkat'
                           : state.isLive
                           ? 'Data sensor tersedia'
+                          : state.isSerialSnapshot
+                          ? 'Data serial tersimpan'
                           : 'Menunggu data perangkat',
                       style: TextStyle(
                         fontSize: 16,
@@ -113,7 +115,7 @@ class _DevicesPageState extends State<DevicesPage> {
         _SensorRow(
           icon: Icons.grass_rounded,
           name: 'Kelembapan tanah',
-          status: status(state.soilPercent != null),
+          status: status(state.soilPercent != null || state.soilAdc != null),
         ),
         _SensorRow(
           icon: Icons.thermostat_rounded,
@@ -130,22 +132,65 @@ class _DevicesPageState extends State<DevicesPage> {
         _SensorRow(
           icon: Icons.wb_twilight_rounded,
           name: 'UV',
-          status: state.uvIndex == null
+          status: state.uvIndex == null && state.uvAdc == null
               ? 'Belum ada data'
               : state.isDemo
               ? 'Simulasi'
               : 'Belum diverifikasi',
         ),
-        const _SensorRow(
+        _SensorRow(
           icon: Icons.water_drop_outlined,
           name: 'Level air',
-          status: 'Belum tersedia',
+          status: state.waterPercent != null && !state.isDemo
+              ? 'Skala relatif belum diverifikasi'
+              : state.waterAdc == null
+              ? 'Belum tersedia'
+              : 'ADC belum diverifikasi',
         ),
-        const _SensorRow(
+        _SensorRow(
           icon: Icons.air_rounded,
           name: 'Sensor udara MQ135',
-          status: 'Belum tersedia',
+          status: state.mqAdc == null && state.mqDigital == null
+              ? 'Belum tersedia'
+              : 'ADC/digital belum diverifikasi',
         ),
+        if (state.isSerialSnapshot &&
+            (state.pumpRulePreview != null ||
+                state.lightRulePreview != null ||
+                state.waterLowPreview != null)) ...[
+          const SizedBox(height: 22),
+          const Text(
+            'Pratinjau aturan serial',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Perhitungan dari snapshot dan skala relatif belum diverifikasi; '
+            'bukan perintah, status relay, atau notifikasi live.',
+          ),
+          const SizedBox(height: 8),
+          Text('Pompa <50%: ${_previewText(state.pumpRulePreview)}'),
+          Text('Lampu <60%: ${_previewText(state.lightRulePreview)}'),
+          Text('Air <20%: ${_waterPreviewText(state.waterLowPreview)}'),
+        ],
+        if (state.isLocalLive &&
+            (state.pumpCommand != null || state.lightCommand != null)) ...[
+          const SizedBox(height: 22),
+          const Text(
+            'Perintah firmware',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          Text('Pompa: ${_commandText(state.pumpCommand)}'),
+          Text('Lampu: ${_commandText(state.lightCommand)}'),
+          const Text(
+            'Perintah bukan pengukuran kontak relay atau keadaan beban.',
+          ),
+          if (state.lightingCandidate != null)
+            Text(
+              'Aturan lampu (pratinjau): ${_lightingCandidateText(state.lightingCandidate)}',
+            ),
+        ],
         const SizedBox(height: 22),
         Text(
           state.isDemo ? 'Kendali simulasi' : 'Kendali perangkat',
@@ -222,6 +267,31 @@ class _DevicesPageState extends State<DevicesPage> {
       ],
     );
   }
+
+  String _previewText(bool? value) => value == null
+      ? 'Belum tersedia'
+      : value
+      ? 'Menyala (pratinjau)'
+      : 'Mati (pratinjau)';
+
+  String _waterPreviewText(bool? value) => value == null
+      ? 'Belum tersedia'
+      : value
+      ? 'Di bawah ambang (snapshot)'
+      : 'Tidak di bawah ambang (snapshot)';
+
+  String _commandText(bool? value) => value == null
+      ? 'Tidak diketahui'
+      : value
+      ? 'ON diminta'
+      : 'OFF diminta';
+
+  String _lightingCandidateText(String? value) => switch (value) {
+    'on' => 'ingin ON',
+    'off' => 'ingin OFF',
+    'hold' => 'pertahankan',
+    _ => 'belum tersedia',
+  };
 }
 
 class _SensorRow extends StatelessWidget {
