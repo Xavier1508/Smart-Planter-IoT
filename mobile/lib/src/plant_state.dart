@@ -27,6 +27,11 @@ class PlantState {
     this.mqAdc,
     this.mqDigital,
     this.mqAdcStatus,
+    this.mqAdcUnit,
+    this.mqPinMillivolts,
+    this.mqAverageAdc,
+    this.mqAverageSamples = 0,
+    this.mqTrend,
     this.pumpRulePreview,
     this.pumpRuleThreshold,
     this.lightRulePreview,
@@ -85,6 +90,8 @@ class PlantState {
     mqAdc: reading.mqAdc,
     mqDigital: reading.mqDigital,
     mqAdcStatus: reading.mqAdcStatus,
+    mqAdcUnit: reading.mqAdcUnit,
+    mqPinMillivolts: reading.mqPinMillivolts,
     pumpRulePreview: reading.pumpRulePreview,
     pumpRuleThreshold: reading.pumpRuleThreshold,
     lightRulePreview: reading.lightRulePreview,
@@ -98,7 +105,12 @@ class PlantState {
 
   /// A new sample received directly over the local Wi-Fi stream. The phone's
   /// reception time is not substituted for a device measurement timestamp.
-  factory PlantState.fromLocalWifi(SerialSensorSnapshot reading) => PlantState(
+  factory PlantState.fromLocalWifi(
+    SerialSensorSnapshot reading, {
+    int? mqAverageAdc,
+    int mqAverageSamples = 0,
+    int? mqTrend,
+  }) => PlantState(
     isLive: true,
     isLocalLive: true,
     soilPercent: reading.soilRelativePercent,
@@ -116,6 +128,11 @@ class PlantState {
     mqAdc: reading.mqAdc,
     mqDigital: reading.mqDigital,
     mqAdcStatus: reading.mqAdcStatus,
+    mqAdcUnit: reading.mqAdcUnit,
+    mqPinMillivolts: reading.mqPinMillivolts,
+    mqAverageAdc: mqAverageAdc,
+    mqAverageSamples: mqAverageSamples,
+    mqTrend: mqTrend,
     pumpCommand: reading.pumpCommand,
     pumpReason: reading.pumpReason,
     lightCommand: reading.lightCommand,
@@ -142,6 +159,11 @@ class PlantState {
   final int? mqAdc;
   final int? mqDigital;
   final String? mqAdcStatus;
+  final String? mqAdcUnit;
+  final int? mqPinMillivolts;
+  final int? mqAverageAdc;
+  final int mqAverageSamples;
+  final int? mqTrend;
   final bool? pumpRulePreview;
   final int? pumpRuleThreshold;
   final bool? lightRulePreview;

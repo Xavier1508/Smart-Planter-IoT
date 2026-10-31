@@ -5,7 +5,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/local_wifi.dart';
 
-String sample(int uptime, {int version = 12, int soil = 44}) => jsonEncode({
+String sample(
+  int uptime, {
+  int version = 12,
+  int soil = 44,
+  int? mqAdc,
+  bool adc1Failure = false,
+}) => jsonEncode({
   'type': 'sample',
   'schema': 'serial_observation_2',
   'firmware_version': version,
@@ -36,10 +42,16 @@ String sample(int uptime, {int version = 12, int soil = 44}) => jsonEncode({
     },
   },
   'mq135': {
-    'adc_raw': null,
+    'adc_raw': mqAdc,
     'digital_raw': 1,
-    'adc_status': 'adc_read_failed',
+    'adc_status': mqAdc == null
+        ? (adc1Failure ? 'unavailable' : 'adc_read_failed')
+        : 'unverified',
     'status': 'unverified',
+    if (mqAdc != null || adc1Failure) 'adc_unit': 'ADC1',
+    if (adc1Failure) 'signal_quality': 'adc_read_failed',
+    if (mqAdc != null) 'adc_pin_mv_estimate': 550,
+    if (mqAdc != null) 'adc_calibration_source': 'efuse_vref',
   },
   'pump_cmd': false,
   'growlight_cmd': false,
@@ -125,6 +137,62 @@ void main() {
         () => controller.status == LocalWifiStatus.disconnected,
       );
       expect(controller.snapshot, isNull);
+    },
+  );
+
+  test(
+    'MQ average follows live frames and clears on rail, failure and disconnect',
+    () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final incoming = server.first;
+      final controller = LocalWifiController(
+        address: '127.0.0.1',
+        port: server.port,
+      );
+      final connecting = controller.connect();
+      final peer = await incoming;
+      addTearDown(() async {
+        peer.destroy();
+        controller.dispose();
+        await server.close();
+      });
+      await connecting;
+      Future<void> send(int uptime, {int? raw, bool failure = false}) async {
+        peer.write(
+          '${sample(uptime, version: 19, mqAdc: raw, adc1Failure: failure)}\n',
+        );
+        await waitFor(
+          controller,
+          () => controller.snapshot?.uptimeMs == uptime,
+        );
+      }
+
+      await send(5000, raw: 500);
+      await send(10000, raw: 510);
+      await send(15000, raw: 520);
+      expect(controller.mqAverageSamples, 3);
+      expect(controller.mqAverageAdc, 510);
+      expect(controller.mqTrend, isNull);
+      expect(controller.snapshot?.mqPinMillivolts, 550);
+      await send(20000, raw: 4095);
+      expect(controller.snapshot?.mqAdc, 4095);
+      expect(controller.snapshot?.mqPinMillivolts, isNull);
+      expect(controller.mqAverageSamples, 0);
+      expect(controller.mqAverageAdc, isNull);
+      await send(25000, raw: 530);
+      expect(controller.mqAverageAdc, 530);
+      expect(controller.mqAverageSamples, 1);
+      expect(controller.mqTrend, isNull);
+      await send(30000, failure: true);
+      expect(controller.snapshot?.mqAdcStatus, 'adc_read_failed');
+      expect(controller.snapshot?.mqAdcUnit, 'ADC1');
+      expect(controller.mqAverageAdc, isNull);
+      await send(35000, raw: 540);
+      expect(controller.mqAverageAdc, 540);
+      controller.disconnect();
+      expect(controller.snapshot, isNull);
+      expect(controller.mqAverageAdc, isNull);
+      expect(controller.mqAverageSamples, 0);
     },
   );
 

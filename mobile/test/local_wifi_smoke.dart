@@ -12,7 +12,13 @@ void check(bool condition, String message) {
   if (!condition) throw StateError(message);
 }
 
-String fixture(int uptime, {int soil = 44, int version = 12}) => jsonEncode({
+String fixture(
+  int uptime, {
+  int soil = 44,
+  int version = 12,
+  int? mqAdc,
+  bool adc1Failure = false,
+}) => jsonEncode({
   'type': 'sample',
   'schema': 'serial_observation_2',
   'firmware_version': version,
@@ -38,10 +44,16 @@ String fixture(int uptime, {int soil = 44, int version = 12}) => jsonEncode({
     },
   },
   'mq135': {
-    'adc_raw': null,
+    'adc_raw': mqAdc,
     'digital_raw': 1,
-    'adc_status': 'adc_read_failed',
+    'adc_status': mqAdc == null
+        ? (adc1Failure ? 'unavailable' : 'adc_read_failed')
+        : 'unverified',
     'status': 'unverified',
+    if (mqAdc != null || adc1Failure) 'adc_unit': 'ADC1',
+    if (adc1Failure) 'signal_quality': 'adc_read_failed',
+    if (mqAdc != null) 'adc_pin_mv_estimate': 550,
+    if (mqAdc != null) 'adc_calibration_source': 'efuse_vref',
   },
   'pump_cmd': false,
   'pump_reason': 'soil_not_dry',
@@ -194,11 +206,55 @@ Future<void> smokeReconnect() async {
   }
 }
 
+Future<void> smokeMqAverage() async {
+  final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final incoming = server.first;
+  final client = LocalWifiController(address: '127.0.0.1', port: server.port);
+  final connecting = client.connect();
+  final peer = await incoming;
+  try {
+    await connecting;
+    Future<void> send(int uptime, {int? raw, bool failure = false}) async {
+      peer.write(
+        '${fixture(uptime, version: 19, mqAdc: raw, adc1Failure: failure)}\n',
+      );
+      await waitFor(client, () => client.snapshot?.uptimeMs == uptime);
+    }
+
+    await send(5000, raw: 500);
+    await send(10000, raw: 510);
+    await send(15000, raw: 520);
+    check(client.mqAverageAdc == 510, 'Three-sample average mismatch');
+    check(client.mqAverageSamples == 3, 'Sample count mismatch');
+    check(client.mqTrend == null, 'Trend needs four samples');
+    check(client.snapshot?.mqPinMillivolts == 550, 'Pin estimate mismatch');
+    await send(20000, raw: 4095);
+    check(client.snapshot?.mqAdc == 4095, 'Keep rail for diagnosis');
+    check(client.snapshot?.mqPinMillivolts == null, 'Rail voltage is unknown');
+    check(client.mqAverageAdc == null, 'Rail must clear the average');
+    await send(25000, raw: 530);
+    check(client.mqAverageAdc == 530, 'Average must restart after rail');
+    await send(30000, failure: true);
+    check(client.snapshot?.mqAdcUnit == 'ADC1', 'ADC unit missing');
+    check(client.snapshot?.mqAdcStatus == 'adc_read_failed', 'Failure missing');
+    check(client.mqAverageAdc == null, 'Read failure must clear the average');
+    await send(35000, raw: 540);
+    client.disconnect();
+    check(client.mqAverageAdc == null, 'Disconnect must clear the average');
+    check(client.mqAverageSamples == 0, 'Disconnect must clear sample count');
+  } finally {
+    peer.destroy();
+    client.dispose();
+    await server.close();
+  }
+}
+
 Future<void> main() async {
   await smoke(oversized: false);
   await smoke(oversized: true);
   await smokeReconnect();
+  await smokeMqAverage();
   stdout.writeln(
-    'Local Wi-Fi client: loopback updates, reconnect, stale and invalid-frame checks passed; no ESP32 contacted.',
+    'Local Wi-Fi client: loopback, MQ averaging, reconnect, stale and invalid-frame checks passed; no ESP32 contacted.',
   );
 }

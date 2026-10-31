@@ -70,6 +70,58 @@ void main() {
     expect(snapshot.waterObservationPercent, isNull);
   });
 
+  test('MQ ADC1 estimates and failures remain bounded and honest', () {
+    SerialSensorSnapshot parseMq(Map<String, Object?> values) =>
+        SerialSensorSnapshot.parse(
+          jsonEncode({
+            'type': 'sample',
+            'adc': {'uv_raw': 0, 'status': 'unverified'},
+            'mq135': {
+              'adc_raw': 500,
+              'digital_raw': 1,
+              'adc_status': 'unverified',
+              'status': 'unverified',
+              'adc_unit': 'ADC1',
+              'signal_quality': 'in_range_unverified',
+              'adc_pin_mv_estimate': 550,
+              'adc_calibration_source': 'efuse_vref',
+              ...values,
+            },
+          }),
+        );
+    final valid = parseMq({});
+    expect(valid.mqAdc, 500);
+    expect(valid.mqAdcUnit, 'ADC1');
+    expect(valid.mqPinMillivolts, 550);
+    final state = PlantState.fromLocalWifi(
+      valid,
+      mqAverageAdc: 505,
+      mqAverageSamples: 3,
+      mqTrend: 1,
+    );
+    expect(state.mqAverageAdc, 505);
+    expect(state.mqAverageSamples, 3);
+    expect(state.mqTrend, 1);
+    expect(state.mqPinMillivolts, 550);
+    expect(PlantState.fromSerial(valid).mqAverageAdc, isNull);
+
+    final failure = parseMq({
+      'adc_status': 'unavailable',
+      'signal_quality': 'adc_read_failed',
+    });
+    expect(failure.mqAdc, isNull);
+    expect(failure.mqAdcStatus, 'adc_read_failed');
+    expect(failure.mqAdcUnit, 'ADC1');
+    expect(failure.mqPinMillivolts, isNull);
+    expect(parseMq({'adc_raw': 4095}).mqPinMillivolts, isNull);
+    expect(parseMq({'adc_raw': 0}).mqPinMillivolts, isNull);
+    expect(parseMq({'adc_pin_mv_estimate': 3301}).mqPinMillivolts, isNull);
+    expect(
+      parseMq({'adc_calibration_source': 'unknown'}).mqPinMillivolts,
+      isNull,
+    );
+  });
+
   test('observed water scale stays separate from control water percent', () {
     final snapshot = SerialSensorSnapshot.parse('''
       {"type":"sample","uptime_ms":5000,

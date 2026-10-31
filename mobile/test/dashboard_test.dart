@@ -75,10 +75,12 @@ void main() {
       int waterRaw = 2000,
       int? waterPercent = 50,
       bool? waterLow = false,
+      int? mqAdc,
+      bool adc1Failure = false,
     }) => jsonEncode({
       'type': 'sample',
       'schema': 'serial_observation_2',
-      'firmware_version': 18,
+      'firmware_version': mqAdc != null || adc1Failure ? 19 : 18,
       'uptime_ms': uptime,
       'adc': {
         'soil_raw': soilRaw,
@@ -96,10 +98,16 @@ void main() {
         'status': 'unverified',
       },
       'mq135': {
-        'adc_raw': null,
+        'adc_raw': mqAdc,
         'digital_raw': 1,
-        'adc_status': 'adc_read_failed',
+        'adc_status': mqAdc == null
+            ? (adc1Failure ? 'unavailable' : 'adc_read_failed')
+            : 'unverified',
         'status': 'unverified',
+        if (mqAdc != null || adc1Failure) 'adc_unit': 'ADC1',
+        if (adc1Failure) 'signal_quality': 'adc_read_failed',
+        if (mqAdc != null) 'adc_pin_mv_estimate': 550,
+        if (mqAdc != null) 'adc_calibration_source': 'efuse_vref',
       },
       'pump_cmd': false,
       'growlight_cmd': false,
@@ -119,7 +127,7 @@ void main() {
     );
     expect(peer, isNotNull);
     await tester.runAsync(() async {
-      peer!.write('${sample(5000, 44)}\n');
+      peer!.write('${sample(5000, 44, mqAdc: 500)}\n');
       await peer.flush();
       await waitForUptime(5000);
     });
@@ -134,7 +142,7 @@ void main() {
     expect(find.text('Medium'), findsOneWidget);
 
     await tester.runAsync(() async {
-      peer!.write('${sample(10000, 68, waterPercent: 95)}\n');
+      peer!.write('${sample(10000, 68, waterPercent: 95, mqAdc: 520)}\n');
       await peer.flush();
       await waitForUptime(10000);
     });
@@ -143,10 +151,30 @@ void main() {
     expect(find.text('68%'), findsOneWidget);
     expect(find.text('Full'), findsOneWidget);
     expect(find.text('Perkiraan · bisa hampir penuh'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Sensor udara MQ135'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('520'), findsOneWidget);
+    expect(find.text('Rata-rata 2/12 sampel: 510 ADC'), findsOneWidget);
+    expect(find.text('Arah sinyal: stabil dalam batas derau.'), findsNothing);
+    expect(find.text('Perkiraan pin ESP32: ~550 mV'), findsOneWidget);
+    expect(
+      find.text(
+        'CO₂ belum tersedia · MQ135 merespons beberapa gas, bukan CO₂ saja.',
+      ),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Kelembapan tanah'),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
 
     await tester.runAsync(() async {
       peer!.write(
-        '${sample(15000, 68, soilRaw: 0, waterPercent: null, waterLow: true)}\n',
+        '${sample(15000, 68, soilRaw: 0, waterPercent: null, waterLow: true, adc1Failure: true)}\n',
       );
       await peer.flush();
       await waitForUptime(15000);
@@ -156,6 +184,26 @@ void main() {
     expect(find.text('Belum terbaca'), findsOneWidget);
     expect(find.text('ADC 0 · penyebab belum diketahui'), findsOneWidget);
     expect(find.text('Low'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Sensor udara MQ135'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Rata-rata 2/12 sampel: 510 ADC'), findsNothing);
+    expect(
+      find.text('Rata-rata menunggu sinyal analog non-rel.'),
+      findsOneWidget,
+    );
+    expect(find.text('Analog gagal dibaca pada ADC1.'), findsOneWidget);
+    expect(
+      find.text('Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'),
+      findsNothing,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Kelembapan tanah'),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
 
     await tester.runAsync(() async {
       peer!.write('${sample(20000, 68, waterRaw: 0, waterLow: true)}\n');
@@ -451,8 +499,12 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('~100% ADC'), findsOneWidget);
-    expect(find.text('ADC 4095 · bukan kualitas udara'), findsOneWidget);
+    expect(find.text('4095'), findsOneWidget);
+    expect(find.text('ADC snapshot'), findsOneWidget);
+    expect(
+      find.text('ADC mencapai batas; penyebab belum diketahui.'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
@@ -750,11 +802,14 @@ void main() {
 
     readings.addError(StateError('connection lost'));
     await tester.pump();
+    await tester.pump(); // Process the stream event and the resulting rebuild.
     expect(find.text('63%'), findsNothing);
     emit(42, 42);
     await tester.pump();
+    await tester.pump();
     expect(find.text('42%'), findsNothing);
     emit(43, 63);
+    await tester.pump();
     await tester.pump();
     expect(find.text('63%'), findsOneWidget);
 

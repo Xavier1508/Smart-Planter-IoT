@@ -252,7 +252,12 @@ class _DashboardState extends State<Dashboard> {
     final state = _useLocalWifi
         ? (localSample == null
               ? const PlantState.waiting()
-              : PlantState.fromLocalWifi(localSample))
+              : PlantState.fromLocalWifi(
+                  localSample,
+                  mqAverageAdc: _localWifi.mqAverageAdc,
+                  mqAverageSamples: _localWifi.mqAverageSamples,
+                  mqTrend: _localWifi.mqTrend,
+                ))
         : (_serialSnapshot ?? _liveState);
     return Scaffold(
       body: SafeArea(
@@ -844,67 +849,120 @@ class _AirRow extends StatelessWidget {
   final PlantState state;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: context.mossColors.surfaceContainerLowest,
-      borderRadius: BorderRadius.circular(17),
-      border: Border.all(color: context.mossColors.outlineVariant),
-    ),
-    child: Row(
-      children: [
-        Icon(Icons.air_rounded, color: context.mossColors.primary),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
+  Widget build(BuildContext context) {
+    final raw = state.mqAdc;
+    final rail = raw == 0 || raw == 4095;
+    final detail = state.mqAdcStatus == 'adc_read_failed'
+        ? state.mqAdcUnit == 'ADC1'
+              ? 'Analog gagal dibaca pada ADC1.'
+              : 'Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'
+        : rail
+        ? 'ADC mencapai batas; penyebab belum diketahui.'
+        : raw != null
+        ? 'Sinyal analog · belum dikalibrasi'
+        : state.mqDigital != null
+        ? 'Analog belum tersedia.'
+        : 'Belum tersedia dan belum dikalibrasi';
+    final detailStyle = TextStyle(
+      fontSize: 11,
+      height: 1.4,
+      color: context.mossColors.onSurfaceVariant,
+    );
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: context.mossColors.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: context.mossColors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Sensor udara MQ135',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                state.mqAdcStatus == 'adc_read_failed'
-                    ? 'Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'
-                    : state.mqAdc != null
-                    ? 'ADC ${state.mqAdc} · bukan kualitas udara'
-                    : state.mqDigital != null
-                    ? 'Analog belum tersedia.'
-                    : 'Belum tersedia dan belum dikalibrasi',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: context.mossColors.onSurfaceVariant,
+              Icon(Icons.air_rounded, color: context.mossColors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Sensor udara MQ135',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(detail, style: detailStyle),
+                  ],
                 ),
               ),
-              if (state.mqDigital != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  'D0 = ${state.mqDigital}: level pin, bukan ppm atau kualitas udara.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: context.mossColors.onSurfaceVariant,
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    raw?.toString() ?? '—',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: context.mossColors.primary,
+                    ),
                   ),
-                ),
-              ],
+                  Text(
+                    state.isSerialSnapshot ? 'ADC snapshot' : 'ADC terbaru',
+                    style: detailStyle,
+                  ),
+                ],
+              ),
             ],
           ),
-        ),
-        Text(
-          state.mqAdcPercent != null
-              ? '~${state.mqAdcPercent}% ADC'
-              : state.mqDigital != null
-              ? 'D ${state.mqDigital}'
-              : '—',
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w800,
-            color: context.mossColors.primary,
+          if (state.mqAverageAdc != null && state.mqAverageSamples > 0) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Rata-rata ${state.mqAverageSamples}/12 sampel: ${state.mqAverageAdc} ADC',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+            if (state.mqTrend != null) ...[
+              const SizedBox(height: 2),
+              Text(switch (state.mqTrend) {
+                1 => 'Arah sinyal: naik terhadap awal jendela.',
+                -1 => 'Arah sinyal: turun terhadap awal jendela.',
+                _ => 'Arah sinyal: stabil dalam batas derau.',
+              }, style: detailStyle),
+            ],
+          ] else if (state.isLocalLive) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Rata-rata menunggu sinyal analog non-rel.',
+              style: detailStyle,
+            ),
+          ],
+          if (state.mqPinMillivolts != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Perkiraan pin ESP32: ~${state.mqPinMillivolts} mV',
+              style: detailStyle,
+            ),
+          ],
+          if (state.mqDigital != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'D0 = ${state.mqDigital}: level pin, bukan ppm atau kualitas udara.',
+              style: detailStyle,
+            ),
+          ],
+          const SizedBox(height: 10),
+          Text(
+            'CO₂ belum tersedia · MQ135 merespons beberapa gas, bukan CO₂ saja.',
+            style: detailStyle,
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 class _SettingsPage extends StatelessWidget {

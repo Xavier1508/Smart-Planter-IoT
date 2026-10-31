@@ -57,6 +57,8 @@ class SerialSensorSnapshot {
     this.mqAdc,
     this.mqDigital,
     this.mqAdcStatus,
+    this.mqAdcUnit,
+    this.mqPinMillivolts,
     this.pumpRulePreview,
     this.pumpRuleThreshold,
     this.lightRulePreview,
@@ -91,6 +93,10 @@ class SerialSensorSnapshot {
   final int? mqAdc;
   final int? mqDigital;
   final String? mqAdcStatus;
+  final String? mqAdcUnit;
+
+  /// ADC-characterized estimate at the ESP32 pin, not necessarily module A0.
+  final int? mqPinMillivolts;
 
   /// Offline diagnostic calculations, not commands or relay/contact states.
   final bool? pumpRulePreview;
@@ -158,6 +164,13 @@ class SerialSensorSnapshot {
     final light = adcPresent ? integer(adc['light_raw'], 0, 4095) : null;
     final waterRaw = readable(water['status'])
         ? integer(water['adc_raw'], 0, 4095)
+        : null;
+    final mqReadFailed =
+        mq['adc_status'] == 'adc_read_failed' ||
+        (mq['adc_unit'] == 'ADC1' && mq['signal_quality'] == 'adc_read_failed');
+    final mqRaw =
+        !mqReadFailed && readable(mq['status']) && readable(mq['adc_status'])
+        ? integer(mq['adc_raw'], 0, 4095)
         : null;
     // Keep rail values as raw diagnostics, but do not present an ambiguous
     // disconnected/saturated input as a calibrated-looking percentage.
@@ -227,14 +240,22 @@ class SerialSensorSnapshot {
           ? water['low'] as bool
           : null,
       waterClassificationInputsValid: waterInputsValid,
-      mqAdc: readable(mq['status']) && readable(mq['adc_status'])
-          ? integer(mq['adc_raw'], 0, 4095)
-          : null,
+      mqAdc: mqRaw,
       mqDigital: readable(mq['status'])
           ? integer(mq['digital_raw'], 0, 1)
           : null,
-      mqAdcStatus: mq['adc_status'] == 'adc_read_failed'
-          ? 'adc_read_failed'
+      mqAdcStatus: mqReadFailed ? 'adc_read_failed' : null,
+      mqAdcUnit: const {'ADC1', 'ADC2'}.contains(mq['adc_unit'])
+          ? mq['adc_unit'] as String
+          : null,
+      mqPinMillivolts:
+          usableAdc(mqRaw) &&
+              const {
+                'efuse_two_point',
+                'efuse_vref',
+                'default_vref_estimate',
+              }.contains(mq['adc_calibration_source'])
+          ? integer(mq['adc_pin_mv_estimate'], 0, 3300)
           : null,
       pumpRulePreview: preview('pump_on', soilPercent, pumpThreshold),
       pumpRuleThreshold: pumpThreshold,
