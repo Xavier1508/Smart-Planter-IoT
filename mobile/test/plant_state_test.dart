@@ -117,10 +117,16 @@ void main() {
       mqAverageAdc: 505,
       mqAverageSamples: 3,
       mqTrend: 1,
+      mqGasIndex: 35,
+      mqGasStatus: 'elevated',
+      mqGasBaselineMv: 554,
     );
     expect(state.mqAverageAdc, 505);
     expect(state.mqAverageSamples, 3);
     expect(state.mqTrend, 1);
+    expect(state.mqGasIndex, 35);
+    expect(state.mqGasStatus, 'elevated');
+    expect(state.mqGasBaselineMv, 554);
     expect(state.mqPinMillivolts, 550);
     expect(PlantState.fromSerial(valid).mqAverageAdc, isNull);
 

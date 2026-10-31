@@ -71,11 +71,12 @@ batas keselamatan. Perintah relay yang ditampilkan bukan status beban fisik.
   sebagai perintah. Pada tahap versi 8, aplikasi belum menampilkan perintah
   tersebut atau menerima pembacaan otomatis. Sumber versi 12 menyiapkan jalur
   Wi-Fi lokal dan tampilan perintah yang tetap dibedakan dari kontak fisik.
-- Kartu **Sensor udara MQ135** menampilkan persen posisi ADC, ADC terbaru,
-  rata-rata hingga 12 sampel, arah sinyal, dan perkiraan tegangan pin bila
-  firmware menyediakannya. Rata-rata dibersihkan saat data putus, gagal baca,
-  atau mencapai rel. Nilai ini **bukan CO₂, ppm, atau indeks mutu udara**;
-  kalibrasi MQ135 memerlukan R0, Vc, VRL dan RL yang terverifikasi.
+- Kartu **Sensor udara MQ135** menampilkan **indeks gas relatif 0–100**
+  terhadap baseline sesi, status kualitas sinyal, ADC terbaru, rata-rata
+  hingga 12 sampel, arah sinyal, dan perkiraan tegangan pin. Rata-rata dan
+  indeks dibersihkan saat data putus, gagal baca, atau mencapai rel. Nilai ini
+  **bukan CO₂, ppm, atau indeks mutu udara terkalibrasi**; kalibrasi absolut
+  MQ135 memerlukan R0, Vc, VRL dan RL yang terverifikasi.
 - Aplikasi tidak menyediakan saklar pompa atau lampu; firmware dapat meminta
   relay ON sesuai aturan dan interlock. Riwayat tidak direkayasa.
 - Halaman riwayat kosong sampai penyimpanan riwayat sensor diterapkan.
@@ -335,7 +336,7 @@ unggah varian itu ke Google Play. SDK App Distribution Android masih berstatus
 beta. Update APK tetap memerlukan persetujuan pemasangan dari pengguna.
 
 Perubahan Wi-Fi lokal, kartu MQ135, dan XGBoost berada pada aplikasi yang sama,
-bukan aplikasi pratinjau baru. Sumber saat ini memakai `0.3.8+13`. Pengguna melaporkan build 8
+bukan aplikasi pratinjau baru. Sumber saat ini memakai `0.3.9+14`. Pengguna melaporkan build 8
 sudah ada di App Tester; workflow GitHub menggunakan run berikutnya sebagai
 version code untuk membangun dan menandatangani varian `beta` dengan kunci
 release yang sama. Jangan mengirim keystore, password, konfigurasi privat, atau

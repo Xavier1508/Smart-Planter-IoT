@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'mq_gas_index.dart';
 import 'mq_signal_average.dart';
 import 'plant_telemetry.dart';
 
@@ -33,6 +34,7 @@ class LocalWifiController {
   Timer? _retry;
   final List<int> _pending = [];
   final MqSignalAverage _mqAverage = MqSignalAverage();
+  final MqGasIndex _mqGas = MqGasIndex();
   int? _lastUptime;
   int _generation = 0;
   bool _disposed = false;
@@ -45,6 +47,9 @@ class LocalWifiController {
   int? get mqAverageAdc => _mqAverage.average;
   int get mqAverageSamples => _mqAverage.count;
   int? get mqTrend => _mqAverage.trend;
+  int? get mqGasIndex => _mqGas.index;
+  String get mqGasStatus => _mqGas.status;
+  int? get mqGasBaselineMv => _mqGas.baselineMv;
 
   void notifyListeners() {
     if (!_disposed) _changes.add(null);
@@ -132,6 +137,7 @@ class LocalWifiController {
       }
       _lastUptime = uptime;
       _mqAverage.add(next.mqAdc, uptime);
+      _mqGas.update(next.mqPinMillivolts);
       snapshot = next;
       status = LocalWifiStatus.live;
       message = 'Wi-Fi lokal: sampel terbaru diterima di ponsel.';
@@ -197,6 +203,7 @@ class LocalWifiController {
     _pending.clear();
     _lastUptime = null;
     _mqAverage.clear();
+    _mqGas.reset();
   }
 
   void dispose() {

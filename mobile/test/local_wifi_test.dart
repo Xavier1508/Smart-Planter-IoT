@@ -11,6 +11,7 @@ String sample(
   int soil = 44,
   int? mqAdc,
   bool adc1Failure = false,
+  int? mqMv = 550,
 }) => jsonEncode({
   'type': 'sample',
   'schema': 'serial_observation_2',
@@ -50,7 +51,7 @@ String sample(
     'status': 'unverified',
     if (mqAdc != null || adc1Failure) 'adc_unit': 'ADC1',
     if (adc1Failure) 'signal_quality': 'adc_read_failed',
-    if (mqAdc != null) 'adc_pin_mv_estimate': 550,
+    if (mqAdc != null && mqMv != null) 'adc_pin_mv_estimate': mqMv,
     if (mqAdc != null) 'adc_calibration_source': 'efuse_vref',
   },
   'pump_cmd': false,
@@ -174,11 +175,17 @@ void main() {
       expect(controller.mqAverageAdc, 510);
       expect(controller.mqTrend, isNull);
       expect(controller.snapshot?.mqPinMillivolts, 550);
+      expect(controller.mqGasIndex, 0);
+      expect(controller.mqGasStatus, 'baseline');
+      expect(controller.mqGasBaselineMv, 550);
       await send(20000, raw: 4095);
       expect(controller.snapshot?.mqAdc, 4095);
       expect(controller.snapshot?.mqPinMillivolts, isNull);
       expect(controller.mqAverageSamples, 0);
       expect(controller.mqAverageAdc, isNull);
+      expect(controller.mqGasIndex, isNull);
+      expect(controller.mqGasStatus, 'unavailable');
+      expect(controller.mqGasBaselineMv, 550);
       await send(25000, raw: 530);
       expect(controller.mqAverageAdc, 530);
       expect(controller.mqAverageSamples, 1);
@@ -193,8 +200,45 @@ void main() {
       expect(controller.snapshot, isNull);
       expect(controller.mqAverageAdc, isNull);
       expect(controller.mqAverageSamples, 0);
+      expect(controller.mqGasIndex, isNull);
     },
   );
+
+  test('gas index is relative to the session baseline', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final incoming = server.first;
+    final controller = LocalWifiController(
+      address: '127.0.0.1',
+      port: server.port,
+    );
+    final connecting = controller.connect();
+    final peer = await incoming;
+    addTearDown(() async {
+      peer.destroy();
+      controller.dispose();
+      await server.close();
+    });
+    await connecting;
+    Future<void> send(int uptime, {required int raw, required int mv}) async {
+      peer.write('${sample(uptime, version: 20, mqAdc: raw, mqMv: mv)}\n');
+      await waitFor(controller, () => controller.snapshot?.uptimeMs == uptime);
+    }
+
+    await send(5000, raw: 500, mv: 550);
+    expect(controller.mqGasIndex, 0);
+    expect(controller.mqGasStatus, 'baseline');
+    await send(10000, raw: 760, mv: 800);
+    expect(controller.mqGasIndex, 35);
+    expect(controller.mqGasStatus, 'elevated');
+    expect(controller.mqGasBaselineMv, greaterThan(550));
+    await send(15000, raw: 500, mv: 500);
+    expect(controller.mqGasIndex, 0);
+    expect(controller.mqGasStatus, 'baseline');
+    expect(controller.mqGasBaselineMv, 500);
+    controller.disconnect();
+    expect(controller.mqGasIndex, isNull);
+    expect(controller.mqGasStatus, 'unavailable');
+  });
 
   test(
     'reconnect clears stale data and manual disconnect stops retries',

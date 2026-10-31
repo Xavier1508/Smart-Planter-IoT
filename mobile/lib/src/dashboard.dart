@@ -257,6 +257,9 @@ class _DashboardState extends State<Dashboard> {
                   mqAverageAdc: _localWifi.mqAverageAdc,
                   mqAverageSamples: _localWifi.mqAverageSamples,
                   mqTrend: _localWifi.mqTrend,
+                  mqGasIndex: _localWifi.mqGasIndex,
+                  mqGasStatus: _localWifi.mqGasStatus,
+                  mqGasBaselineMv: _localWifi.mqGasBaselineMv,
                 ))
         : (_serialSnapshot ?? _liveState);
     return Scaffold(
@@ -852,16 +855,24 @@ class _AirRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final raw = state.mqAdc;
     final rail = raw == 0 || raw == 4095;
-    final usable = raw != null && raw > 0 && raw < 4095;
-    final percent = usable ? state.mqAdcPercent : null;
+    final gas = state.mqGasIndex;
+    final gasStatus = switch (state.mqGasStatus) {
+      'baseline' => 'Sinyal di baseline sesi',
+      'slight' => 'Sedikit di atas baseline',
+      'elevated' => 'Perubahan gas jelas',
+      'high' => 'Perubahan gas tinggi',
+      _ => 'Indeks belum tersedia',
+    };
     final detail = state.mqAdcStatus == 'adc_read_failed'
         ? state.mqAdcUnit == 'ADC1'
               ? 'Analog gagal dibaca pada ADC1.'
               : 'Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'
+        : gas != null
+        ? '$gasStatus · relatif'
         : rail
         ? 'ADC mencapai batas; penyebab belum diketahui.'
         : raw != null
-        ? 'Sinyal gas umum · indikator relatif'
+        ? 'Indeks gas belum tersedia.'
         : state.mqDigital != null
         ? 'Analog belum tersedia.'
         : 'Belum tersedia dan belum dikalibrasi';
@@ -906,15 +917,15 @@ class _AirRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    percent == null ? '—' : '≈$percent%',
+                    gas?.toString() ?? '—',
                     style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 22,
                       fontWeight: FontWeight.w800,
                       color: context.mossColors.primary,
                     ),
                   ),
                   Text(
-                    percent == null ? 'ADC rel' : 'skala ADC · bukan ppm',
+                    gas == null ? 'belum tersedia' : 'indeks gas 0–100',
                     style: detailStyle,
                   ),
                 ],
@@ -952,21 +963,28 @@ class _AirRow extends StatelessWidget {
           if (state.mqPinMillivolts != null) ...[
             const SizedBox(height: 4),
             Text(
-              'Perkiraan pin ESP32: ~${state.mqPinMillivolts} mV',
+              'Tegangan pin: ~${state.mqPinMillivolts} mV',
+              style: detailStyle,
+            ),
+          ],
+          if (state.mqGasBaselineMv != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Baseline sesi: ~${state.mqGasBaselineMv} mV',
               style: detailStyle,
             ),
           ],
           if (state.mqDigital != null) ...[
             const SizedBox(height: 4),
             Text(
-              'D0 = ${state.mqDigital}: level pin, bukan ppm atau kualitas udara.',
+              'D0 = ${state.mqDigital}: level komparator, bukan ppm.',
               style: detailStyle,
             ),
           ],
           const SizedBox(height: 10),
           Text(
-            'MQ135: sinyal gas umum (VOC/asap), bukan CO₂/ppm. '
-            'Angka persen adalah posisi ADC, bukan mutu udara terkalibrasi.',
+            'MQ135: gas umum (asap/VOC) · indeks relatif 0–100 terhadap '
+            'baseline sesi, bukan ppm/CO₂.',
             style: detailStyle,
           ),
         ],

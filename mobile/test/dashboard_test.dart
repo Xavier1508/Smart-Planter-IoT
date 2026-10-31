@@ -77,6 +77,7 @@ void main() {
       bool? waterLow = false,
       int? mqAdc,
       bool adc1Failure = false,
+      int? mqMv = 550,
     }) => jsonEncode({
       'type': 'sample',
       'schema': 'serial_observation_2',
@@ -106,7 +107,7 @@ void main() {
         'status': 'unverified',
         if (mqAdc != null || adc1Failure) 'adc_unit': 'ADC1',
         if (adc1Failure) 'signal_quality': 'adc_read_failed',
-        if (mqAdc != null) 'adc_pin_mv_estimate': 550,
+        if (mqAdc != null && mqMv != null) 'adc_pin_mv_estimate': mqMv,
         if (mqAdc != null) 'adc_calibration_source': 'efuse_vref',
       },
       'pump_cmd': false,
@@ -142,7 +143,9 @@ void main() {
     expect(find.text('Medium'), findsOneWidget);
 
     await tester.runAsync(() async {
-      peer!.write('${sample(10000, 68, waterPercent: 95, mqAdc: 520)}\n');
+      peer!.write(
+        '${sample(10000, 68, waterPercent: 95, mqAdc: 760, mqMv: 800)}\n',
+      );
       await peer.flush();
       await waitForUptime(10000);
     });
@@ -156,14 +159,16 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('≈12%'), findsOneWidget);
-    expect(find.text('skala ADC · bukan ppm'), findsOneWidget);
-    expect(find.text('ADC 520 · terbaru'), findsOneWidget);
-    expect(find.text('Rata-rata 2/12 sampel: 510 ADC'), findsOneWidget);
+    expect(find.text('35'), findsOneWidget);
+    expect(find.text('indeks gas 0–100'), findsOneWidget);
+    expect(find.text('Perubahan gas jelas · relatif'), findsOneWidget);
+    expect(find.text('ADC 760 · terbaru'), findsOneWidget);
+    expect(find.text('Rata-rata 2/12 sampel: 630 ADC'), findsOneWidget);
     expect(find.text('Arah sinyal: stabil dalam batas derau.'), findsNothing);
-    expect(find.text('Perkiraan pin ESP32: ~550 mV'), findsOneWidget);
+    expect(find.text('Tegangan pin: ~800 mV'), findsOneWidget);
+    expect(find.text('Baseline sesi: ~554 mV'), findsOneWidget);
     expect(
-      find.textContaining('MQ135: sinyal gas umum (VOC/asap), bukan CO₂/ppm.'),
+      find.textContaining('MQ135: gas umum (asap/VOC) · indeks relatif'),
       findsOneWidget,
     );
     await tester.scrollUntilVisible(
@@ -189,11 +194,12 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Rata-rata 2/12 sampel: 510 ADC'), findsNothing);
+    expect(find.text('Rata-rata 2/12 sampel: 630 ADC'), findsNothing);
     expect(
       find.text('Rata-rata menunggu sinyal analog non-rel.'),
       findsOneWidget,
     );
+    expect(find.text('indeks gas 0–100'), findsNothing);
     expect(find.text('Analog gagal dibaca pada ADC1.'), findsOneWidget);
     expect(
       find.text('Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'),
@@ -297,10 +303,7 @@ void main() {
         find.text('Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'),
         findsOneWidget,
       );
-      expect(
-        find.text('D0 = 1: level pin, bukan ppm atau kualitas udara.'),
-        findsOneWidget,
-      );
+      expect(find.text('D0 = 1: level komparator, bukan ppm.'), findsOneWidget);
       await tester.tap(
         find.descendant(
           of: find.byType(NavigationBar),
@@ -499,7 +502,7 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('ADC rel'), findsOneWidget);
+    expect(find.text('belum tersedia'), findsOneWidget);
     expect(find.text('ADC 4095 · snapshot'), findsOneWidget);
     expect(
       find.text('ADC mencapai batas; penyebab belum diketahui.'),
@@ -628,10 +631,7 @@ void main() {
       180,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(
-      find.text('D0 = 1: level pin, bukan ppm atau kualitas udara.'),
-      findsOneWidget,
-    );
+    expect(find.text('D0 = 1: level komparator, bukan ppm.'), findsOneWidget);
     await tester.tap(
       find.descendant(
         of: find.byType(NavigationBar),

@@ -32,6 +32,9 @@ class PlantState {
     this.mqAverageAdc,
     this.mqAverageSamples = 0,
     this.mqTrend,
+    this.mqGasIndex,
+    this.mqGasStatus = 'unavailable',
+    this.mqGasBaselineMv,
     this.pumpRulePreview,
     this.pumpRuleThreshold,
     this.lightRulePreview,
@@ -110,6 +113,9 @@ class PlantState {
     int? mqAverageAdc,
     int mqAverageSamples = 0,
     int? mqTrend,
+    int? mqGasIndex,
+    String mqGasStatus = 'unavailable',
+    int? mqGasBaselineMv,
   }) => PlantState(
     isLive: true,
     isLocalLive: true,
@@ -133,6 +139,9 @@ class PlantState {
     mqAverageAdc: mqAverageAdc,
     mqAverageSamples: mqAverageSamples,
     mqTrend: mqTrend,
+    mqGasIndex: mqGasIndex,
+    mqGasStatus: mqGasStatus,
+    mqGasBaselineMv: mqGasBaselineMv,
     pumpCommand: reading.pumpCommand,
     pumpReason: reading.pumpReason,
     lightCommand: reading.lightCommand,
@@ -164,6 +173,9 @@ class PlantState {
   final int? mqAverageAdc;
   final int mqAverageSamples;
   final int? mqTrend;
+  final int? mqGasIndex;
+  final String mqGasStatus;
+  final int? mqGasBaselineMv;
   final bool? pumpRulePreview;
   final int? pumpRuleThreshold;
   final bool? lightRulePreview;

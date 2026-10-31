@@ -36,11 +36,15 @@ Sumber v20 belum membuktikan perilaku fisik relay atau sensor.
 
 MQ v19 dipetakan ke SVP/GPIO36 (ADC1) sesuai laporan pengguna; versi lama
 memakai GPIO27 (ADC2). Tegangan dan sambungan nyata belum diverifikasi.
-Aplikasi 0.3.8 menampilkan persen skala ADC, ADC terbaru, rata-rata hingga
+Aplikasi 0.3.9 menampilkan **indeks gas relatif 0–100** yang dihitung dari
+rasio resistansi sinyal MQ135 terhadap baseline sesi, ditambah ADC, rata-rata
 12 sampel (maksimum 60 detik uptime perangkat), arah sinyal, dan perkiraan
-tegangan pin dari karakterisasi ADC ESP32. Rata-rata dihapus saat data putus,
-gagal baca, atau mencapai rel 0/4095. Persen adalah posisi ADC 0–4095, **bukan
-CO₂, ppm, atau indeks kualitas udara terkalibrasi**.
+tegangan pin. Indeks 0 berarti pada/di bawah sinyal terbersih yang teramati;
+nilai lebih tinggi berarti perubahan gas yang lebih kuat. Baseline mengikuti
+sinyal yang lebih bersih dengan cepat dan pulih perlahan. Rata-rata dan indeks
+dihapus saat data putus, gagal baca, atau mencapai rel 0/4095. Indeks ini
+**bukan ppm, CO₂, atau mutu udara terkalibrasi**; ia hanya indikator relatif
+untuk asap/VOC dan gas umum lain yang dideteksi MQ135.
 
 Kalibrasi MQ135 memerlukan catu dan beban yang diketahui, pemanasan awal lebih
 dari 48 jam, serta R0 dari udara bersih yang diverifikasi. Manual Winsen

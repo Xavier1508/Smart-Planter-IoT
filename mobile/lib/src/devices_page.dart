@@ -125,8 +125,10 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.air_rounded,
           name: 'Sensor udara MQ135',
-          status: state.mqAdc != null
-              ? 'ADC ${state.mqAdc} · sinyal gas, bukan CO₂'
+          status: state.mqGasIndex != null
+              ? 'Indeks gas ${state.mqGasIndex}/100 · relatif'
+              : state.mqAdc != null
+              ? 'ADC ${state.mqAdc} · indeks belum tersedia'
               : state.mqDigital == null
               ? 'Belum tersedia'
               : 'Digital ${state.mqDigital} · bukan ppm',
