@@ -70,6 +70,25 @@ void main() {
     expect(snapshot.waterObservationPercent, isNull);
   });
 
+  test('new LDR-only firmware reasons are exposed to the app', () {
+    for (final reason in [
+      'ldr_low',
+      'ldr_sufficient',
+      'ldr_input_unavailable',
+    ]) {
+      final sample = SerialSensorSnapshot.parse(
+        jsonEncode({
+          'type': 'sample',
+          'uptime_ms': 1,
+          'dht': {'temperature_c': 25, 'status': 'unverified'},
+          'growlight_cmd': false,
+          'growlight_reason': reason,
+        }),
+      );
+      expect(sample.lightReason, reason);
+    }
+  });
+
   test('MQ ADC1 estimates and failures remain bounded and honest', () {
     SerialSensorSnapshot parseMq(Map<String, Object?> values) =>
         SerialSensorSnapshot.parse(

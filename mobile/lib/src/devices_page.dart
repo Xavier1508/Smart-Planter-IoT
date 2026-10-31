@@ -125,9 +125,11 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.air_rounded,
           name: 'Sensor udara MQ135',
-          status: state.mqAdc == null && state.mqDigital == null
+          status: state.mqAdc != null
+              ? 'ADC ${state.mqAdc} · sinyal gas, bukan CO₂'
+              : state.mqDigital == null
               ? 'Belum tersedia'
-              : 'ADC/digital belum diverifikasi',
+              : 'Digital ${state.mqDigital} · bukan ppm',
         ),
         if (state.isSerialSnapshot &&
             (state.pumpRulePreview != null ||
@@ -243,7 +245,10 @@ class DevicesPage extends StatelessWidget {
     'boot_grace' => 'menunggu setelah dinyalakan',
     'light_low' => 'LDR dan proksi UV memenuhi syarat',
     'light_sufficient' => 'LDR cukup terang atau proksi UV tinggi',
-    'light_input_unavailable' => 'input LDR atau UV belum tersedia',
+    'light_input_unavailable' => 'input LDR belum tersedia',
+    'ldr_low' => 'cahaya LDR di bawah 65%',
+    'ldr_sufficient' => 'cahaya LDR 65% atau lebih',
+    'ldr_input_unavailable' => 'input LDR belum tersedia',
     'light_inhibited' => 'otomasi lampu belum diaktifkan',
     'minimum_hold' => 'menunggu jeda perpindahan',
     'hysteresis' => 'mempertahankan keadaan di zona jeda',

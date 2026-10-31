@@ -24,22 +24,23 @@ diperlakukan sebagai proksi UV rendah sesuai permintaan, tetapi 0 juga dapat
 berarti sensor atau sambungan bermasalah. Jangan menganggapnya bukti UV rendah.
 Proksi UV adalah pemetaan ADC perkiraan, bukan indeks UV terkalibrasi.
 
-Pada firmware lokal v19, lampu memakai **LDR saja**: mencoba ON di bawah 40%,
-OFF pada 60% ke atas, dan mempertahankan keadaan di antaranya. UV hanya
-dipantau. Pompa mencoba ON saat rata-rata ADC tanah 1–1199 dan OFF pada
-1200 ke atas; ADC 0/4095 atau data tidak tersedia tetap menghalangi ON.
+Pada firmware lokal v20, lampu memakai **LDR saja** dengan satu ambang:
+ON di bawah 65% kecerahan relatif, OFF pada 65% ke atas. UV hanya dipantau.
+Pompa mencoba ON saat rata-rata ADC tanah 1–1199 dan OFF pada 1200 ke atas;
+ADC 0/4095 atau data tidak tersedia tetap menghalangi ON. Dengan acuan lokal
+kering 308 dan jenuh 1800, ambang 1200 setara **≈60% kelembapan relatif**.
 Interlock air, watchdog, batas waktu, jeda pompa, dan jeda lampu tetap berlaku.
 Nilai rata-rata memakai lima konversi berturutan per siklus untuk setiap input
 ADC, bukan rata-rata lima siklus. DHT dan input digital MQ tidak dirata-ratakan.
-Sumber v19 belum membuktikan perilaku fisik relay atau sensor.
+Sumber v20 belum membuktikan perilaku fisik relay atau sensor.
 
 MQ v19 dipetakan ke SVP/GPIO36 (ADC1) sesuai laporan pengguna; versi lama
 memakai GPIO27 (ADC2). Tegangan dan sambungan nyata belum diverifikasi.
-Aplikasi 0.3.7 menampilkan ADC terbaru, rata-rata hingga 12 sampel (maksimum
-60 detik uptime perangkat), arah sinyal, dan perkiraan tegangan pin dari
-karakterisasi ADC ESP32. Rata-rata dihapus saat data putus, gagal baca, atau
-mencapai rel 0/4095. Ini adalah pemantauan sinyal, **bukan CO₂, ppm, atau
-indeks kualitas udara terkalibrasi**.
+Aplikasi 0.3.8 menampilkan persen skala ADC, ADC terbaru, rata-rata hingga
+12 sampel (maksimum 60 detik uptime perangkat), arah sinyal, dan perkiraan
+tegangan pin dari karakterisasi ADC ESP32. Rata-rata dihapus saat data putus,
+gagal baca, atau mencapai rel 0/4095. Persen adalah posisi ADC 0–4095, **bukan
+CO₂, ppm, atau indeks kualitas udara terkalibrasi**.
 
 Kalibrasi MQ135 memerlukan catu dan beban yang diketahui, pemanasan awal lebih
 dari 48 jam, serta R0 dari udara bersih yang diverifikasi. Manual Winsen

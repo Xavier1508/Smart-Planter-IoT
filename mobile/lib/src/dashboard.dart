@@ -852,6 +852,8 @@ class _AirRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final raw = state.mqAdc;
     final rail = raw == 0 || raw == 4095;
+    final usable = raw != null && raw > 0 && raw < 4095;
+    final percent = usable ? state.mqAdcPercent : null;
     final detail = state.mqAdcStatus == 'adc_read_failed'
         ? state.mqAdcUnit == 'ADC1'
               ? 'Analog gagal dibaca pada ADC1.'
@@ -859,7 +861,7 @@ class _AirRow extends StatelessWidget {
         : rail
         ? 'ADC mencapai batas; penyebab belum diketahui.'
         : raw != null
-        ? 'Sinyal analog · belum dikalibrasi'
+        ? 'Sinyal gas umum · indikator relatif'
         : state.mqDigital != null
         ? 'Analog belum tersedia.'
         : 'Belum tersedia dan belum dikalibrasi';
@@ -904,7 +906,7 @@ class _AirRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    raw?.toString() ?? '—',
+                    percent == null ? '—' : '≈$percent%',
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
@@ -912,13 +914,20 @@ class _AirRow extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    state.isSerialSnapshot ? 'ADC snapshot' : 'ADC terbaru',
+                    percent == null ? 'ADC rel' : 'skala ADC · bukan ppm',
                     style: detailStyle,
                   ),
                 ],
               ),
             ],
           ),
+          if (raw != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              'ADC $raw · ${state.isSerialSnapshot ? 'snapshot' : 'terbaru'}',
+              style: detailStyle,
+            ),
+          ],
           if (state.mqAverageAdc != null && state.mqAverageSamples > 0) ...[
             const SizedBox(height: 12),
             Text(
@@ -956,7 +965,8 @@ class _AirRow extends StatelessWidget {
           ],
           const SizedBox(height: 10),
           Text(
-            'CO₂ belum tersedia · MQ135 merespons beberapa gas, bukan CO₂ saja.',
+            'MQ135: sinyal gas umum (VOC/asap), bukan CO₂/ppm. '
+            'Angka persen adalah posisi ADC, bukan mutu udara terkalibrasi.',
             style: detailStyle,
           ),
         ],

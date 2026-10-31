@@ -30,7 +30,7 @@ class FixtureLocalWifi extends LocalWifiController {
            "quality":"unverified","use_for_control":false}},
        "mq135":{"adc_raw":null,"digital_raw":1,"adc_status":"adc_read_failed","status":"unverified"},
        "pump_cmd":false,"pump_reason":"soil_not_dry",
-       "growlight_cmd":false,"growlight_reason":"light_sufficient",
+       "growlight_cmd":false,"growlight_reason":"ldr_sufficient",
        "lighting_rule":{"candidate":"unavailable","status":"diagnostic_only_unverified",
                         "use_for_control":false}}
     ''');
@@ -156,14 +156,14 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('520'), findsOneWidget);
+    expect(find.text('≈12%'), findsOneWidget);
+    expect(find.text('skala ADC · bukan ppm'), findsOneWidget);
+    expect(find.text('ADC 520 · terbaru'), findsOneWidget);
     expect(find.text('Rata-rata 2/12 sampel: 510 ADC'), findsOneWidget);
     expect(find.text('Arah sinyal: stabil dalam batas derau.'), findsNothing);
     expect(find.text('Perkiraan pin ESP32: ~550 mV'), findsOneWidget);
     expect(
-      find.text(
-        'CO₂ belum tersedia · MQ135 merespons beberapa gas, bukan CO₂ saja.',
-      ),
+      find.textContaining('MQ135: sinyal gas umum (VOC/asap), bukan CO₂/ppm.'),
       findsOneWidget,
     );
     await tester.scrollUntilVisible(
@@ -309,7 +309,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
-        find.text('Alasan lampu: LDR cukup terang atau proksi UV tinggi'),
+        find.text('Alasan lampu: cahaya LDR 65% atau lebih'),
         200,
         scrollable: find.byType(Scrollable).first,
       );
@@ -320,7 +320,7 @@ void main() {
       );
       expect(find.text('Lampu: OFF diminta'), findsOneWidget);
       expect(
-        find.text('Alasan lampu: LDR cukup terang atau proksi UV tinggi'),
+        find.text('Alasan lampu: cahaya LDR 65% atau lebih'),
         findsOneWidget,
       );
       await tester.tap(find.text('Hari ini'));
@@ -499,8 +499,8 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('4095'), findsOneWidget);
-    expect(find.text('ADC snapshot'), findsOneWidget);
+    expect(find.text('ADC rel'), findsOneWidget);
+    expect(find.text('ADC 4095 · snapshot'), findsOneWidget);
     expect(
       find.text('ADC mencapai batas; penyebab belum diketahui.'),
       findsOneWidget,

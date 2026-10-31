@@ -1,7 +1,7 @@
 name: smart_planter
 description: "Dashboard Android untuk Smart Planter dan karakter Moss."
 publish_to: 'none'
-version: 0.3.7+12
+version: 0.3.8+13
 
 environment:
   sdk: ^3.13.7
