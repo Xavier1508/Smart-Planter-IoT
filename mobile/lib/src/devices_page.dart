@@ -90,7 +90,11 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.grass_rounded,
           name: 'Kelembapan tanah',
-          status: status(state.soilPercent != null || state.soilAdc != null),
+          status: state.soilPercent != null
+              ? 'Skala belum diverifikasi'
+              : state.soilAdc != null
+              ? 'Belum terbaca · ADC ${state.soilAdc}'
+              : 'Belum ada data',
         ),
         _SensorRow(
           icon: Icons.thermostat_rounded,
@@ -114,11 +118,9 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.water_drop_outlined,
           name: 'Level air',
-          status: state.waterPercent != null
-              ? 'Skala relatif belum diverifikasi'
-              : state.waterAdc == null
-              ? 'Belum tersedia'
-              : 'ADC belum diverifikasi',
+          status: state.waterLevel != null
+              ? 'Kategori perkiraan · belum terkalibrasi'
+              : 'Belum dapat diklasifikasi',
         ),
         _SensorRow(
           icon: Icons.air_rounded,
@@ -276,11 +278,14 @@ class _SensorRow extends StatelessWidget {
         const SizedBox(width: 11),
         Expanded(child: Text(name, style: const TextStyle(fontSize: 13))),
         const SizedBox(width: 8),
-        Text(
-          status,
-          style: TextStyle(
-            color: context.mossColors.onSurfaceVariant,
-            fontSize: 10,
+        Flexible(
+          child: Text(
+            status,
+            textAlign: TextAlign.end,
+            style: TextStyle(
+              color: context.mossColors.onSurfaceVariant,
+              fontSize: 10,
+            ),
           ),
         ),
       ],

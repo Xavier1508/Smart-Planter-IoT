@@ -52,6 +52,8 @@ class SerialSensorSnapshot {
     this.waterAdc,
     this.waterRelativePercent,
     this.waterObservationPercent,
+    this.waterLow,
+    this.waterClassificationInputsValid = false,
     this.mqAdc,
     this.mqDigital,
     this.mqAdcStatus,
@@ -80,6 +82,12 @@ class SerialSensorSnapshot {
   /// Unverified low-to-near-full display field; firmware versions may use the
   /// same references for control. It is not a measured tank volume.
   final int? waterObservationPercent;
+
+  /// Firmware's provisional low-water result, not a physical level switch.
+  final bool? waterLow;
+
+  /// Malformed classification inputs must not be mistaken for missing fields.
+  final bool waterClassificationInputsValid;
   final int? mqAdc;
   final int? mqDigital;
   final String? mqAdcStatus;
@@ -163,6 +171,23 @@ class SerialSensorSnapshot {
     final waterPercent = !usableAdc(waterRaw)
         ? null
         : integer(water['relative_percent'], 0, 100);
+    final observationScaleRecognized =
+        const {
+          'operator_reported_window_means',
+          'generic_display_references',
+        }.contains(waterObservation['basis']) &&
+        waterObservation['quality'] == 'unverified' &&
+        waterObservation['use_for_control'] == false;
+    final observationPercent = usableAdc(waterRaw) && observationScaleRecognized
+        ? integer(waterObservation['relative_percent'], 0, 100)
+        : null;
+    final waterInputsValid =
+        usableAdc(waterRaw) &&
+        (water['low'] == null || water['low'] is bool) &&
+        (water['relative_percent'] == null || waterPercent != null) &&
+        (!observationScaleRecognized ||
+            waterObservation['relative_percent'] == null ||
+            observationPercent != null);
     // Historical snapshots used 50%; v15/v16 use 40%. Unknown future versions
     // must not be interpreted using a guessed threshold.
     final version = integer(decoded['firmware_version'], 0, 0xffffffff);
@@ -197,16 +222,11 @@ class SerialSensorSnapshot {
       uvAdc: adcPresent ? integer(adc['uv_raw'], 0, 4095) : null,
       waterAdc: waterRaw,
       waterRelativePercent: waterPercent,
-      waterObservationPercent:
-          usableAdc(waterRaw) &&
-              const {
-                'operator_reported_window_means',
-                'generic_display_references',
-              }.contains(waterObservation['basis']) &&
-              waterObservation['quality'] == 'unverified' &&
-              waterObservation['use_for_control'] == false
-          ? integer(waterObservation['relative_percent'], 0, 100)
+      waterObservationPercent: observationPercent,
+      waterLow: usableAdc(waterRaw) && water['low'] is bool
+          ? water['low'] as bool
           : null,
+      waterClassificationInputsValid: waterInputsValid,
       mqAdc: readable(mq['status']) && readable(mq['adc_status'])
           ? integer(mq['adc_raw'], 0, 4095)
           : null,

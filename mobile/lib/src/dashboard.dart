@@ -601,13 +601,13 @@ class _Home extends StatelessWidget {
                           title: 'Kelembapan tanah',
                           value: state.soilPercent != null
                               ? _percent(state.soilPercent)
-                              : '—',
+                              : 'Belum terbaca',
                           detail: state.soilPercent != null
                               ? state.soilAdc != null
                                     ? 'ADC ${state.soilAdc} · perkiraan'
                                     : 'Skala belum diverifikasi'
                               : state.soilAdc != null
-                              ? 'ADC ${state.soilAdc} · belum dapat diestimasi'
+                              ? 'ADC ${state.soilAdc} · penyebab belum diketahui'
                               : 'Menunggu sensor',
                           color: const Color(0xFF51859A),
                         ),
@@ -616,18 +616,19 @@ class _Home extends StatelessWidget {
                         width: columnWidth,
                         child: _Metric(
                           icon: Icons.waves_rounded,
-                          title: 'Air (relatif)',
-                          value: state.waterPercent != null
-                              ? _percent(state.waterPercent)
-                              : state.waterObservationPercent != null
-                              ? '~${_percent(state.waterObservationPercent)}'
-                              : '—',
-                          detail: state.waterPercent != null
-                              ? 'ADC ${state.waterAdc} · belum diverifikasi'
-                              : state.waterObservationPercent != null
-                              ? 'Rendah–hampir penuh · perkiraan'
+                          title: 'Level air',
+                          value: switch (state.waterLevel) {
+                            WaterLevel.low => 'Low',
+                            WaterLevel.medium => 'Medium',
+                            WaterLevel.full => 'Full',
+                            null => 'Belum terbaca',
+                          },
+                          detail: state.waterLevel == WaterLevel.full
+                              ? 'Perkiraan · bisa hampir penuh'
+                              : state.waterLevel != null
+                              ? 'Perkiraan · belum terkalibrasi'
                               : state.waterAdc != null
-                              ? 'ADC ${state.waterAdc} · belum dapat diestimasi'
+                              ? 'ADC ${state.waterAdc} · belum dapat diklasifikasi'
                               : 'Belum tersedia',
                           color: const Color(0xFF568896),
                         ),
@@ -811,18 +812,22 @@ class _Metric extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 25,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.7,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 25,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.7,
+            ),
           ),
         ),
         const SizedBox(height: 3),
         Text(
           detail,
-          maxLines: 1,
+          maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: context.mossColors.onSurfaceVariant,
@@ -861,17 +866,27 @@ class _AirRow extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 state.mqAdcStatus == 'adc_read_failed'
-                    ? 'Analog gagal · digital ${state.mqDigital ?? '—'}'
+                    ? 'Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'
                     : state.mqAdc != null
                     ? 'ADC ${state.mqAdc} · bukan kualitas udara'
                     : state.mqDigital != null
-                    ? 'Digital ${state.mqDigital} · analog belum tersedia'
+                    ? 'Analog belum tersedia.'
                     : 'Belum tersedia dan belum dikalibrasi',
                 style: TextStyle(
                   fontSize: 11,
                   color: context.mossColors.onSurfaceVariant,
                 ),
               ),
+              if (state.mqDigital != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'D0 = ${state.mqDigital}: level pin, bukan ppm atau kualitas udara.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: context.mossColors.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ],
           ),
         ),

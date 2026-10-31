@@ -51,6 +51,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('real local socket frames update the dashboard', (tester) async {
+    const updateChannel = MethodChannel('moss/update_progress');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(updateChannel, (_) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(updateChannel, null));
     final server = await tester.runAsync(
       () => ServerSocket.bind(InternetAddress.loopbackIPv4, 0),
     );
@@ -64,13 +68,20 @@ void main() {
       await server.close();
     });
 
-    String sample(int uptime, int soil) => jsonEncode({
+    String sample(
+      int uptime,
+      int soil, {
+      int soilRaw = 1000,
+      int waterRaw = 2000,
+      int? waterPercent = 50,
+      bool? waterLow = false,
+    }) => jsonEncode({
       'type': 'sample',
       'schema': 'serial_observation_2',
-      'firmware_version': 16,
+      'firmware_version': 18,
       'uptime_ms': uptime,
       'adc': {
-        'soil_raw': 1000,
+        'soil_raw': soilRaw,
         'soil_status': 'unverified',
         'soil_relative_percent': soil,
         'light_raw': 2000,
@@ -78,14 +89,26 @@ void main() {
         'uv_raw': 0,
         'status': 'unverified',
       },
+      'water_level': {
+        'adc_raw': waterRaw,
+        'relative_percent': waterPercent,
+        'low': waterLow,
+        'status': 'unverified',
+      },
+      'mq135': {
+        'adc_raw': null,
+        'digital_raw': 1,
+        'adc_status': 'adc_read_failed',
+        'status': 'unverified',
+      },
       'pump_cmd': false,
       'growlight_cmd': false,
     });
 
-    Future<void> waitForSoil(int soil) async {
-      if (wifi.snapshot?.soilRelativePercent == soil) return;
+    Future<void> waitForUptime(int uptime) async {
+      if (wifi.snapshot?.uptimeMs == uptime) return;
       await wifi.changes
-          .firstWhere((_) => wifi.snapshot?.soilRelativePercent == soil)
+          .firstWhere((_) => wifi.snapshot?.uptimeMs == uptime)
           .timeout(const Duration(seconds: 3));
     }
 
@@ -98,7 +121,7 @@ void main() {
     await tester.runAsync(() async {
       peer!.write('${sample(5000, 44)}\n');
       await peer.flush();
-      await waitForSoil(44);
+      await waitForUptime(5000);
     });
     await tester.pumpAndSettle();
     expect(find.text('SENSOR'), findsOneWidget);
@@ -108,18 +131,47 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('44%'), findsOneWidget);
+    expect(find.text('Medium'), findsOneWidget);
 
     await tester.runAsync(() async {
-      peer!.write('${sample(10000, 68)}\n');
+      peer!.write('${sample(10000, 68, waterPercent: 95)}\n');
       await peer.flush();
-      await waitForSoil(68);
+      await waitForUptime(10000);
     });
     await tester.pump();
     expect(find.text('44%'), findsNothing);
     expect(find.text('68%'), findsOneWidget);
+    expect(find.text('Full'), findsOneWidget);
+    expect(find.text('Perkiraan · bisa hampir penuh'), findsOneWidget);
+
+    await tester.runAsync(() async {
+      peer!.write(
+        '${sample(15000, 68, soilRaw: 0, waterPercent: null, waterLow: true)}\n',
+      );
+      await peer.flush();
+      await waitForUptime(15000);
+    });
+    await tester.pump();
+    expect(find.text('68%'), findsNothing);
+    expect(find.text('Belum terbaca'), findsOneWidget);
+    expect(find.text('ADC 0 · penyebab belum diketahui'), findsOneWidget);
+    expect(find.text('Low'), findsOneWidget);
+
+    await tester.runAsync(() async {
+      peer!.write('${sample(20000, 68, waterRaw: 0, waterLow: true)}\n');
+      await peer.flush();
+      await waitForUptime(20000);
+    });
+    await tester.pump();
+    expect(find.text('Low'), findsNothing);
+    expect(find.text('Belum terbaca'), findsOneWidget);
+
     wifi.disconnect();
     await tester.pump();
     expect(find.text('68%'), findsNothing);
+    expect(find.text('Full'), findsNothing);
+    expect(find.text('Medium'), findsNothing);
+    expect(find.text('Low'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets(
@@ -179,12 +231,13 @@ void main() {
         findsOneWidget,
       );
       await tester.scrollUntilVisible(
-        find.text('Air (relatif)'),
+        find.text('Level air'),
         200,
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('44%'), findsOneWidget);
-      expect(find.text('~50%'), findsOneWidget);
+      expect(find.text('Medium'), findsOneWidget);
+      expect(find.text('Perkiraan · belum terkalibrasi'), findsOneWidget);
       expect(find.text('UV (skala ADC)'), findsOneWidget);
       expect(find.text('~0%'), findsOneWidget);
       await tester.scrollUntilVisible(
@@ -192,7 +245,14 @@ void main() {
         200,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(find.text('Analog gagal · digital 1'), findsOneWidget);
+      expect(
+        find.text('Analog gagal dibaca; ADC2 bisa berbenturan dengan Wi-Fi.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('D0 = 1: level pin, bukan ppm atau kualitas udara.'),
+        findsOneWidget,
+      );
       await tester.tap(
         find.descendant(
           of: find.byType(NavigationBar),
@@ -299,7 +359,7 @@ void main() {
       findsOneWidget,
     );
     await tester.scrollUntilVisible(
-      find.text('Air (relatif)'),
+      find.text('Level air'),
       200,
       scrollable: find.byType(Scrollable).first,
     );
@@ -380,7 +440,7 @@ void main() {
       findsOneWidget,
     );
     await tester.scrollUntilVisible(
-      find.text('Air (relatif)'),
+      find.text('Level air'),
       200,
       scrollable: find.byType(Scrollable).first,
     );
@@ -475,6 +535,67 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Ruang Moss'), findsOneWidget);
     expect(find.text('OFFLINE'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('narrow sensor cards explain unavailable and estimated values', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const sample = '''
+      {"type":"sample",
+       "adc":{"soil_raw":0,"soil_status":"unverified","soil_relative_percent":0,
+              "status":"unverified"},
+       "water_level":{"adc_raw":2000,"relative_percent":100,
+                      "low":false,"status":"unverified"},
+       "mq135":{"adc_raw":null,"digital_raw":1,"adc_status":"adc_read_failed",
+                "status":"unverified"}}
+    ''';
+    await tester.pumpWidget(
+      const MossApp(
+        render3d: false,
+        initialSerialJson: sample,
+        autoConnectLocal: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Level air'),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Belum terbaca'), findsOneWidget);
+    expect(find.text('ADC 0 · penyebab belum diketahui'), findsOneWidget);
+    expect(find.text('Full'), findsOneWidget);
+    expect(find.text('Perkiraan · bisa hampir penuh'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Sensor udara MQ135'),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(
+      find.text('D0 = 1: level pin, bukan ppm atau kualitas udara.'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Perangkat'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Kategori perkiraan · belum terkalibrasi'),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(
+      find.text('Kategori perkiraan · belum terkalibrasi'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

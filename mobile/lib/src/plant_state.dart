@@ -3,6 +3,9 @@ import 'plant_telemetry.dart';
 /// Plant expressions are simple UI rules, not medical or ML diagnoses.
 enum PlantMood { waiting, content, thirsty, airConcern }
 
+/// Coarse display categories, not a calibrated volume or actuator control.
+enum WaterLevel { low, medium, full }
+
 class PlantState {
   const PlantState({
     this.isLive = false,
@@ -11,6 +14,8 @@ class PlantState {
     this.soilPercent,
     this.waterPercent,
     this.waterObservationPercent,
+    this.waterLow,
+    this.waterClassificationInputsValid = true,
     this.temperatureC,
     this.humidityPercent,
     this.lightPercent,
@@ -68,6 +73,8 @@ class PlantState {
     soilPercent: reading.soilRelativePercent,
     waterPercent: reading.waterRelativePercent,
     waterObservationPercent: reading.waterObservationPercent,
+    waterLow: reading.waterLow,
+    waterClassificationInputsValid: reading.waterClassificationInputsValid,
     temperatureC: reading.temperatureC,
     humidityPercent: reading.humidityPercent,
     lightPercent: reading.lightRelativePercent,
@@ -97,6 +104,8 @@ class PlantState {
     soilPercent: reading.soilRelativePercent,
     waterPercent: reading.waterRelativePercent,
     waterObservationPercent: reading.waterObservationPercent,
+    waterLow: reading.waterLow,
+    waterClassificationInputsValid: reading.waterClassificationInputsValid,
     temperatureC: reading.temperatureC,
     humidityPercent: reading.humidityPercent,
     lightPercent: reading.lightRelativePercent,
@@ -120,6 +129,8 @@ class PlantState {
   final int? soilPercent;
   final int? waterPercent;
   final int? waterObservationPercent;
+  final bool? waterLow;
+  final bool waterClassificationInputsValid;
   final double? temperatureC;
   final num? humidityPercent;
   final int? lightPercent;
@@ -150,6 +161,45 @@ class PlantState {
   int? get uvAdcPercent => adcDisplayPercent(uvAdc);
   int? get mqAdcPercent => adcDisplayPercent(mqAdc);
 
+  /// The firmware's 100% reference is near-full, not a verified full tank.
+  /// These thresholds are provisional display buckets, never pump decisions.
+  WaterLevel? get waterLevel {
+    if (!waterClassificationInputsValid ||
+        waterAdc == null ||
+        waterAdc! <= 0 ||
+        waterAdc! >= 4095) {
+      return null;
+    }
+
+    WaterLevel? band(int? percent) {
+      if (percent == null || percent < 0 || percent > 100) return null;
+      if (percent < 20) return WaterLevel.low;
+      if (percent < 90) return WaterLevel.medium;
+      return WaterLevel.full;
+    }
+
+    if ((waterPercent != null && band(waterPercent) == null) ||
+        (waterObservationPercent != null &&
+            band(waterObservationPercent) == null)) {
+      return null;
+    }
+    final controlBand = band(waterPercent);
+    final observationBand = band(waterObservationPercent);
+    if (controlBand != null &&
+        observationBand != null &&
+        controlBand != observationBand) {
+      return null;
+    }
+    final relativeBand = controlBand ?? observationBand;
+    if (waterLow != null &&
+        relativeBand != null &&
+        waterLow != (relativeBand == WaterLevel.low)) {
+      return null;
+    }
+    if (waterLow == true) return WaterLevel.low;
+    return relativeBand;
+  }
+
   bool get hasSensorData =>
       soilPercent != null ||
       temperatureC != null ||
@@ -167,7 +217,7 @@ class PlantState {
   PlantMood get mood {
     if (!isLive) return PlantMood.waiting;
     if ((soilPercent != null && soilPercent! < 30) ||
-        (waterPercent != null && waterPercent! < 20)) {
+        waterLevel == WaterLevel.low) {
       return PlantMood.thirsty;
     }
     if (airChanged) return PlantMood.airConcern;
