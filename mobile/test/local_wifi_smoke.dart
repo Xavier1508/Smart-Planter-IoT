@@ -12,15 +12,15 @@ void check(bool condition, String message) {
   if (!condition) throw StateError(message);
 }
 
-String fixture(int uptime) => jsonEncode({
+String fixture(int uptime, {int soil = 44, int version = 12}) => jsonEncode({
   'type': 'sample',
   'schema': 'serial_observation_2',
-  'firmware_version': 12,
+  'firmware_version': version,
   'uptime_ms': uptime,
   'adc': {
     'soil_raw': 1000,
     'soil_status': 'unverified',
-    'soil_relative_percent': 44,
+    'soil_relative_percent': soil,
     'light_raw': 2000,
     'light_relative_percent': 51,
     'uv_raw': 0,
@@ -44,6 +44,7 @@ String fixture(int uptime) => jsonEncode({
     'status': 'unverified',
   },
   'pump_cmd': false,
+  'pump_reason': 'soil_not_dry',
   'growlight_cmd': false,
   'lighting_rule': {
     'candidate': 'unavailable',
@@ -119,10 +120,17 @@ Future<void> smoke({required bool oversized}) async {
       );
       check(client.snapshot?.pumpCommand == false, 'Command mismatch');
       check(
+        client.snapshot?.pumpReason == 'soil_not_dry',
+        'Pump reason missing',
+      );
+      check(
         client.snapshot?.lightingCandidate == 'unavailable',
         'Rule mismatch',
       );
-      peer.write('${fixture(5000)}\n');
+      peer.write('${fixture(10000, soil: 77, version: 16)}\n');
+      await waitFor(client, () => client.snapshot?.uptimeMs == 10000);
+      check(client.snapshot?.soilRelativePercent == 77, 'Live update mismatch');
+      peer.write('${fixture(10000, soil: 77, version: 16)}\n');
       await waitFor(
         client,
         () => client.status == LocalWifiStatus.disconnected,
@@ -137,10 +145,60 @@ Future<void> smoke({required bool oversized}) async {
   }
 }
 
+Future<void> smokeReconnect() async {
+  final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final peers = StreamController<Socket>();
+  var accepted = 0;
+  final serverSubscription = server.listen((peer) {
+    accepted++;
+    peers.add(peer);
+  });
+  final incoming = StreamIterator(peers.stream);
+  final client = LocalWifiController(
+    address: '127.0.0.1',
+    port: server.port,
+    reconnectDelay: const Duration(milliseconds: 100),
+    sampleTimeout: const Duration(seconds: 2),
+  );
+  Socket? first;
+  Socket? second;
+  try {
+    final connecting = client.connect();
+    check(await incoming.moveNext(), 'First connection missing');
+    first = incoming.current;
+    await connecting;
+    first.write('${fixture(5000, soil: 25, version: 16)}\n');
+    await waitFor(client, () => client.snapshot?.soilRelativePercent == 25);
+    first.destroy();
+    await waitFor(client, () => client.status == LocalWifiStatus.disconnected);
+    check(client.snapshot == null, 'Disconnected value must be cleared');
+    check(
+      await incoming.moveNext().timeout(const Duration(seconds: 3)),
+      'Automatic reconnect missing',
+    );
+    second = incoming.current;
+    second.write('${fixture(5000, soil: 80, version: 16)}\n');
+    await waitFor(client, () => client.snapshot?.soilRelativePercent == 80);
+    client.disconnect();
+    check(client.snapshot == null, 'Manual disconnect must clear the sample');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    check(accepted == 2, 'Manual disconnect must stop retries');
+  } finally {
+    first?.destroy();
+    second?.destroy();
+    client.dispose();
+    await incoming.cancel();
+    await serverSubscription.cancel();
+    await peers.close();
+    await server.close();
+  }
+}
+
 Future<void> main() async {
   await smoke(oversized: false);
   await smoke(oversized: true);
+  await smokeReconnect();
   stdout.writeln(
-    'Local Wi-Fi client: loopback stream, stale and invalid-frame checks passed; no ESP32 contacted.',
+    'Local Wi-Fi client: loopback updates, reconnect, stale and invalid-frame checks passed; no ESP32 contacted.',
   );
 }

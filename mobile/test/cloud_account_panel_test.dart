@@ -17,7 +17,9 @@ void main() {
       );
     });
     final cloud = CloudController(client);
-    await tester.pumpWidget(MossApp(render3d: false, cloud: cloud));
+    await tester.pumpWidget(
+      MossApp(render3d: false, cloud: cloud, autoConnectLocal: false),
+    );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
 

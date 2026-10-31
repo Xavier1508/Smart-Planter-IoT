@@ -30,7 +30,7 @@ class MossApp extends StatefulWidget {
     this.cloud,
     this.cloudSetupNotice,
     this.localWifi,
-    this.modelAssetLoader,
+    this.autoConnectLocal = true,
     this.initialAppearance = const AppearanceSettings(),
     this.appearanceStore,
     this.clock,
@@ -51,8 +51,8 @@ class MossApp extends StatefulWidget {
   /// Optional injected local transport for tests; the default is the ESP32 AP.
   final LocalWifiController? localWifi;
 
-  /// Optional model asset source; defaults to the bundled local model.
-  final Future<String> Function()? modelAssetLoader;
+  /// Tests may disable the initial connection and inject their own transport.
+  final bool autoConnectLocal;
   final AppearanceSettings initialAppearance;
   final AppearanceStore? appearanceStore;
 
@@ -179,9 +179,8 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
       telemetry: widget.cloud?.telemetry ?? widget.telemetry,
       initialSerialJson: widget.initialSerialJson,
       cloudSettings: cloudSettings,
-      cloudSetupNotice: widget.cloudSetupNotice,
       localWifi: widget.localWifi,
-      modelAssetLoader: widget.modelAssetLoader,
+      autoConnectLocal: widget.autoConnectLocal,
       appearance: _appearance,
       sky: sky,
       storageUnavailable: _storageUnavailable,

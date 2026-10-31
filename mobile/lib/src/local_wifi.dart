@@ -14,23 +14,27 @@ class LocalWifiController {
     this.port = 3333,
     this.connectTimeout = const Duration(seconds: 5),
     this.sampleTimeout = const Duration(seconds: 20),
+    this.reconnectDelay = const Duration(seconds: 5),
   });
 
   final String address;
   final int port;
   final Duration connectTimeout;
   final Duration sampleTimeout;
+  final Duration reconnectDelay;
 
   LocalWifiStatus status = LocalWifiStatus.disconnected;
-  String message = 'Wi-Fi lokal belum terhubung.';
+  String message = 'Menunggu koneksi ke ESP32.';
   SerialSensorSnapshot? snapshot;
   Socket? _socket;
   StreamSubscription<List<int>>? _subscription;
   Timer? _deadline;
+  Timer? _retry;
   final List<int> _pending = [];
   int? _lastUptime;
   int _generation = 0;
   bool _disposed = false;
+  bool _wanted = false;
   final StreamController<void> _changes = StreamController<void>.broadcast(
     sync: true,
   );
@@ -43,6 +47,9 @@ class LocalWifiController {
 
   Future<void> connect() async {
     if (_disposed) return;
+    _wanted = true;
+    _retry?.cancel();
+    _retry = null;
     final generation = ++_generation;
     _closeTransport();
     snapshot = null;
@@ -68,12 +75,15 @@ class LocalWifiController {
       _subscription = socket.listen(
         (bytes) => _receive(bytes, generation),
         onError: (Object _, StackTrace _) =>
-            _fail(generation, 'Koneksi Wi-Fi lokal terputus.'),
-        onDone: () => _fail(generation, 'Koneksi Wi-Fi lokal terputus.'),
+            _fail(generation, 'Koneksi terputus; mencoba lagi.'),
+        onDone: () => _fail(generation, 'Koneksi terputus; mencoba lagi.'),
         cancelOnError: true,
       );
     } catch (_) {
-      _fail(generation, 'Tidak terhubung. Pilih Wi-Fi ESP32 lalu coba lagi.');
+      _fail(
+        generation,
+        'Tidak terhubung. Pilih Wi-Fi Moss-xxxx di ponsel; mencoba lagi.',
+      );
     }
   }
 
@@ -132,22 +142,36 @@ class LocalWifiController {
     _deadline?.cancel();
     _deadline = Timer(
       sampleTimeout,
-      () => _fail(generation, 'Data Wi-Fi lokal terlambat; sambungkan lagi.'),
+      () => _fail(generation, 'Data Wi-Fi lokal terlambat; mencoba lagi.'),
     );
   }
 
   void _fail(int generation, String reason) {
     if (_disposed || generation != _generation) return;
-    ++_generation;
+    final retryGeneration = ++_generation;
     _closeTransport();
     snapshot = null;
     status = LocalWifiStatus.disconnected;
     message = reason;
     notifyListeners();
+    // An explicit connection selection remains active until the user stops it.
+    // Never retain a stale value while waiting for the next connection.
+    if (_wanted && !_disposed && _generation == retryGeneration) {
+      _retry?.cancel();
+      _retry = Timer(reconnectDelay, () {
+        _retry = null;
+        if (_wanted && !_disposed && _generation == retryGeneration) {
+          unawaited(connect());
+        }
+      });
+    }
   }
 
   void disconnect() {
     if (_disposed) return;
+    _wanted = false;
+    _retry?.cancel();
+    _retry = null;
     ++_generation;
     _closeTransport();
     snapshot = null;
@@ -169,6 +193,9 @@ class LocalWifiController {
   }
 
   void dispose() {
+    _wanted = false;
+    _retry?.cancel();
+    _retry = null;
     _disposed = true;
     ++_generation;
     _closeTransport();

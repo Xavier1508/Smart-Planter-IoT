@@ -118,7 +118,11 @@ void main() {
 
   testWidgets('theme and sky can be selected independently', (tester) async {
     await tester.pumpWidget(
-      MossApp(render3d: false, clock: () => DateTime(2026, 1, 1, 12)),
+      MossApp(
+        render3d: false,
+        autoConnectLocal: false,
+        clock: () => DateTime(2026, 1, 1, 12),
+      ),
     );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
@@ -133,6 +137,7 @@ void main() {
     expect(find.byType(DropdownButtonFormField<SkyChoice>), findsNothing);
     await tester.tap(find.text('Hari ini'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('Suasana berikutnya'));
     await tester.tap(find.byTooltip('Suasana berikutnya'));
     await tester.pumpAndSettle();
     final sky = tester.widget<MossSky>(find.byType(MossSky)).sky;
@@ -144,7 +149,9 @@ void main() {
 
   testWidgets('automatic sky refreshes after the app resumes', (tester) async {
     var now = DateTime(2026, 1, 1, 5);
-    await tester.pumpWidget(MossApp(render3d: false, clock: () => now));
+    await tester.pumpWidget(
+      MossApp(render3d: false, autoConnectLocal: false, clock: () => now),
+    );
     expect(tester.widget<MossSky>(find.byType(MossSky)).sky.label, 'Subuh');
     now = DateTime(2026, 1, 1, 20);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -158,7 +165,9 @@ void main() {
     (tester) async {
       tester.platformDispatcher.alwaysUse24HourFormatTestValue = false;
       addTearDown(tester.platformDispatcher.clearAlwaysUse24HourTestValue);
-      await tester.pumpWidget(const MossApp(render3d: false));
+      await tester.pumpWidget(
+        const MossApp(render3d: false, autoConnectLocal: false),
+      );
       await tester.tap(find.text('Pengaturan'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const ValueKey('pick-moss-time')));
@@ -181,18 +190,30 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      MossApp(render3d: false, clock: () => DateTime(2026, 1, 1, 12)),
+      MossApp(
+        render3d: false,
+        autoConnectLocal: false,
+        clock: () => DateTime(2026, 1, 1, 12),
+      ),
     );
     expect(find.text('SIANG · JAM HP'), findsOneWidget);
     await tester.drag(find.byType(MossSky), const Offset(-130, 0));
     await tester.pumpAndSettle();
     expect(find.text('SORE · PILIHAN'), findsOneWidget);
+    await tester.ensureVisible(find.byTooltip('Suasana berikutnya'));
     await tester.tap(find.byTooltip('Suasana berikutnya'));
     await tester.pumpAndSettle();
     expect(find.text('MALAM · PILIHAN'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Ruang Moss'),
+      -150,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.drag(find.byType(MossSky), const Offset(130, 0));
     await tester.pumpAndSettle();
     expect(find.text('SORE · PILIHAN'), findsOneWidget);
+    await tester.ensureVisible(find.byTooltip('Suasana sebelumnya'));
     await tester.tap(find.byTooltip('Suasana sebelumnya'));
     await tester.pumpAndSettle();
     expect(find.text('SIANG · PILIHAN'), findsOneWidget);
@@ -219,6 +240,7 @@ void main() {
     await tester.pumpWidget(
       const MossApp(
         render3d: false,
+        autoConnectLocal: false,
         initialAppearance: AppearanceSettings(
           themeMode: ThemeMode.dark,
           sky: SkyChoice.midnight,
@@ -233,10 +255,10 @@ void main() {
     expect(find.text('TENGAH MALAM · PILIHAN'), findsOneWidget);
     await tester.tap(find.text('Riwayat'));
     await tester.pumpAndSettle();
-    expect(find.text('RIWAYAT SIMULASI'), findsOneWidget);
+    expect(find.text('Belum ada riwayat'), findsOneWidget);
     await tester.tap(find.text('Perangkat').last);
     await tester.pumpAndSettle();
-    expect(find.text('Pratinjau perangkat'), findsOneWidget);
+    expect(find.text('Menunggu data perangkat'), findsOneWidget);
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     expect(find.text('Tampilan & suasana'), findsOneWidget);

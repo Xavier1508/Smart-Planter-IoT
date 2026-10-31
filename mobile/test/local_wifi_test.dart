@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/local_wifi.dart';
 
-String sample(int uptime, {int version = 12}) => jsonEncode({
+String sample(int uptime, {int version = 12, int soil = 44}) => jsonEncode({
   'type': 'sample',
   'schema': 'serial_observation_2',
   'firmware_version': version,
@@ -18,7 +18,7 @@ String sample(int uptime, {int version = 12}) => jsonEncode({
   'adc': {
     'soil_raw': 1000,
     'soil_status': 'unverified',
-    'soil_relative_percent': 44,
+    'soil_relative_percent': soil,
     'light_raw': 2000,
     'light_relative_percent': 51,
     'uv_raw': 0,
@@ -111,10 +111,13 @@ void main() {
       expect(controller.snapshot?.pumpCommand, isFalse);
       expect(controller.snapshot?.lightingCandidate, 'unavailable');
 
-      // The updated app keeps v12 compatibility while accepting v13 frames.
-      peer.write('${sample(10000, version: 13)}\n');
+      // Old and new frames both update the actual displayed measurement.
+      peer.write('${sample(10000, version: 13, soil: 25)}\n');
       await waitFor(controller, () => controller.snapshot?.uptimeMs == 10000);
-      expect(controller.snapshot?.soilRelativePercent, 44);
+      expect(controller.snapshot?.soilRelativePercent, 25);
+      peer.write('${sample(15000, version: 16, soil: 80)}\n');
+      await waitFor(controller, () => controller.snapshot?.uptimeMs == 15000);
+      expect(controller.snapshot?.soilRelativePercent, 80);
 
       peer.destroy();
       await waitFor(
@@ -122,6 +125,67 @@ void main() {
         () => controller.status == LocalWifiStatus.disconnected,
       );
       expect(controller.snapshot, isNull);
+    },
+  );
+
+  test(
+    'reconnect clears stale data and manual disconnect stops retries',
+    () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final peers = StreamController<Socket>();
+      var accepted = 0;
+      final serverSubscription = server.listen((peer) {
+        accepted++;
+        peers.add(peer);
+      });
+      final incoming = StreamIterator(peers.stream);
+      final controller = LocalWifiController(
+        address: '127.0.0.1',
+        port: server.port,
+        reconnectDelay: const Duration(milliseconds: 100),
+      );
+      Socket? first;
+      Socket? second;
+      addTearDown(() async {
+        first?.destroy();
+        second?.destroy();
+        controller.dispose();
+        await incoming.cancel();
+        await serverSubscription.cancel();
+        await peers.close();
+        await server.close();
+      });
+
+      final connecting = controller.connect();
+      expect(await incoming.moveNext(), isTrue);
+      first = incoming.current;
+      await connecting;
+      first.write('${sample(5000, version: 16, soil: 25)}\n');
+      await waitFor(
+        controller,
+        () => controller.snapshot?.soilRelativePercent == 25,
+      );
+      first.destroy();
+      await waitFor(
+        controller,
+        () => controller.status == LocalWifiStatus.disconnected,
+      );
+      expect(controller.snapshot, isNull);
+
+      expect(
+        await incoming.moveNext().timeout(const Duration(seconds: 3)),
+        isTrue,
+      );
+      second = incoming.current;
+      second.write('${sample(5000, version: 16, soil: 80)}\n');
+      await waitFor(
+        controller,
+        () => controller.snapshot?.soilRelativePercent == 80,
+      );
+      controller.disconnect();
+      expect(controller.snapshot, isNull);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(accepted, 2);
     },
   );
 

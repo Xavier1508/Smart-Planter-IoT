@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,16 +16,21 @@ class FixtureLocalWifi extends LocalWifiController {
 
   @override
   Future<void> connect() async {
+    publishSoil(44);
+  }
+
+  void publishSoil(int soilPercent) {
     snapshot = SerialSensorSnapshot.parse('''
       {"type":"sample","uptime_ms":5000,
        "dht":{"temperature_c":28.7,"humidity_percent":74,"status":"unverified"},
-       "adc":{"soil_raw":1000,"soil_status":"unverified","soil_relative_percent":44,
+       "adc":{"soil_raw":1000,"soil_status":"unverified","soil_relative_percent":$soilPercent,
               "light_raw":2000,"light_relative_percent":51,"uv_raw":0,"status":"unverified"},
        "water_level":{"adc_raw":$waterAdc,"relative_percent":null,"status":"unverified",
          "observation_scale":{"relative_percent":50,"basis":"operator_reported_window_means",
            "quality":"unverified","use_for_control":false}},
        "mq135":{"adc_raw":null,"digital_raw":1,"adc_status":"adc_read_failed","status":"unverified"},
-       "pump_cmd":false,"growlight_cmd":false,
+       "pump_cmd":false,"pump_reason":"soil_not_dry",
+       "growlight_cmd":false,"growlight_reason":"light_sufficient",
        "lighting_rule":{"candidate":"unavailable","status":"diagnostic_only_unverified",
                         "use_for_control":false}}
     ''');
@@ -42,11 +49,104 @@ class FixtureLocalWifi extends LocalWifiController {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  late String bundledModel;
 
-  setUpAll(() async {
-    bundledModel = await rootBundle.loadString('assets/ml/pattern-models.json');
+  testWidgets('real local socket frames update the dashboard', (tester) async {
+    final server = await tester.runAsync(
+      () => ServerSocket.bind(InternetAddress.loopbackIPv4, 0),
+    );
+    expect(server, isNotNull);
+    final incoming = server!.first;
+    final wifi = LocalWifiController(address: '127.0.0.1', port: server.port);
+    Socket? peer;
+    addTearDown(() async {
+      peer?.destroy();
+      wifi.dispose();
+      await server.close();
+    });
+
+    String sample(int uptime, int soil) => jsonEncode({
+      'type': 'sample',
+      'schema': 'serial_observation_2',
+      'firmware_version': 16,
+      'uptime_ms': uptime,
+      'adc': {
+        'soil_raw': 1000,
+        'soil_status': 'unverified',
+        'soil_relative_percent': soil,
+        'light_raw': 2000,
+        'light_relative_percent': 51,
+        'uv_raw': 0,
+        'status': 'unverified',
+      },
+      'pump_cmd': false,
+      'growlight_cmd': false,
+    });
+
+    Future<void> waitForSoil(int soil) async {
+      if (wifi.snapshot?.soilRelativePercent == soil) return;
+      await wifi.changes
+          .firstWhere((_) => wifi.snapshot?.soilRelativePercent == soil)
+          .timeout(const Duration(seconds: 3));
+    }
+
+    await tester.pumpWidget(MossApp(render3d: false, localWifi: wifi));
+    await tester.pump();
+    peer = await tester.runAsync(
+      () => incoming.timeout(const Duration(seconds: 3)),
+    );
+    expect(peer, isNotNull);
+    await tester.runAsync(() async {
+      peer!.write('${sample(5000, 44)}\n');
+      await peer.flush();
+      await waitForSoil(44);
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('SENSOR'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Kelembapan tanah'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('44%'), findsOneWidget);
+
+    await tester.runAsync(() async {
+      peer!.write('${sample(10000, 68)}\n');
+      await peer.flush();
+      await waitForSoil(68);
+    });
+    await tester.pump();
+    expect(find.text('44%'), findsNothing);
+    expect(find.text('68%'), findsOneWidget);
+    wifi.disconnect();
+    await tester.pump();
+    expect(find.text('68%'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
+  testWidgets(
+    'home connects automatically and refreshes real-data presentation',
+    (tester) async {
+      final wifi = FixtureLocalWifi();
+      addTearDown(wifi.dispose);
+      await tester.pumpWidget(MossApp(render3d: false, localWifi: wifi));
+      await tester.pumpAndSettle();
+      expect(find.text('SIMULASI'), findsNothing);
+      expect(find.text('SENSOR'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Kelembapan tanah'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('44%'), findsOneWidget);
+      wifi.publishSoil(68);
+      await tester.pump();
+      expect(find.text('44%'), findsNothing);
+      expect(find.text('68%'), findsOneWidget);
+      wifi.loseConnection();
+      await tester.pump();
+      expect(find.text('68%'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets(
     'local Wi-Fi selection shows fixture data and clears it on loss',
@@ -54,11 +154,7 @@ void main() {
       final wifi = FixtureLocalWifi();
       addTearDown(wifi.dispose);
       await tester.pumpWidget(
-        MossApp(
-          render3d: false,
-          localWifi: wifi,
-          modelAssetLoader: () async => bundledModel,
-        ),
+        MossApp(render3d: false, localWifi: wifi, autoConnectLocal: false),
       );
       await tester.tap(find.text('Pengaturan'));
       await tester.pumpAndSettle();
@@ -72,8 +168,7 @@ void main() {
       await tester.tap(find.text('Hari ini'));
       await tester.pumpAndSettle();
       expect(find.text('SENSOR'), findsOneWidget);
-      expect(find.text('POLA SINTETIS'), findsOneWidget);
-      expect(find.text('Pola tanah relatif rendah.'), findsOneWidget);
+      expect(find.text('POLA SINTETIS'), findsNothing);
       await tester.scrollUntilVisible(
         find.text('Wi-Fi lokal: sampel terbaru diterima di ponsel.'),
         150,
@@ -98,13 +193,6 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('Analog gagal · digital 1'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.text('ML XGBoost · sintetis'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(find.textContaining('Skor model sintetis'), findsOneWidget);
-
       await tester.tap(
         find.descendant(
           of: find.byType(NavigationBar),
@@ -113,12 +201,20 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
-        find.text('Aturan lampu (pratinjau): belum tersedia'),
+        find.text('Alasan lampu: LDR cukup terang atau proksi UV tinggi'),
         200,
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('Pompa: OFF diminta'), findsOneWidget);
+      expect(
+        find.text('Alasan pompa: tanah belum di bawah batas nyala'),
+        findsOneWidget,
+      );
       expect(find.text('Lampu: OFF diminta'), findsOneWidget);
+      expect(
+        find.text('Alasan lampu: LDR cukup terang atau proksi UV tinggi'),
+        findsOneWidget,
+      );
       await tester.tap(find.text('Hari ini'));
       await tester.pumpAndSettle();
 
@@ -136,75 +232,6 @@ void main() {
     },
   );
 
-  for (final waterAdc in <int?>[null, 0]) {
-    testWidgets('local model waits when water ADC is $waterAdc', (
-      tester,
-    ) async {
-      final wifi = FixtureLocalWifi(waterAdc: waterAdc);
-      addTearDown(wifi.dispose);
-      await tester.pumpWidget(
-        MossApp(
-          render3d: false,
-          localWifi: wifi,
-          modelAssetLoader: () async => bundledModel,
-        ),
-      );
-      await tester.tap(find.text('Pengaturan'));
-      await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('Hubungkan Wi-Fi lokal'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.tap(find.text('Hubungkan Wi-Fi lokal'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Hari ini'));
-      await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('ML XGBoost · sintetis'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(
-        find.text('Menunggu data tanah, air, dan cahaya yang dapat dibaca.'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Skor model sintetis'), findsNothing);
-    });
-  }
-
-  testWidgets('malformed model is reported without a fabricated score', (
-    tester,
-  ) async {
-    final wifi = FixtureLocalWifi();
-    addTearDown(wifi.dispose);
-    await tester.pumpWidget(
-      MossApp(
-        render3d: false,
-        localWifi: wifi,
-        modelAssetLoader: () async => '{}',
-      ),
-    );
-    await tester.tap(find.text('Pengaturan'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('Hubungkan Wi-Fi lokal'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(find.text('Hubungkan Wi-Fi lokal'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Hari ini'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('ML XGBoost · sintetis'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Model tidak tersedia.'), findsOneWidget);
-    expect(find.textContaining('Skor model sintetis'), findsNothing);
-  });
-
   testWidgets('serial rule previews are shown without claiming relay control', (
     tester,
   ) async {
@@ -217,7 +244,11 @@ void main() {
                           "pump_on":true,"growlight_on":true,"water_low":null}}
     ''';
     await tester.pumpWidget(
-      const MossApp(render3d: false, initialSerialJson: sample),
+      const MossApp(
+        render3d: false,
+        initialSerialJson: sample,
+        autoConnectLocal: false,
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(
@@ -253,7 +284,11 @@ void main() {
        "mq135":{"adc_raw":4095,"digital_raw":1,"adc_status":"unverified","status":"unverified"}}
     ''';
     await tester.pumpWidget(
-      const MossApp(render3d: false, initialSerialJson: sample),
+      const MossApp(
+        render3d: false,
+        initialSerialJson: sample,
+        autoConnectLocal: false,
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.text('SERIAL'), findsOneWidget);
@@ -277,7 +312,11 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      const MossApp(render3d: false, initialSerialJson: '{}'),
+      const MossApp(
+        render3d: false,
+        initialSerialJson: '{}',
+        autoConnectLocal: false,
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.text('OFFLINE'), findsOneWidget);
@@ -304,7 +343,9 @@ void main() {
     addTearDown(
       () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
     );
-    await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.pumpWidget(
+      const MossApp(render3d: false, autoConnectLocal: false),
+    );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     expect(reads, 0);
@@ -368,38 +409,12 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('demo is labelled and scenarios change Moss expression', (
+  testWidgets('waiting view contains no invented values or demo controls', (
     tester,
   ) async {
-    await tester.pumpWidget(const MossApp(render3d: false));
-    await tester.pumpAndSettle();
-    expect(find.text('SIMULASI'), findsOneWidget);
-    expect(find.text('Simulasi — bukan data sensor.'), findsOneWidget);
-    expect(find.text('Aku merasa nyaman hari ini.'), findsOneWidget);
-
-    await tester.scrollUntilVisible(
-      find.text('Butuh air'),
-      200,
-      scrollable: find.byType(Scrollable).first,
+    await tester.pumpWidget(
+      const MossApp(render3d: false, autoConnectLocal: false),
     );
-    await tester.tap(find.text('Butuh air'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('Ruang Moss'),
-      -200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Sepertinya aku butuh air.'), findsOneWidget);
-  });
-
-  testWidgets('turning demo off shows no fake values and disabled controls', (
-    tester,
-  ) async {
-    await tester.pumpWidget(const MossApp(render3d: false));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Tutup'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tutup'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Ruang Moss'),
@@ -409,23 +424,17 @@ void main() {
     expect(find.text('OFFLINE'), findsOneWidget);
     expect(find.text('Halo, aku Moss.'), findsOneWidget);
     expect(find.text('64%'), findsNothing);
-    expect(find.text('Perangkat dan cloud belum terhubung.'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Pompa & lampu'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Kendali nyata belum tersedia.'), findsOneWidget);
+    expect(find.text('SIMULASI'), findsNothing);
+    expect(find.text('Demo'), findsNothing);
+    expect(find.textContaining('Ekspresi Moss menggunakan'), findsNothing);
   });
 
   testWidgets('history is explicitly empty rather than fabricated', (
     tester,
   ) async {
-    await tester.pumpWidget(const MossApp(render3d: false));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Tutup'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tutup'));
+    await tester.pumpWidget(
+      const MossApp(render3d: false, autoConnectLocal: false),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Riwayat'));
     await tester.pumpAndSettle();
@@ -433,20 +442,21 @@ void main() {
     expect(find.byIcon(Icons.history_rounded), findsOneWidget);
   });
 
-  testWidgets('unconfigured cloud is clearly reported in settings', (
+  testWidgets('local settings do not require a cloud connection', (
     tester,
   ) async {
     await tester.pumpWidget(
       const MossApp(
         render3d: false,
         cloudSetupNotice: 'Aplikasi belum dikonfigurasi untuk cloud.',
+        autoConnectLocal: false,
       ),
     );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     expect(
       find.text('Aplikasi belum dikonfigurasi untuk cloud.'),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.text('Masuk'), findsNothing);
   });
@@ -459,10 +469,12 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.pumpWidget(
+      const MossApp(render3d: false, autoConnectLocal: false),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Ruang Moss'), findsOneWidget);
-    expect(find.text('SIMULASI'), findsOneWidget);
+    expect(find.text('OFFLINE'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -471,11 +483,12 @@ void main() {
   ) async {
     final readings = StreamController<PlantTelemetry>();
     await tester.pumpWidget(
-      MossApp(render3d: false, telemetry: readings.stream),
+      MossApp(
+        render3d: false,
+        telemetry: readings.stream,
+        autoConnectLocal: false,
+      ),
     );
-    await tester.ensureVisible(find.text('Tutup'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tutup'));
     await tester.pump();
     expect(find.text('Menunggu pembacaan sensor.'), findsOneWidget);
 
@@ -496,10 +509,10 @@ void main() {
     );
     await tester.pump();
     expect(find.text('SENSOR'), findsOneWidget);
-    expect(find.text('Sepertinya aku butuh air.'), findsOneWidget);
+    expect(find.text('Tanah atau air relatif rendah.'), findsOneWidget);
     expect(
       find.text(
-        'Estimasi tanah di bawah ambang; belum diverifikasi dan bukan diagnosis.',
+        'Estimasi tanah atau air di bawah ambang; belum diverifikasi dan bukan diagnosis.',
       ),
       findsOneWidget,
     );
@@ -540,11 +553,12 @@ void main() {
   ) async {
     final readings = StreamController<PlantTelemetry>();
     await tester.pumpWidget(
-      MossApp(render3d: false, telemetry: readings.stream),
+      MossApp(
+        render3d: false,
+        telemetry: readings.stream,
+        autoConnectLocal: false,
+      ),
     );
-    await tester.ensureVisible(find.text('Tutup'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tutup'));
     await tester.pump();
 
     readings.add(PlantTelemetry(recordedAt: DateTime.now(), uvIndex: 3.5));
@@ -572,11 +586,12 @@ void main() {
   ) async {
     final readings = StreamController<PlantTelemetry>();
     await tester.pumpWidget(
-      MossApp(render3d: false, telemetry: readings.stream),
+      MossApp(
+        render3d: false,
+        telemetry: readings.stream,
+        autoConnectLocal: false,
+      ),
     );
-    await tester.ensureVisible(find.text('Tutup'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tutup'));
     await tester.pump();
 
     final now = DateTime.now();
@@ -633,11 +648,12 @@ void main() {
   ) async {
     final readings = StreamController<PlantTelemetry>();
     await tester.pumpWidget(
-      MossApp(render3d: false, telemetry: readings.stream),
+      MossApp(
+        render3d: false,
+        telemetry: readings.stream,
+        autoConnectLocal: false,
+      ),
     );
-    await tester.ensureVisible(find.text('Tutup'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tutup'));
     await tester.pump();
 
     final now = DateTime.now();

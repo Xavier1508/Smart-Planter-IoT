@@ -3,36 +3,15 @@ import 'package:flutter/material.dart';
 import 'moss_app.dart';
 import 'plant_state.dart';
 
-/// Preview controls are local UI state and never send device commands.
-class DevicesPage extends StatefulWidget {
+/// Displays sensor availability and requested firmware commands; read-only.
+class DevicesPage extends StatelessWidget {
   const DevicesPage({super.key, required this.state});
   final PlantState state;
 
   @override
-  State<DevicesPage> createState() => _DevicesPageState();
-}
-
-class _DevicesPageState extends State<DevicesPage> {
-  bool _pumpPreview = false;
-  bool _lightPreview = false;
-
-  @override
-  void didUpdateWidget(covariant DevicesPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.state.isDemo && !widget.state.isDemo) {
-      _pumpPreview = false;
-      _lightPreview = false;
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final state = widget.state;
-    String status(bool available) => state.isDemo
-        ? 'Simulasi'
-        : available
-        ? 'Belum diverifikasi'
-        : 'Belum ada data';
+    String status(bool available) =>
+        available ? 'Belum diverifikasi' : 'Belum ada data';
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
@@ -76,9 +55,7 @@ class _DevicesPageState extends State<DevicesPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      state.isDemo
-                          ? 'Pratinjau perangkat'
-                          : state.isLive
+                      state.isLive
                           ? 'Data sensor tersedia'
                           : state.isSerialSnapshot
                           ? 'Data serial tersimpan'
@@ -91,9 +68,7 @@ class _DevicesPageState extends State<DevicesPage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      state.isDemo
-                          ? 'SIMULASI — bukan status ESP32 sebenarnya.'
-                          : 'Status pompa dan lampu belum dapat diverifikasi dari aplikasi.',
+                      'Status pompa dan lampu belum dapat diverifikasi dari aplikasi.',
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.4,
@@ -134,14 +109,12 @@ class _DevicesPageState extends State<DevicesPage> {
           name: 'UV',
           status: state.uvIndex == null && state.uvAdc == null
               ? 'Belum ada data'
-              : state.isDemo
-              ? 'Simulasi'
               : 'Belum diverifikasi',
         ),
         _SensorRow(
           icon: Icons.water_drop_outlined,
           name: 'Level air',
-          status: state.waterPercent != null && !state.isDemo
+          status: state.waterPercent != null
               ? 'Skala relatif belum diverifikasi'
               : state.waterAdc == null
               ? 'Belum tersedia'
@@ -169,7 +142,9 @@ class _DevicesPageState extends State<DevicesPage> {
             'bukan perintah, status relay, atau notifikasi live.',
           ),
           const SizedBox(height: 8),
-          Text('Pompa <50%: ${_previewText(state.pumpRulePreview)}'),
+          Text(
+            'Pompa <${state.pumpRuleThreshold ?? '?'}%: ${_previewText(state.pumpRulePreview)}',
+          ),
           Text('Lampu <60%: ${_previewText(state.lightRulePreview)}'),
           Text('Air <20%: ${_waterPreviewText(state.waterLowPreview)}'),
         ],
@@ -182,88 +157,47 @@ class _DevicesPageState extends State<DevicesPage> {
           ),
           const SizedBox(height: 8),
           Text('Pompa: ${_commandText(state.pumpCommand)}'),
+          if (state.pumpReason != null)
+            Text('Alasan pompa: ${_pumpReasonText(state.pumpReason)}'),
           Text('Lampu: ${_commandText(state.lightCommand)}'),
+          if (state.lightReason != null)
+            Text('Alasan lampu: ${_lightReasonText(state.lightReason)}'),
           const Text(
             'Perintah bukan pengukuran kontak relay atau keadaan beban.',
           ),
-          if (state.lightingCandidate != null)
-            Text(
-              'Aturan lampu (pratinjau): ${_lightingCandidateText(state.lightingCandidate)}',
-            ),
         ],
         const SizedBox(height: 22),
-        Text(
-          state.isDemo ? 'Kendali simulasi' : 'Kendali perangkat',
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+        const Text(
+          'Kendali perangkat',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 10),
-        if (state.isDemo)
-          Material(
-            color: context.mossColors.surfaceContainerLowest,
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-              side: BorderSide(color: context.mossColors.outlineVariant),
-            ),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                  child: Text(
-                    'SIMULASI — saklar ini tidak mengendalikan pompa atau lampu nyata.',
-                    style: TextStyle(
-                      color: context.mossColors.onSurfaceVariant,
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-                SwitchListTile(
-                  title: const Text('Simulasi pompa'),
-                  subtitle: Text(
-                    _pumpPreview ? 'Contoh: menyala' : 'Contoh: mati',
-                  ),
-                  value: _pumpPreview,
-                  onChanged: (value) => setState(() => _pumpPreview = value),
-                ),
-                SwitchListTile(
-                  title: const Text('Simulasi lampu'),
-                  subtitle: Text(
-                    _lightPreview ? 'Contoh: menyala' : 'Contoh: mati',
-                  ),
-                  value: _lightPreview,
-                  onChanged: (value) => setState(() => _lightPreview = value),
-                ),
-              ],
-            ),
-          )
-        else
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: context.mossColors.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.lock_outline_rounded,
-                  color: context.mossColors.onSurfaceVariant,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Kendali nyata belum tersedia. Aplikasi tidak menyalakan atau mematikan aktuator.',
-                    style: TextStyle(
-                      color: context.mossColors.onSurfaceVariant,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: context.mossColors.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(18),
           ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.lock_outline_rounded,
+                color: context.mossColors.onSurfaceVariant,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Otomasi pompa dan lampu berjalan di ESP32; aplikasi ini hanya memantau.',
+                  style: TextStyle(
+                    color: context.mossColors.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -286,11 +220,34 @@ class _DevicesPageState extends State<DevicesPage> {
       ? 'ON diminta'
       : 'OFF diminta';
 
-  String _lightingCandidateText(String? value) => switch (value) {
-    'on' => 'ingin ON',
-    'off' => 'ingin OFF',
-    'hold' => 'pertahankan',
-    _ => 'belum tersedia',
+  String _pumpReasonText(String? value) => switch (value) {
+    'boot_grace' => 'menunggu setelah dinyalakan',
+    'soil_not_dry' => 'tanah belum di bawah batas nyala',
+    'soil_moist' => 'tanah mencapai batas berhenti',
+    'soil_dry' => 'tanah di bawah batas nyala',
+    'watering' => 'siklus penyiraman berjalan',
+    'cooldown' => 'jeda antarsiklus',
+    'water_low' => 'air di bawah batas relatif',
+    'water_unavailable' => 'data air belum tersedia',
+    'soil_unverified' => 'skala tanah belum diizinkan',
+    'soil_unavailable' => 'data tanah belum tersedia',
+    'watchdog_unavailable' => 'pengawas perangkat belum tersedia',
+    'sample_stale' => 'data sensor terlambat',
+    'runtime_limit' => 'batas waktu pompa tercapai',
+    _ => 'belum diketahui',
+  };
+
+  String _lightReasonText(String? value) => switch (value) {
+    'boot_grace' => 'menunggu setelah dinyalakan',
+    'light_low' => 'LDR dan proksi UV memenuhi syarat',
+    'light_sufficient' => 'LDR cukup terang atau proksi UV tinggi',
+    'light_input_unavailable' => 'input LDR atau UV belum tersedia',
+    'light_inhibited' => 'otomasi lampu belum diaktifkan',
+    'minimum_hold' => 'menunggu jeda perpindahan',
+    'hysteresis' => 'mempertahankan keadaan di zona jeda',
+    'watchdog_unavailable' => 'pengawas perangkat belum tersedia',
+    'sample_stale' => 'data sensor terlambat',
+    _ => 'belum diketahui',
   };
 }
 

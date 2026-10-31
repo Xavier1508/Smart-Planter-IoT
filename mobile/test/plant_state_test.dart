@@ -5,7 +5,6 @@ import 'package:smart_planter/src/plant_telemetry.dart';
 void main() {
   test('unconnected state never presents demonstration values', () {
     const state = PlantState.waiting();
-    expect(state.isDemo, isFalse);
     expect(state.soilPercent, isNull);
     expect(state.waterPercent, isNull);
     expect(state.uvIndex, isNull);
@@ -48,6 +47,25 @@ void main() {
     expect(state.mqAdc, 4095);
     expect(state.mqDigital, 1);
     expect(state.explanation, contains('waktu pembacaan tidak diketahui'));
+  });
+
+  test('ADC rails remain raw diagnostics, not sensor percentages', () {
+    final snapshot = SerialSensorSnapshot.parse('''
+      {"type":"sample",
+       "adc":{"soil_raw":4095,"soil_status":"unverified","soil_relative_percent":100,
+              "light_raw":0,"light_relative_percent":100,"uv_raw":0,"status":"unverified"},
+       "water_level":{"adc_raw":0,"relative_percent":50,"status":"unverified",
+         "observation_scale":{"relative_percent":50,"basis":"operator_reported_window_means",
+           "quality":"unverified","use_for_control":false}}}
+    ''');
+    expect(snapshot.soilAdc, 4095);
+    expect(snapshot.lightAdc, 0);
+    expect(snapshot.waterAdc, 0);
+    expect(snapshot.uvAdc, 0);
+    expect(snapshot.soilRelativePercent, isNull);
+    expect(snapshot.lightRelativePercent, isNull);
+    expect(snapshot.waterRelativePercent, isNull);
+    expect(snapshot.waterObservationPercent, isNull);
   });
 
   test('observed water scale stays separate from control water percent', () {
@@ -163,26 +181,40 @@ void main() {
     expect(wrongMode.pumpRulePreview, isNull);
   });
 
-  test('demonstration scenarios produce distinct expressions', () {
-    expect(PlantState.demo(DemoScenario.content).mood, PlantMood.content);
-    expect(PlantState.demo(DemoScenario.thirsty).mood, PlantMood.thirsty);
-    expect(PlantState.demo(DemoScenario.airConcern).mood, PlantMood.airConcern);
+  test('diagnostic soil preview follows the known firmware version', () {
+    SerialSensorSnapshot sample(int version) => SerialSensorSnapshot.parse('''
+      {"type":"sample","firmware_version":$version,
+       "adc":{"soil_raw":1000,"soil_status":"unverified","soil_relative_percent":45,
+              "status":"unverified"},
+       "control_preview":{"mode":"diagnostic_only","basis":"relative_unverified",
+                          "pump_on":false}}
+    ''');
+    final v15 = sample(15);
+    expect(v15.pumpRuleThreshold, 40);
+    expect(v15.pumpRulePreview, isFalse);
+    expect(PlantState.fromSerial(v15).pumpRuleThreshold, 40);
+    expect(sample(16).pumpRuleThreshold, 40);
+    expect(sample(16).pumpRulePreview, isFalse);
+    // The same preview contradicts the old 50% rule and must be discarded.
+    expect(sample(14).pumpRulePreview, isNull);
+    expect(sample(17).pumpRuleThreshold, isNull);
+    expect(sample(17).pumpRulePreview, isNull);
   });
 
-  test('low water and dry soil take priority over simulated air changes', () {
+  test('low water and dry soil take priority over air changes', () {
     const state = PlantState(
-      isDemo: true,
+      isLive: true,
       soilPercent: 29,
       waterPercent: 50,
       airChanged: true,
     );
     expect(state.mood, PlantMood.thirsty);
     expect(
-      const PlantState(isDemo: true, soilPercent: 30, waterPercent: 20).mood,
+      const PlantState(isLive: true, soilPercent: 30, waterPercent: 20).mood,
       PlantMood.content,
     );
     expect(
-      const PlantState(isDemo: true, soilPercent: 50, waterPercent: 19).mood,
+      const PlantState(isLive: true, soilPercent: 50, waterPercent: 19).mood,
       PlantMood.thirsty,
     );
   });
@@ -197,7 +229,6 @@ void main() {
         lightPercent: 40,
       ),
     );
-    expect(state.isDemo, isFalse);
     expect(state.isLive, isTrue);
     expect(state.mood, PlantMood.thirsty);
     expect(state.explanation, isNot(contains('Contoh')));

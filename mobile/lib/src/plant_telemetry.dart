@@ -56,10 +56,13 @@ class SerialSensorSnapshot {
     this.mqDigital,
     this.mqAdcStatus,
     this.pumpRulePreview,
+    this.pumpRuleThreshold,
     this.lightRulePreview,
     this.waterLowPreview,
     this.pumpCommand,
+    this.pumpReason,
     this.lightCommand,
+    this.lightReason,
     this.lightingCandidate,
   });
 
@@ -74,7 +77,8 @@ class SerialSensorSnapshot {
   final int? waterAdc;
   final int? waterRelativePercent;
 
-  /// Display-only low-to-near-full scale, not the pump's water percentage.
+  /// Unverified low-to-near-full display field; firmware versions may use the
+  /// same references for control. It is not a measured tank volume.
   final int? waterObservationPercent;
   final int? mqAdc;
   final int? mqDigital;
@@ -82,12 +86,15 @@ class SerialSensorSnapshot {
 
   /// Offline diagnostic calculations, not commands or relay/contact states.
   final bool? pumpRulePreview;
+  final int? pumpRuleThreshold;
   final bool? lightRulePreview;
   final bool? waterLowPreview;
 
   /// Requested GPIO commands, not measured relay/contact states.
   final bool? pumpCommand;
+  final String? pumpReason;
   final bool? lightCommand;
+  final String? lightReason;
 
   /// Diagnostic decision only; never a command or a physical relay state.
   final String? lightingCandidate;
@@ -144,19 +151,31 @@ class SerialSensorSnapshot {
     final waterRaw = readable(water['status'])
         ? integer(water['adc_raw'], 0, 4095)
         : null;
-    final soilPercent = soil == null
+    // Keep rail values as raw diagnostics, but do not present an ambiguous
+    // disconnected/saturated input as a calibrated-looking percentage.
+    bool usableAdc(int? raw) => raw != null && raw > 0 && raw < 4095;
+    final soilPercent = !usableAdc(soil)
         ? null
         : integer(adc['soil_relative_percent'], 0, 100);
-    final lightPercent = light == null
+    final lightPercent = !usableAdc(light)
         ? null
         : integer(adc['light_relative_percent'], 0, 100);
-    final waterPercent = waterRaw == null
+    final waterPercent = !usableAdc(waterRaw)
         ? null
         : integer(water['relative_percent'], 0, 100);
-    bool? preview(String key, int? percent, int threshold) {
+    // Historical snapshots used 50%; v15/v16 use 40%. Unknown future versions
+    // must not be interpreted using a guessed threshold.
+    final version = integer(decoded['firmware_version'], 0, 0xffffffff);
+    final int? pumpThreshold = version == null || version <= 14
+        ? 50
+        : version == 15 || version == 16
+        ? 40
+        : null;
+    bool? preview(String key, int? percent, int? threshold) {
       if (controlPreview['mode'] != 'diagnostic_only' ||
           controlPreview['basis'] != 'relative_unverified' ||
-          percent == null) {
+          percent == null ||
+          threshold == null) {
         return null;
       }
       final value = controlPreview[key];
@@ -179,7 +198,7 @@ class SerialSensorSnapshot {
       waterAdc: waterRaw,
       waterRelativePercent: waterPercent,
       waterObservationPercent:
-          waterRaw != null &&
+          usableAdc(waterRaw) &&
               const {
                 'operator_reported_window_means',
                 'generic_display_references',
@@ -197,14 +216,49 @@ class SerialSensorSnapshot {
       mqAdcStatus: mq['adc_status'] == 'adc_read_failed'
           ? 'adc_read_failed'
           : null,
-      pumpRulePreview: preview('pump_on', soilPercent, 50),
+      pumpRulePreview: preview('pump_on', soilPercent, pumpThreshold),
+      pumpRuleThreshold: pumpThreshold,
       lightRulePreview: preview('growlight_on', lightPercent, 60),
       waterLowPreview: preview('water_low', waterPercent, 20),
       pumpCommand: decoded['pump_cmd'] is bool
           ? decoded['pump_cmd'] as bool
           : null,
+      pumpReason:
+          decoded['pump_cmd'] is bool &&
+              const {
+                'boot_grace',
+                'soil_not_dry',
+                'soil_moist',
+                'soil_dry',
+                'watering',
+                'cooldown',
+                'water_low',
+                'water_unavailable',
+                'soil_unverified',
+                'soil_unavailable',
+                'watchdog_unavailable',
+                'sample_stale',
+                'runtime_limit',
+              }.contains(decoded['pump_reason'])
+          ? decoded['pump_reason'] as String
+          : null,
       lightCommand: decoded['growlight_cmd'] is bool
           ? decoded['growlight_cmd'] as bool
+          : null,
+      lightReason:
+          decoded['growlight_cmd'] is bool &&
+              const {
+                'boot_grace',
+                'light_low',
+                'light_sufficient',
+                'light_input_unavailable',
+                'light_inhibited',
+                'minimum_hold',
+                'hysteresis',
+                'watchdog_unavailable',
+                'sample_stale',
+              }.contains(decoded['growlight_reason'])
+          ? decoded['growlight_reason'] as String
           : null,
       lightingCandidate:
           lightingRule['status'] == 'diagnostic_only_unverified' &&

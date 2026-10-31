@@ -39,7 +39,9 @@ void main() {
       channel,
       (_) async => {'version': '0.2.0', 'build': 2, 'channel': 'production'},
     );
-    await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.pumpWidget(
+      const MossApp(render3d: false, autoConnectLocal: false),
+    );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
@@ -61,7 +63,9 @@ void main() {
       channel,
       (_) async => {'version': '0.2.0', 'build': 18, 'channel': 'beta'},
     );
-    await tester.pumpWidget(const MossApp(render3d: false));
+    await tester.pumpWidget(
+      const MossApp(render3d: false, autoConnectLocal: false),
+    );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(

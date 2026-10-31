@@ -15,7 +15,6 @@ import 'moss_gaze.dart';
 import 'moss_sky.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
-import 'synthetic_xgboost.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({
@@ -26,9 +25,8 @@ class Dashboard extends StatefulWidget {
     this.telemetry,
     this.initialSerialJson = '',
     this.cloudSettings,
-    this.cloudSetupNotice,
     this.localWifi,
-    this.modelAssetLoader,
+    this.autoConnectLocal = true,
     required this.appearance,
     required this.sky,
     required this.storageUnavailable,
@@ -43,9 +41,8 @@ class Dashboard extends StatefulWidget {
   final Stream<PlantTelemetry>? telemetry;
   final String initialSerialJson;
   final Widget? cloudSettings;
-  final String? cloudSetupNotice;
   final LocalWifiController? localWifi;
-  final Future<String> Function()? modelAssetLoader;
+  final bool autoConnectLocal;
   final AppearanceSettings appearance;
   final SkyAppearance sky;
   final bool storageUnavailable;
@@ -61,12 +58,10 @@ class _DashboardState extends State<Dashboard> {
   static const _readingMaxAge = Duration(minutes: 2);
 
   var _page = 0;
-  var _demo = true;
-  var _scenario = DemoScenario.content;
   var _liveState = const PlantState.waiting();
   PlantState? _serialSnapshot;
   String? _serialMessage;
-  var _sourceNotice = 'Perangkat dan cloud belum terhubung.';
+  var _sourceNotice = 'Menunggu data sensor.';
   DateTime? _lastRecordedAt;
   int? _lastSequence;
   StreamSubscription<PlantTelemetry>? _subscription;
@@ -75,17 +70,13 @@ class _DashboardState extends State<Dashboard> {
   late bool _ownsLocalWifi;
   StreamSubscription<void>? _localWifiChanges;
   bool _useLocalWifi = false;
-  SyntheticXgboostModel? _syntheticModel;
-  bool _modelLoadFinished = false;
 
   @override
   void initState() {
     super.initState();
     _attachLocalWifi(widget.localWifi);
-    unawaited(_loadSyntheticModel());
     _listenToTelemetry();
     if (widget.initialSerialJson.isNotEmpty) {
-      _demo = false;
       try {
         _serialSnapshot = PlantState.fromSerial(
           SerialSensorSnapshot.parse(widget.initialSerialJson),
@@ -93,6 +84,11 @@ class _DashboardState extends State<Dashboard> {
       } catch (_) {
         _sourceNotice = 'Snapshot serial tidak valid; menunggu sumber data.';
       }
+    } else if (widget.autoConnectLocal) {
+      _useLocalWifi = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _useLocalWifi) unawaited(_localWifi.connect());
+      });
     }
   }
 
@@ -119,45 +115,10 @@ class _DashboardState extends State<Dashboard> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _loadSyntheticModel() async {
-    SyntheticXgboostModel? model;
-    try {
-      final json =
-          await (widget.modelAssetLoader?.call() ??
-              rootBundle.loadString('assets/ml/pattern-models.json'));
-      model = SyntheticXgboostModel.parse(json);
-    } catch (_) {
-      // Missing or malformed models are never replaced with a fabricated result.
-    }
-    if (!mounted) return;
-    setState(() {
-      _syntheticModel = model;
-      _modelLoadFinished = true;
-    });
-  }
-
-  SyntheticPrediction? _predictLocal(SerialSensorSnapshot? sample) {
-    if (sample == null || _syntheticModel == null) return null;
-    bool nonRail(int? raw) => raw != null && raw > 0 && raw < 4095;
-    if (!nonRail(sample.soilAdc) ||
-        !nonRail(sample.waterAdc) ||
-        !nonRail(sample.lightAdc)) {
-      return null;
-    }
-    return _syntheticModel!.predict(
-      soilPercent: sample.soilRelativePercent,
-      waterObservationPercent: sample.waterObservationPercent,
-      lightPercent: sample.lightRelativePercent,
-      // The real device currently emits raw UV ADC, not a calibrated index.
-      uvIndex: null,
-    );
-  }
-
   void _connectLocalWifi() {
     setState(() {
       _useLocalWifi = true;
       _serialSnapshot = null;
-      _demo = false;
     });
     unawaited(_localWifi.connect());
   }
@@ -177,7 +138,7 @@ class _DashboardState extends State<Dashboard> {
     _liveState = const PlantState.waiting();
     final source = widget.telemetry;
     _sourceNotice = source == null
-        ? 'Perangkat dan cloud belum terhubung.'
+        ? 'Menunggu data sensor.'
         : 'Menunggu pembacaan sensor.';
     if (source == null) return;
     _subscription = source.listen(
@@ -258,7 +219,6 @@ class _DashboardState extends State<Dashboard> {
         _useLocalWifi = false;
         _serialSnapshot = PlantState.fromSerial(snapshot);
         _serialMessage = null;
-        _demo = false;
         _page = 0;
       });
     } catch (_) {
@@ -289,22 +249,16 @@ class _DashboardState extends State<Dashboard> {
   @override
   Widget build(BuildContext context) {
     final localSample = _localWifi.snapshot;
-    final state = _demo
-        ? PlantState.demo(_scenario)
-        : _useLocalWifi
+    final state = _useLocalWifi
         ? (localSample == null
               ? const PlantState.waiting()
-              : PlantState.fromLocalWifi(
-                  localSample,
-                  syntheticPrediction: _predictLocal(localSample),
-                ))
+              : PlantState.fromLocalWifi(localSample))
         : (_serialSnapshot ?? _liveState);
     return Scaffold(
       body: SafeArea(
         child: switch (_page) {
           0 => _Home(
             state: state,
-            scenario: _scenario,
             render3d: widget.render3d,
             gaze: widget.gaze,
             atmosphere: widget.atmosphere,
@@ -313,21 +267,16 @@ class _DashboardState extends State<Dashboard> {
                 : _useLocalWifi
                 ? _localWifi.message
                 : _sourceNotice,
-            modelAvailable: _syntheticModel != null,
-            modelLoadFinished: _modelLoadFinished,
+            localSelected: _useLocalWifi,
+            localStatus: _localWifi.status,
             sky: widget.sky,
             automaticSky: widget.appearance.sky == SkyChoice.automatic,
             selectedSky: widget.appearance.sky,
             onSkyChanged: widget.onSkyChanged,
-            onScenario: (value) => setState(() => _scenario = value),
-            onDemoChanged: () => setState(() => _demo = !_demo),
           ),
-          1 => JournalPage(demo: _demo, scenario: _scenario),
+          1 => const JournalPage(),
           2 => DevicesPage(state: state),
           _ => _SettingsPage(
-            demo: _demo,
-            onDemoChanged: () => setState(() => _demo = !_demo),
-            sourceNotice: widget.cloudSetupNotice ?? _sourceNotice,
             cloudSettings: widget.cloudSettings,
             serialMessage: _serialMessage,
             hasSerialSnapshot: _serialSnapshot != null,
@@ -379,15 +328,12 @@ class _DashboardState extends State<Dashboard> {
 class _Home extends StatelessWidget {
   const _Home({
     required this.state,
-    required this.scenario,
     required this.render3d,
     required this.gaze,
     required this.atmosphere,
     required this.sourceNotice,
-    required this.modelAvailable,
-    required this.modelLoadFinished,
-    required this.onScenario,
-    required this.onDemoChanged,
+    required this.localSelected,
+    required this.localStatus,
     required this.sky,
     required this.automaticSky,
     required this.selectedSky,
@@ -395,15 +341,12 @@ class _Home extends StatelessWidget {
   });
 
   final PlantState state;
-  final DemoScenario scenario;
   final bool render3d;
   final MossGaze gaze;
   final MossAtmosphere atmosphere;
   final String sourceNotice;
-  final bool modelAvailable;
-  final bool modelLoadFinished;
-  final ValueChanged<DemoScenario> onScenario;
-  final VoidCallback onDemoChanged;
+  final bool localSelected;
+  final LocalWifiStatus localStatus;
   final SkyAppearance sky;
   final bool automaticSky;
   final SkyChoice selectedSky;
@@ -462,9 +405,12 @@ class _Home extends StatelessWidget {
                     ),
                   ),
                   _StatusPill(
-                    demo: state.isDemo,
                     live: state.isLive,
                     snapshot: state.isSerialSnapshot,
+                    connecting:
+                        localSelected &&
+                        (localStatus == LocalWifiStatus.connecting ||
+                            localStatus == LocalWifiStatus.waiting),
                   ),
                 ],
               ),
@@ -600,46 +546,7 @@ class _Home extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              _Notice(
-                demo: state.isDemo,
-                live: state.isLive,
-                sourceNotice: sourceNotice,
-                onToggle: onDemoChanged,
-              ),
-              if (state.isDemo) ...[
-                const SizedBox(height: 20),
-                Text(
-                  'COBA KONDISI MOSS',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.4,
-                    color: mutedColor,
-                  ),
-                ),
-                const SizedBox(height: 9),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    _ScenarioChip(
-                      label: 'Nyaman',
-                      selected: scenario == DemoScenario.content,
-                      onTap: () => onScenario(DemoScenario.content),
-                    ),
-                    _ScenarioChip(
-                      label: 'Butuh air',
-                      selected: scenario == DemoScenario.thirsty,
-                      onTap: () => onScenario(DemoScenario.thirsty),
-                    ),
-                    _ScenarioChip(
-                      label: 'Udara berubah',
-                      selected: scenario == DemoScenario.airConcern,
-                      onTap: () => onScenario(DemoScenario.airConcern),
-                    ),
-                  ],
-                ),
-              ],
+              _Notice(live: state.isLive, sourceNotice: sourceNotice),
               const SizedBox(height: 25),
               Row(
                 children: [
@@ -654,9 +561,7 @@ class _Home extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    state.isDemo
-                        ? 'CONTOH DATA'
-                        : state.isLive
+                    state.isLive
                         ? 'DATA SENSOR'
                         : state.isSerialSnapshot
                         ? 'DATA SERIAL'
@@ -698,9 +603,7 @@ class _Home extends StatelessWidget {
                               ? _percent(state.soilPercent)
                               : '—',
                           detail: state.soilPercent != null
-                              ? state.isDemo
-                                    ? 'Kondisi tanah'
-                                    : state.soilAdc != null
+                              ? state.soilAdc != null
                                     ? 'ADC ${state.soilAdc} · perkiraan'
                                     : 'Skala belum diverifikasi'
                               : state.soilAdc != null
@@ -719,9 +622,7 @@ class _Home extends StatelessWidget {
                               : state.waterObservationPercent != null
                               ? '~${_percent(state.waterObservationPercent)}'
                               : '—',
-                          detail: state.isDemo
-                              ? 'Level simulasi'
-                              : state.waterPercent != null
+                          detail: state.waterPercent != null
                               ? 'ADC ${state.waterAdc} · belum diverifikasi'
                               : state.waterObservationPercent != null
                               ? 'Rendah–hampir penuh · perkiraan'
@@ -753,12 +654,10 @@ class _Home extends StatelessWidget {
                           value: state.lightPercent != null
                               ? _percent(state.lightPercent)
                               : '—',
-                          detail: state.isDemo
-                              ? 'Intensitas contoh'
-                              : state.lightAdc != null
+                          detail: state.lightAdc != null
                               ? state.lightPercent != null
                                     ? 'ADC ${state.lightAdc} · perkiraan'
-                                    : 'ADC mentah'
+                                    : 'ADC ${state.lightAdc} · belum dapat diestimasi'
                               : state.lightPercent != null
                               ? 'Skala belum diverifikasi'
                               : 'Menunggu sensor',
@@ -782,8 +681,6 @@ class _Home extends StatelessWidget {
                               ? 'ADC ${state.uvAdc} · bukan indeks UV'
                               : state.uvIndex == null
                               ? 'Menunggu data sensor'
-                              : state.isDemo
-                              ? 'Contoh, bukan sensor'
                               : 'Belum diverifikasi',
                           color: const Color(0xFF967144),
                         ),
@@ -794,30 +691,6 @@ class _Home extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               _AirRow(state: state),
-              const SizedBox(height: 10),
-              _SyntheticMlCard(
-                state: state,
-                modelAvailable: modelAvailable,
-                modelLoadFinished: modelLoadFinished,
-              ),
-              const SizedBox(height: 23),
-              const Text(
-                'Perangkat',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.4,
-                ),
-              ),
-              const SizedBox(height: 12),
-              const _ControlNotice(),
-              const SizedBox(height: 22),
-              Text(
-                state.syntheticPrediction == null
-                    ? 'Ekspresi Moss menggunakan aturan sederhana, bukan hasil model machine learning.'
-                    : 'Ekspresi Moss mengikuti model sintetis; bukan diagnosis tanaman.',
-                style: TextStyle(color: mutedColor, fontSize: 11, height: 1.45),
-              ),
             ],
           ),
         ),
@@ -828,47 +701,39 @@ class _Home extends StatelessWidget {
 
 class _StatusPill extends StatelessWidget {
   const _StatusPill({
-    required this.demo,
     required this.live,
     required this.snapshot,
+    required this.connecting,
   });
-  final bool demo;
   final bool live;
   final bool snapshot;
+  final bool connecting;
 
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
     decoration: BoxDecoration(
-      color: demo
-          ? const Color(0xFFF0E6CF)
-          : live
-          ? const Color(0xFFDDE9DA)
-          : const Color(0xFFE9EAE4),
+      color: live ? const Color(0xFFDDE9DA) : const Color(0xFFE9EAE4),
       borderRadius: BorderRadius.circular(30),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          demo
-              ? Icons.science_outlined
-              : live
-              ? Icons.sensors_rounded
-              : Icons.cloud_off_outlined,
+          live ? Icons.sensors_rounded : Icons.cloud_off_outlined,
           size: 14,
-          color: demo ? const Color(0xFF8B6937) : (live ? forest : muted),
+          color: live ? forest : muted,
         ),
         const SizedBox(width: 5),
         Text(
-          demo
-              ? 'SIMULASI'
-              : (live ? 'SENSOR' : (snapshot ? 'SERIAL' : 'OFFLINE')),
+          live
+              ? 'SENSOR'
+              : (snapshot ? 'SERIAL' : (connecting ? 'MENYAMBUNG' : 'OFFLINE')),
           style: TextStyle(
             fontSize: 10,
             letterSpacing: 0.7,
             fontWeight: FontWeight.w800,
-            color: demo ? const Color(0xFF8B6937) : (live ? forest : muted),
+            color: live ? forest : muted,
           ),
         ),
       ],
@@ -877,16 +742,9 @@ class _StatusPill extends StatelessWidget {
 }
 
 class _Notice extends StatelessWidget {
-  const _Notice({
-    required this.demo,
-    required this.live,
-    required this.sourceNotice,
-    required this.onToggle,
-  });
-  final bool demo;
+  const _Notice({required this.live, required this.sourceNotice});
   final bool live;
   final String sourceNotice;
-  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -899,54 +757,19 @@ class _Notice extends StatelessWidget {
     child: Row(
       children: [
         Icon(
-          demo
-              ? Icons.science_outlined
-              : live
-              ? Icons.sensors_rounded
-              : Icons.wifi_off_rounded,
+          live ? Icons.sensors_rounded : Icons.wifi_off_rounded,
           size: 19,
           color: context.mossColors.primary,
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            demo ? 'Simulasi — bukan data sensor.' : sourceNotice,
+            sourceNotice,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
-        TextButton(onPressed: onToggle, child: Text(demo ? 'Tutup' : 'Demo')),
       ],
     ),
-  );
-}
-
-class _ScenarioChip extends StatelessWidget {
-  const _ScenarioChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => ChoiceChip(
-    label: Text(label),
-    selected: selected,
-    onSelected: (_) => onTap(),
-    showCheckmark: false,
-    selectedColor: context.mossColors.primaryContainer,
-    backgroundColor: context.mossColors.surfaceContainerLowest,
-    labelStyle: TextStyle(
-      color: selected
-          ? context.mossColors.onPrimaryContainer
-          : context.mossColors.onSurface,
-      fontSize: 12,
-      fontWeight: FontWeight.w600,
-    ),
-    side: BorderSide(color: context.mossColors.outlineVariant),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
   );
 }
 
@@ -1037,9 +860,7 @@ class _AirRow extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                state.isDemo
-                    ? 'Kondisi contoh, bukan pembacaan CO₂'
-                    : state.mqAdcStatus == 'adc_read_failed'
+                state.mqAdcStatus == 'adc_read_failed'
                     ? 'Analog gagal · digital ${state.mqDigital ?? '—'}'
                     : state.mqAdc != null
                     ? 'ADC ${state.mqAdc} · bukan kualitas udara'
@@ -1055,9 +876,7 @@ class _AirRow extends StatelessWidget {
           ),
         ),
         Text(
-          state.isDemo
-              ? (state.airChanged ? 'BERUBAH' : 'STABIL')
-              : state.mqAdcPercent != null
+          state.mqAdcPercent != null
               ? '~${state.mqAdcPercent}% ADC'
               : state.mqDigital != null
               ? 'D ${state.mqDigital}'
@@ -1073,121 +892,8 @@ class _AirRow extends StatelessWidget {
   );
 }
 
-class _SyntheticMlCard extends StatelessWidget {
-  const _SyntheticMlCard({
-    required this.state,
-    required this.modelAvailable,
-    required this.modelLoadFinished,
-  });
-
-  final PlantState state;
-  final bool modelAvailable;
-  final bool modelLoadFinished;
-
-  @override
-  Widget build(BuildContext context) {
-    final prediction = state.syntheticPrediction;
-    final description = !modelLoadFinished
-        ? 'Menyiapkan model.'
-        : !modelAvailable
-        ? 'Model tidak tersedia.'
-        : !state.isLocalLive
-        ? 'Hubungkan sensor melalui Wi-Fi lokal untuk menjalankan model.'
-        : prediction == null
-        ? 'Menunggu data tanah, air, dan cahaya yang dapat dibaca.'
-        : 'Pola: ${state.moodMessage}';
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: context.mossColors.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: context.mossColors.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'ML XGBoost · sintetis',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 5),
-          Text(description, style: const TextStyle(fontSize: 12)),
-          if (prediction != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Skor model sintetis ${(prediction.score * 100).round()}% · bukan akurasi sensor',
-              style: TextStyle(
-                color: context.mossColors.onSurfaceVariant,
-                fontSize: 11,
-              ),
-            ),
-          ],
-          const SizedBox(height: 5),
-          Text(
-            'Dilatih dengan data buatan dan aturan; bukan diagnosis tanaman atau kendali relay. UV nyata belum terkalibrasi.',
-            style: TextStyle(
-              color: context.mossColors.onSurfaceVariant,
-              fontSize: 11,
-              height: 1.35,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ControlNotice extends StatelessWidget {
-  const _ControlNotice();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: context.mossColors.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(17),
-    ),
-    child: Row(
-      children: [
-        Icon(
-          Icons.power_settings_new_rounded,
-          color: context.mossColors.onSurfaceVariant,
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Pompa & lampu',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Kendali nyata belum tersedia.',
-                style: TextStyle(
-                  color: context.mossColors.onSurfaceVariant,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Icon(
-          Icons.lock_outline_rounded,
-          size: 18,
-          color: context.mossColors.onSurfaceVariant,
-        ),
-      ],
-    ),
-  );
-}
-
 class _SettingsPage extends StatelessWidget {
   const _SettingsPage({
-    required this.demo,
-    required this.onDemoChanged,
-    required this.sourceNotice,
     required this.cloudSettings,
     required this.serialMessage,
     required this.hasSerialSnapshot,
@@ -1204,9 +910,6 @@ class _SettingsPage extends StatelessWidget {
     required this.onSkyChanged,
     required this.onManualTimeChanged,
   });
-  final bool demo;
-  final VoidCallback onDemoChanged;
-  final String sourceNotice;
   final Widget? cloudSettings;
   final String? serialMessage;
   final bool hasSerialSnapshot;
@@ -1246,20 +949,6 @@ class _SettingsPage extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 24),
-      SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text(
-          'Mode simulasi',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text(
-          'Coba ekspresi Moss tanpa perangkat.',
-          style: TextStyle(color: context.mossColors.onSurfaceVariant),
-        ),
-        value: demo,
-        onChanged: (_) => onDemoChanged(),
-      ),
-      const Divider(height: 32),
       AppearancePanel(
         settings: appearance,
         storageUnavailable: storageUnavailable,
@@ -1268,12 +957,7 @@ class _SettingsPage extends StatelessWidget {
         onManualTimeChanged: onManualTimeChanged,
       ),
       const Divider(height: 32),
-      cloudSettings ??
-          _SettingLine(
-            icon: Icons.cloud_outlined,
-            title: 'Koneksi cloud',
-            body: sourceNotice,
-          ),
+      ?cloudSettings,
       const Text(
         'Wi-Fi lokal ESP32',
         style: TextStyle(fontWeight: FontWeight.w700),
@@ -1328,67 +1012,6 @@ class _SettingsPage extends StatelessWidget {
         Text(serialMessage!, style: const TextStyle(fontSize: 12)),
       const Divider(height: 32),
       const AppVersionPanel(),
-      const _SettingLine(
-        icon: Icons.sensors_outlined,
-        title: 'Sensor tambahan',
-        body: 'Impor serial menampilkan ADC air dan MQ mentah, bukan hasil terkalibrasi.',
-      ),
-      const _SettingLine(
-        icon: Icons.notifications_none_rounded,
-        title: 'Notifikasi',
-        body: 'Notifikasi nyata belum dikonfigurasi.',
-      ),
-      const _SettingLine(
-        icon: Icons.psychology_outlined,
-        title: 'Ekspresi Moss',
-        body: 'Prediksi ML: N/A. Ekspresi menggunakan aturan sederhana, bukan model terlatih.',
-      ),
     ],
-  );
-}
-
-class _SettingLine extends StatelessWidget {
-  const _SettingLine({
-    required this.icon,
-    required this.title,
-    required this.body,
-  });
-  final IconData icon;
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 22),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: context.mossColors.primary, size: 21),
-        const SizedBox(width: 13),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                body,
-                style: TextStyle(
-                  color: context.mossColors.onSurfaceVariant,
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
   );
 }

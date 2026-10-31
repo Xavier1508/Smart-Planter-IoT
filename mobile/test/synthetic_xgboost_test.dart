@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/plant_state.dart';
 import 'package:smart_planter/src/plant_telemetry.dart';
@@ -12,7 +11,7 @@ void main() {
   late SyntheticXgboostModel model;
 
   setUpAll(() async {
-    final asset = await rootBundle.loadString('assets/ml/pattern-models.json');
+    final asset = await File('assets/ml/pattern-models.json').readAsString();
     model = SyntheticXgboostModel.parse(asset);
   });
 
@@ -98,13 +97,10 @@ void main() {
        "soil_relative_percent":44,"light_raw":2000,"light_relative_percent":51,
        "uv_raw":0,"status":"unverified"},"pump_cmd":false,"growlight_cmd":false}
     ''');
-      final state = PlantState.fromLocalWifi(
-        sample,
-        syntheticPrediction: predict(20, 80, 90, null),
-      );
-      expect(state.moodLabel, 'Pola sintetis');
-      expect(state.moodMessage, 'Pola tanah relatif rendah.');
-      expect(state.explanation, contains('bukan diagnosis'));
+      // The experimental model remains testable but is not shown as live data.
+      final state = PlantState.fromLocalWifi(sample);
+      expect(state.moodLabel, 'Tanah terpantau');
+      expect(state.explanation, contains('belum diverifikasi'));
       expect(state.pumpCommand, isFalse);
       expect(state.lightCommand, isFalse);
       expect(state.uvIndex, isNull);
