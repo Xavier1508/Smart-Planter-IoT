@@ -6,10 +6,11 @@ bukan bergabung ke router. Setelah ponsel bergabung ke `Moss-xxxx` dan memilih
 tetap terhubung tanpa internet, aplikasi mencoba terhubung secara otomatis saat
 dibuka. Jika koneksi putus, aplikasi mencoba kembali secara otomatis; tombol
 hubung ulang juga tersedia di Pengaturan.
-Nilai lama dihapus saat data tidak lagi tersedia. Tidak diperlukan Tailscale
-atau kata sandi router. Stream hanya baca; siapa pun yang mengetahui sandi
-jaringan dapat membaca data, karena tidak ada autentikasi tambahan pada
-protokol aplikasi.
+Nilai lama tetap ditampilkan sebagai data terakhir saat koneksi sementara
+terputus, dengan status yang jelas; data baru menggantikannya setelah stream
+pulih. Tidak diperlukan Tailscale atau kata sandi router. Stream hanya baca;
+siapa pun yang mengetahui sandi jaringan dapat membaca data, karena tidak ada
+autentikasi tambahan pada protokol aplikasi.
 
 Firmware v13 menampilkan sandi acak 10 karakter pada LCD selama kurang lebih
 satu menit setelah boot, lalu selama 30 detik dalam setiap siklus tampilan.
@@ -38,10 +39,9 @@ Saat pompa menyala, bacaan sensor air ikut turun karena beban pompa, jadi air
 rendah harus bertahan **6 sampel (30 detik)** sebelum pompa yang sedang berjalan
 dihentikan. Saat pompa mati, satu sampel air rendah langsung memblokir start
 berikutnya. ADC 4095 atau data tidak tersedia menghalangi ON. Tanah kering
-terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan 1200 ≈ 67%. Air memakai rentang
-**826 (rendah) sampai 1150 (penuh)**; indikator Full dimulai pada 50% rentang
-karena pin atas sudah terendam di sekitar 1000. Semua input ADC memakai median
-5 sampel.
+terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan 1200 ≈ 67%. Air memakai bucket
+raw **≤450 EMPTY, ≤800 LOW, 801–1099 MEDIUM, ≥1100 FULL**; pompa tetap memakai
+cutoff raw 600. Semua input ADC memakai median 5 sampel.
 
 Firmware v25 menambahkan **relay staging**: jika pompa dan lampu harus ON
 bersamaan, pompa ON lebih dulu dan lampu menyusul **150 milidetik** kemudian.
@@ -58,32 +58,35 @@ password acak 10 karakter, bukan mematikan AP. Status AP dicetak ke serial.
 Aplikasi 0.4.1 menambahkan notifikasi HP untuk air rendah dan ringkasan prediksi
 setiap 3 jam, plus pop-up singkat di atas layar saat koneksi terputus.
 
-Firmware v28 menambahkan status air **EMPTY** (raw ≤450), cutoff pompa raw 600,
-LCD bahasa Inggris, durasi lampu manual 1–1800 detik, jalur manual immediate,
-dan TCP/Wi-Fi no-delay. Aplikasi **Tunas 0.5.0** menambahkan kontrol segmen
-ON/OFF/AUTO yang jelas, durasi lampu menit+detik, status sensor Tersedia/Tidak
-tersedia/Tidak dapat menampilkan data, histori CSV harian permanen, ekspor CSV
-ke `Downloads/Tunas`, serta model decision tree 3 kelas dengan deteksi banjir.
+Firmware v30 memakai bucket air raw **EMPTY/LOW/MED/FULL**, flag `low` pada
+raw ≤800, dan pompa cutoff raw 600. Pindah dari manual ON ke AUTO langsung
+mengevaluasi sampel terakhir, dan client TCP setengah terbuka dibuang.
+Aplikasi **Tunas 0.6.0** menambahkan dialog durasi wajib sebelum ON, wizard
+jadwal (Sekarang atau kalender + jam + menit + detik, lalu durasi, lalu
+konfirmasi), daftar aksi berurutan dengan hitungan mundur dan pembatalan,
+eksekusi satu job per tick, histori CSV harian permanen, ekspor CSV ke
+`Downloads/Tunas`, serta model decision tree 3 kelas dengan deteksi banjir.
 CSV menyimpan semua angka sensor dan perintah untuk retraining model.
 
 Halaman **Perangkat** menyediakan kendali manual pompa/lampu lewat socket lokal
-yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; pompa OFF
-dan lampu manual bertahan sampai AUTO. Perintah memakai baris `CTRL` dan
-mendapat balasan `ack`. Jaringan tetap WPA2 lokal tanpa TLS; jangan bagikan
-password AP. Scheduler app-side aktif selama aplikasi terbuka dan socket lokal
-terhubung; jadwal yang terlewat lebih dari 2 menit dilewati.
-Interlock air, watchdog, batas waktu, jeda pompa, dan jeda lampu tetap berlaku.
+yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; lampu
+manual berakhir OFF sampai AUTO. Perintah memakai baris `CTRL` dan mendapat
+balasan `ack`. Jaringan tetap WPA2 lokal tanpa TLS; jangan bagikan password AP.
+Scheduler app-side aktif selama aplikasi terbuka dan socket lokal terhubung;
+jadwal yang terlewat lebih dari 2 menit dilewati, sedangkan aksi "Sekarang"
+menunggu koneksi berikutnya. Interlock air, watchdog, batas waktu, jeda pompa,
+dan jeda lampu tetap berlaku.
 
 Aplikasi **Tunas 0.4.0** menggantikan nama tampilan Moss. Moss tetap menjadi
 profil/karakter pertama. Sampai enam profil planter dapat didaftarkan dengan
 nama, karakter, alamat IP/host, dan port sendiri; tombol hubungkan/putuskan
 memindahkan sesi aktif. Tiga karakter memakai rig yang sama dengan palet,
 aksesori, dan tempo gerak berbeda: Moss (daun), Bara (topi), Rintik (awan).
-Emosi karakter ditentukan di ponsel dari model XGBoost sintetis yang sudah ada
-plus aturan ambang; hasilnya tiga label: Nyaman, Waspada, Perlu perhatian.
-Riwayat menampilkan grafik sesi dan 14 sampel terakhir, belum disimpan permanen.
-Firmware masih mode AP, jadi beberapa ESP32 baru bisa berada di satu jaringan
-setelah mode STA ditambahkan; alamat profil sudah bisa diedit untuk tahap itu.
+Emosi karakter ditentukan di ponsel; versi 0.6.0 memakai decision tree 3 kelas
+(healthy/warning/critical) dengan pengaman aturan ambang. Riwayat kini
+append-only CSV per perangkat, bukan hanya sesi. Firmware masih mode AP, jadi
+beberapa ESP32 baru bisa berada di satu jaringan setelah mode STA ditambahkan;
+alamat profil sudah bisa diedit untuk tahap itu.
 
 Nilai rata-rata memakai lima konversi berturutan per siklus untuk setiap input
 ADC, bukan rata-rata lima siklus. DHT dan input digital MQ tidak dirata-ratakan.

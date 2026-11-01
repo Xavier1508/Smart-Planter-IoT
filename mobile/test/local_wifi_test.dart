@@ -88,58 +88,52 @@ void main() {
     controller.dispose();
   });
 
-  test(
-    'real loopback stream receives frames and clears data on disconnect',
-    () async {
-      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-      final incoming = server.first;
-      final controller = LocalWifiController(
-        address: '127.0.0.1',
-        port: server.port,
-      );
-      final connecting = controller.connect();
-      final peer = await incoming;
-      addTearDown(() async {
-        peer.destroy();
-        controller.dispose();
-        await server.close();
-      });
-      await connecting;
-      expect(controller.status, LocalWifiStatus.waiting);
-
-      final data = sample(5000);
-      peer.add(utf8.encode(data.substring(0, 15)));
-      peer.add(utf8.encode('${data.substring(15)}\n'));
-      await waitFor(
-        controller,
-        () => controller.status == LocalWifiStatus.live,
-      );
-      expect(controller.snapshot?.soilRelativePercent, 44);
-      expect(controller.snapshot?.uvAdc, 0);
-      expect(controller.snapshot?.waterRelativePercent, isNull);
-      expect(controller.snapshot?.waterObservationPercent, 50);
-      expect(controller.snapshot?.mqAdc, isNull);
-      expect(controller.snapshot?.mqAdcStatus, 'adc_read_failed');
-      expect(controller.snapshot?.mqDigital, 1);
-      expect(controller.snapshot?.pumpCommand, isFalse);
-      expect(controller.snapshot?.lightingCandidate, 'unavailable');
-
-      // Old and new frames both update the actual displayed measurement.
-      peer.write('${sample(10000, version: 13, soil: 25)}\n');
-      await waitFor(controller, () => controller.snapshot?.uptimeMs == 10000);
-      expect(controller.snapshot?.soilRelativePercent, 25);
-      peer.write('${sample(15000, version: 16, soil: 80)}\n');
-      await waitFor(controller, () => controller.snapshot?.uptimeMs == 15000);
-      expect(controller.snapshot?.soilRelativePercent, 80);
-
+  test('real loopback stream receives frames and keeps the last sample on disconnect', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final incoming = server.first;
+    final controller = LocalWifiController(
+      address: '127.0.0.1',
+      port: server.port,
+    );
+    final connecting = controller.connect();
+    final peer = await incoming;
+    addTearDown(() async {
       peer.destroy();
-      await waitFor(
-        controller,
-        () => controller.status == LocalWifiStatus.disconnected,
-      );
-      expect(controller.snapshot, isNull);
-    },
-  );
+      controller.dispose();
+      await server.close();
+    });
+    await connecting;
+    expect(controller.status, LocalWifiStatus.waiting);
+
+    final data = sample(5000);
+    peer.add(utf8.encode(data.substring(0, 15)));
+    peer.add(utf8.encode('${data.substring(15)}\n'));
+    await waitFor(controller, () => controller.status == LocalWifiStatus.live);
+    expect(controller.snapshot?.soilRelativePercent, 44);
+    expect(controller.snapshot?.uvAdc, 0);
+    expect(controller.snapshot?.waterRelativePercent, isNull);
+    expect(controller.snapshot?.waterObservationPercent, 50);
+    expect(controller.snapshot?.mqAdc, isNull);
+    expect(controller.snapshot?.mqAdcStatus, 'adc_read_failed');
+    expect(controller.snapshot?.mqDigital, 1);
+    expect(controller.snapshot?.pumpCommand, isFalse);
+    expect(controller.snapshot?.lightingCandidate, 'unavailable');
+
+    // Old and new frames both update the actual displayed measurement.
+    peer.write('${sample(10000, version: 13, soil: 25)}\n');
+    await waitFor(controller, () => controller.snapshot?.uptimeMs == 10000);
+    expect(controller.snapshot?.soilRelativePercent, 25);
+    peer.write('${sample(15000, version: 16, soil: 80)}\n');
+    await waitFor(controller, () => controller.snapshot?.uptimeMs == 15000);
+    expect(controller.snapshot?.soilRelativePercent, 80);
+
+    peer.destroy();
+    await waitFor(
+      controller,
+      () => controller.status == LocalWifiStatus.disconnected,
+    );
+    expect(controller.snapshot?.soilRelativePercent, 80);
+  });
 
   test(
     'MQ average follows live frames and clears on rail, failure and disconnect',
@@ -291,7 +285,7 @@ void main() {
       controller,
       () => controller.status == LocalWifiStatus.disconnected,
     );
-    expect(controller.snapshot, isNull);
+    expect(controller.snapshot?.uptimeMs, 5000);
   });
 
   test(
@@ -336,7 +330,7 @@ void main() {
         controller,
         () => controller.status == LocalWifiStatus.disconnected,
       );
-      expect(controller.snapshot, isNull);
+      expect(controller.snapshot?.soilRelativePercent, 25);
 
       expect(
         await incoming.moveNext().timeout(const Duration(seconds: 3)),
@@ -378,7 +372,7 @@ void main() {
       controller,
       () => controller.status == LocalWifiStatus.disconnected,
     );
-    expect(controller.snapshot, isNull);
+    expect(controller.snapshot?.uptimeMs, 5000);
     expect(controller.message, contains('terlambat'));
   });
 

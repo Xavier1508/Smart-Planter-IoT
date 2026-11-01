@@ -15,8 +15,8 @@ class LocalWifiController {
     this.address = '192.168.4.1',
     this.port = 3333,
     this.connectTimeout = const Duration(seconds: 5),
-    this.sampleTimeout = const Duration(seconds: 20),
-    this.reconnectDelay = const Duration(seconds: 5),
+    this.sampleTimeout = const Duration(seconds: 30),
+    this.reconnectDelay = const Duration(seconds: 3),
   });
 
   final String address;
@@ -75,12 +75,18 @@ class LocalWifiController {
 
   Future<void> connect() async {
     if (_disposed) return;
+    // Pull-to-refresh and the settings button must not tear down a healthy
+    // socket. Reconnect only after an explicit disconnect or a failed link;
+    // the deadline/retry path still recovers a half-open stream.
+    if (_wanted && status != LocalWifiStatus.disconnected) return;
     _wanted = true;
     _retry?.cancel();
     _retry = null;
     final generation = ++_generation;
     _closeTransport();
-    snapshot = null;
+    // Keep the last good sample while reconnecting. The status and message
+    // still say the link is down, so the UI can mark the values as stale
+    // instead of incorrectly clearing every reading.
     status = LocalWifiStatus.connecting;
     message = 'Menghubungkan Wi-Fi lokal…';
     notifyListeners();
@@ -199,12 +205,15 @@ class LocalWifiController {
     if (_disposed || generation != _generation) return;
     final retryGeneration = ++_generation;
     _closeTransport();
-    snapshot = null;
+    // A transient timeout or peer reset must not erase the last reading. The
+    // disconnected status is enough to mark it stale; manual disconnect still
+    // clears it explicitly.
     status = LocalWifiStatus.disconnected;
     message = reason;
     notifyListeners();
     // An explicit connection selection remains active until the user stops it.
-    // Never retain a stale value while waiting for the next connection.
+    // The retained sample is marked stale by status/message, never presented
+    // as a fresh live reading.
     if (_wanted && !_disposed && _generation == retryGeneration) {
       _retry?.cancel();
       _retry = Timer(reconnectDelay, () {

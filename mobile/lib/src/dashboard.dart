@@ -83,6 +83,7 @@ class _DashboardState extends State<Dashboard> {
   bool _useLocalWifi = false;
   final ScheduleStore _scheduleStore = const ScheduleStore();
   List<ScheduleEntry> _schedules = const [];
+  List<RunningSchedule> _runningSchedules = const [];
   Timer? _scheduleTimer;
   bool _scheduleBusy = false;
   final ProfileStore _profileStore = const ProfileStore();
@@ -161,12 +162,12 @@ class _DashboardState extends State<Dashboard> {
         loaded.active.host != previous.host ||
         loaded.active.port != previous.port;
     setState(() => _profiles = loaded);
-    unawaited(_loadHistory());
     if (widget.localWifi == null && changed) {
       final wasWanted = _useLocalWifi;
       _rebindLocalWifi();
       if (wasWanted) unawaited(_localWifi.connect());
     }
+    unawaited(_loadHistory());
   }
 
   Future<void> _loadHistory() async {
@@ -176,11 +177,20 @@ class _DashboardState extends State<Dashboard> {
       limit: 240,
     );
     if (!mounted) return;
-    final points = rows
+    final stored = rows
         .map(HistoryCsv.parse)
         .whereType<HistoryPoint>()
         .toList(growable: false);
-    setState(() => _history = points);
+    // Merge instead of replacing. A slow or empty native read must never make
+    // samples that are already visible in this session disappear.
+    final merged = <String, HistoryPoint>{
+      for (final point in _history) point.at.toIso8601String(): point,
+      for (final point in stored) point.at.toIso8601String(): point,
+    }.values.toList()..sort((a, b) => a.at.compareTo(b.at));
+    final tail = merged.length > 240
+        ? merged.sublist(merged.length - 240)
+        : merged;
+    setState(() => _history = tail);
   }
 
   Future<void> _loadEmotionModel() async {
@@ -204,12 +214,19 @@ class _DashboardState extends State<Dashboard> {
     _localWifiChanges = _localWifi.changes.listen((_) => _onLocalWifiChanged());
     _history.clear();
     _lastHistoryUptime = null;
+    _runningSchedules = const [];
   }
 
   void _onLocalWifiChanged() {
     final status = _localWifi.status;
     final previousStatus = _lastNoticeStatus;
     _lastNoticeStatus = status;
+    if (status == LocalWifiStatus.live &&
+        previousStatus != LocalWifiStatus.live) {
+      // The first live frame after a reconnect is a good moment to merge any
+      // rows written while this page was not watching the stream.
+      unawaited(_loadHistory());
+    }
     if (status == LocalWifiStatus.disconnected &&
         previousStatus != LocalWifiStatus.disconnected &&
         _useLocalWifi &&
@@ -274,25 +291,29 @@ class _DashboardState extends State<Dashboard> {
       : _history.map((point) => point.state).toList();
 
   void _maybeNotifyLowWater(PlantState state, DateTime now) {
-    final water = state.waterObservationPercent ?? state.waterPercent;
-    final empty = state.waterEmpty == true;
-    final low =
-        empty || state.waterLow == true || (water != null && water < 20);
+    final level = state.waterLevel;
+    final empty = level == WaterLevel.empty;
+    final low = empty || level == WaterLevel.low || state.waterLow == true;
     if (!low) return;
     final last = _lastWaterAlertAt;
     if (last != null && now.difference(last) < const Duration(minutes: 30)) {
       return;
     }
     _lastWaterAlertAt = now;
+    final label = switch (level) {
+      WaterLevel.empty => 'kosong',
+      WaterLevel.low => 'rendah',
+      WaterLevel.medium => 'medium',
+      WaterLevel.full => 'penuh',
+      null => state.waterLow == true ? 'rendah' : 'belum terbaca',
+    };
     unawaited(
       _notifications.show(
         id: NotificationService.waterAlertId,
         title: empty ? 'Air penampung habis' : 'Air penampung hampir habis',
         body: empty
             ? 'Level air kosong. Isi ulang penampung.'
-            : water == null
-            ? 'Sensor air menandai level rendah. Isi ulang penampung.'
-            : 'Level air $water%. Isi ulang penampung.',
+            : 'Level air $label. Isi ulang penampung.',
         channel: 'tunas_alerts',
       ),
     );
@@ -341,6 +362,7 @@ class _DashboardState extends State<Dashboard> {
         (profile.host != previous.host || profile.port != previous.port)) {
       final wasWanted = _useLocalWifi;
       _rebindLocalWifi();
+      unawaited(_loadHistory());
       if (wasWanted) unawaited(_localWifi.connect());
     }
   }
@@ -354,12 +376,12 @@ class _DashboardState extends State<Dashboard> {
       _lastHistoryUptime = null;
     });
     await _profileStore.write(_profiles);
-    unawaited(_loadHistory());
     if (widget.localWifi == null) {
       final wasWanted = _useLocalWifi;
       _rebindLocalWifi();
       if (wasWanted) unawaited(_localWifi.connect());
     }
+    unawaited(_loadHistory());
   }
 
   Future<void> _deleteProfile(String id) async {
@@ -370,6 +392,7 @@ class _DashboardState extends State<Dashboard> {
     if (wasActive && widget.localWifi == null) {
       _rebindLocalWifi();
       if (_useLocalWifi) unawaited(_localWifi.connect());
+      unawaited(_loadHistory());
     }
   }
 
@@ -573,36 +596,99 @@ class _DashboardState extends State<Dashboard> {
     });
   }
 
+  List<ScheduleEntry> _orderedSchedules(Iterable<ScheduleEntry> entries) {
+    final next = List<ScheduleEntry>.of(entries)
+      ..sort((a, b) {
+        final byTime = a.at.compareTo(b.at);
+        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+      });
+    return next;
+  }
+
   Future<void> _addSchedule(ScheduleEntry entry) async {
-    final next = [..._schedules, entry]..sort((a, b) => a.at.compareTo(b.at));
+    final next = _orderedSchedules([..._schedules, entry]);
     setState(() => _schedules = next);
-    await _scheduleStore.write(next);
+    // Persisting must not delay an immediate action. The store catches its own
+    // platform errors, so the in-memory schedule stays authoritative for this
+    // session.
+    unawaited(_scheduleStore.write(next));
+    // "Sekarang" must not wait for the next one-second timer tick.
+    if (entry.immediate) await _runSchedules();
   }
 
   Future<void> _deleteSchedule(int id) async {
     final next = _schedules.where((entry) => entry.id != id).toList();
     setState(() => _schedules = next);
-    await _scheduleStore.write(next);
+    unawaited(_scheduleStore.write(next));
+  }
+
+  Future<void> _stopRunningSchedule(RunningSchedule running) async {
+    if (_scheduleBusy) return;
+    _scheduleBusy = true;
+    try {
+      final id = _controlId();
+      final command = running.entry.target == 'pump'
+          ? 'CTRL pump=off id=$id'
+          : 'CTRL light=off id=$id';
+      final sent = await _localWifi.sendControlCommand(command);
+      if (!sent || !mounted) return;
+      setState(() {
+        _runningSchedules = _runningSchedules
+            .where((item) => item.entry.id != running.entry.id)
+            .toList();
+      });
+    } finally {
+      _scheduleBusy = false;
+    }
   }
 
   Future<void> _runSchedules() async {
-    if (_scheduleBusy ||
-        !_useLocalWifi ||
-        _localWifi.status != LocalWifiStatus.live ||
-        _schedules.isEmpty) {
+    // One clock read per tick. Due-time comparison, command start and the
+    // countdown all use the same instant, so two jobs can never race each
+    // other inside one scheduler pass.
+    final now = DateTime.now();
+    final stillRunning = _runningSchedules
+        .where((running) => !running.expired(now))
+        .toList(growable: false);
+    if (stillRunning.length != _runningSchedules.length && mounted) {
+      setState(() => _runningSchedules = stillRunning);
+    }
+    if (_scheduleBusy || _schedules.isEmpty) return;
+
+    final due = _orderedSchedules(
+      _schedules.where((entry) => !entry.at.isAfter(now)),
+    );
+    if (due.isEmpty) return;
+    final entry = due.first;
+
+    // A calendar job that could not run while the phone was offline is
+    // discarded once it is clearly stale; an immediate job may wait for the
+    // next connection instead.
+    if (!entry.immediate &&
+        now.difference(entry.at) > const Duration(minutes: 2)) {
+      await _deleteSchedule(entry.id);
       return;
     }
+    if (!_useLocalWifi ||
+        _localWifi.status != LocalWifiStatus.live ||
+        _localWifi.snapshot == null) {
+      return;
+    }
+
     _scheduleBusy = true;
     try {
-      final now = DateTime.now();
-      for (final entry in List<ScheduleEntry>.of(_schedules)) {
-        if (now.isBefore(entry.at)) continue;
-        if (now.difference(entry.at) > const Duration(minutes: 2)) {
-          await _deleteSchedule(entry.id);
-          continue;
+      final sent = await _localWifi.sendControlCommand(entry.command);
+      if (!sent) return;
+      await _deleteSchedule(entry.id);
+      if (entry.on && entry.durationSeconds > 0) {
+        final running = RunningSchedule(
+          entry: entry,
+          startedAt: now,
+          endsAt: now.add(Duration(seconds: entry.durationSeconds)),
+        );
+        if (mounted) {
+          setState(() => _runningSchedules = [..._runningSchedules, running]);
         }
-        final sent = await _localWifi.sendControlCommand(entry.command);
-        if (sent) await _deleteSchedule(entry.id);
       }
     } finally {
       _scheduleBusy = false;
@@ -630,6 +716,7 @@ class _DashboardState extends State<Dashboard> {
               ? const PlantState.waiting()
               : PlantState.fromLocalWifi(
                   localSample,
+                  live: _localWifi.status == LocalWifiStatus.live,
                   mqAverageAdc: _localWifi.mqAverageAdc,
                   mqAverageSamples: _localWifi.mqAverageSamples,
                   mqTrend: _localWifi.mqTrend,
@@ -684,8 +771,10 @@ class _DashboardState extends State<Dashboard> {
             onCommand: _useLocalWifi ? _sendControl : null,
             controlId: _controlId,
             schedules: _schedules,
+            runningSchedules: _runningSchedules,
             onAddSchedule: _addSchedule,
             onDeleteSchedule: _deleteSchedule,
+            onStopRunningSchedule: _stopRunningSchedule,
           ),
           _ => _SettingsPage(
             cloudSettings: widget.cloudSettings,

@@ -13,6 +13,13 @@ class FixtureLocalWifi extends LocalWifiController {
   FixtureLocalWifi({this.waterAdc = 1200});
 
   final int? waterAdc;
+  final List<String> commands = [];
+
+  @override
+  Future<bool> sendControlCommand(String line) async {
+    commands.add(line);
+    return true;
+  }
 
   @override
   Future<void> connect() async {
@@ -140,7 +147,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('44%'), findsOneWidget);
-    expect(find.text('Medium'), findsOneWidget);
+    expect(find.text('Full'), findsOneWidget);
 
     await tester.runAsync(() async {
       peer!.write(
@@ -291,7 +298,7 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('44%'), findsOneWidget);
-      expect(find.text('Medium'), findsOneWidget);
+      expect(find.text('Full'), findsOneWidget);
       expect(find.text('ADC 1200'), findsOneWidget);
       expect(find.text('UV'), findsOneWidget);
       expect(find.text('~0%'), findsOneWidget);
@@ -343,6 +350,133 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('manual pump ON asks for duration before sending', (
+    tester,
+  ) async {
+    final wifi = FixtureLocalWifi();
+    addTearDown(wifi.dispose);
+    await tester.pumpWidget(MossApp(render3d: false, localWifi: wifi));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Perangkat'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Kendali manual'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('ON').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Durasi pompa'), findsOneWidget);
+    expect(wifi.commands, isEmpty);
+    await tester.tap(find.text('Mulai'));
+    await tester.pumpAndSettle();
+    expect(wifi.commands.single, startsWith('CTRL pump=on dur=5 id='));
+  });
+
+  testWidgets('manual AUTO is sent immediately without a duration dialog', (
+    tester,
+  ) async {
+    final wifi = FixtureLocalWifi();
+    addTearDown(wifi.dispose);
+    await tester.pumpWidget(MossApp(render3d: false, localWifi: wifi));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Perangkat'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Kendali manual'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('ON').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mulai'));
+    await tester.pumpAndSettle();
+    wifi.commands.clear();
+    await tester.tap(find.text('AUTO').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Durasi pompa'), findsNothing);
+    expect(wifi.commands.single, startsWith('CTRL pump=auto id='));
+  });
+
+  testWidgets(
+    'scheduler wizard runs an immediate job and shows its countdown',
+    (tester) async {
+      final wifi = FixtureLocalWifi();
+      addTearDown(wifi.dispose);
+      await tester.pumpWidget(MossApp(render3d: false, localWifi: wifi));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text('Perangkat'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Jadwal & aksi'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.byIcon(Icons.add_alarm_rounded).first);
+      await tester.pumpAndSettle();
+      expect(find.text('Aksi & waktu'), findsOneWidget);
+      expect(find.text('Sekarang'), findsOneWidget);
+      await tester.tap(find.text('Lanjut'));
+      await tester.pumpAndSettle();
+      expect(find.text('Atur durasi'), findsOneWidget);
+      await tester.tap(find.text('Lanjut'));
+      await tester.pumpAndSettle();
+      expect(find.text('Konfirmasi'), findsOneWidget);
+      await tester.tap(find.text('Jalankan sekarang'));
+      await tester.pumpAndSettle();
+      expect(wifi.commands.single, startsWith('CTRL pump=on dur=5 id='));
+      expect(find.textContaining('sisa'), findsOneWidget);
+    },
+  );
+
+  testWidgets('scheduler wizard exposes calendar fields on a narrow phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final wifi = FixtureLocalWifi();
+    addTearDown(wifi.dispose);
+    await tester.pumpWidget(MossApp(render3d: false, localWifi: wifi));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Perangkat'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Jadwal & aksi'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byIcon(Icons.add_alarm_rounded).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jadwalkan'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tanggal'), findsOneWidget);
+    expect(find.text('Jam & menit'), findsOneWidget);
+    expect(find.text('Detik'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('device page shows availability without raw ADC values', (
     tester,
@@ -640,11 +774,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('Cahaya'),
+      find.text('Level air'),
       180,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Tersedia'), findsWidgets);
+    expect(find.text('Full'), findsOneWidget);
     expect(find.textContaining('ADC'), findsNothing);
     expect(tester.takeException(), isNull);
   });

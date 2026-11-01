@@ -31,10 +31,13 @@
 #define MOSS_WATER_NEAR_REFERENCE_ADC 900
 #endif
 #ifndef MOSS_WATER_OBSERVED_LOW_ADC
-#define MOSS_WATER_OBSERVED_LOW_ADC 1000
+#define MOSS_WATER_OBSERVED_LOW_ADC 800
 #endif
 #ifndef MOSS_WATER_OBSERVED_NEAR_FULL_ADC
-#define MOSS_WATER_OBSERVED_NEAR_FULL_ADC 1400
+#define MOSS_WATER_OBSERVED_NEAR_FULL_ADC 1100
+#endif
+#ifndef MOSS_WATER_FULL_REFERENCE_ADC
+#define MOSS_WATER_FULL_REFERENCE_ADC 1100
 #endif
 #ifndef MOSS_SOIL_ZERO_IS_DRY
 #define MOSS_SOIL_ZERO_IS_DRY 0
@@ -43,7 +46,7 @@
 
 namespace planter {
 
-constexpr unsigned kFirmwareVersion = 28;
+constexpr unsigned kFirmwareVersion = 30;
 
 // Historical project assignments, not a verified wiring diagram.
 constexpr int kDhtPin = 4;
@@ -155,6 +158,9 @@ constexpr int kWaterFullAdc = MOSS_WATER_OBSERVED_NEAR_FULL_ADC;
 // Display-only low reference bands; these do not authorize pump operation.
 constexpr int kWaterLowRawReferenceAdc = MOSS_WATER_LOW_REFERENCE_ADC;
 constexpr int kWaterNearRawReferenceAdc = MOSS_WATER_NEAR_REFERENCE_ADC;
+// The reported near-full level starts around 1100 ADC. Values between LOW and
+// FULL are MEDIUM, so the display no longer jumps from LOW straight to FULL.
+constexpr int kWaterFullRawReferenceAdc = MOSS_WATER_FULL_REFERENCE_ADC;
 // The user observed ~400 ADC only when the level sensor was completely out of
 // water. At or below this raw value the UI reports EMPTY, distinct from LOW.
 constexpr int kWaterEmptyRawReferenceAdc = 450;

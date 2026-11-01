@@ -156,6 +156,7 @@ class RelayController {
     pumpCooldownMs_ = kPumpCooldownMs;
     dryConfirm_ = 0;
     waterLowRunningConfirm_ = 0;
+    lightHoldBypass_ = false;
     pumpReason_ = "boot_grace";
     lightReason_ = "boot_grace";
   }
@@ -214,6 +215,13 @@ class RelayController {
 
   void setPumpAuto() {
     pumpManual_ = false;
+    pumpManualOn_ = false;
+    pumpManualDurationMs_ = 0;
+    // Releasing a manual override must re-evaluate from a neutral output, not
+    // keep the pump running until the next sample or until the wet threshold.
+    pumpOn_ = false;
+    dryConfirm_ = 0;
+    waterLowRunningConfirm_ = 0;
     pumpReason_ = "manual_released";
   }
 
@@ -223,6 +231,7 @@ class RelayController {
     lightManual_ = true;
     lightManualOn_ = on;
     lightManualExpired_ = false;
+    lightHoldBypass_ = false;
     lightManualSinceMs_ = nowMs;
     lightManualDurationMs_ =
         on && durationMs > 0
@@ -237,8 +246,13 @@ class RelayController {
 
   void setLightAuto() {
     lightManual_ = false;
+    lightManualOn_ = false;
     lightManualDurationMs_ = 0;
     lightManualExpired_ = false;
+    lightHoldBypass_ = true;
+    // Let the immediate re-evaluation decide from LDR; do not keep the manual
+    // state until the next 5-second sample.
+    lightOn_ = false;
     lightReason_ = "manual_released";
   }
 
@@ -330,11 +344,15 @@ class RelayController {
     } else {
       const LightDecision decision = ldrLightDecision(input.lightPercent);
       if (decision == LightDecision::off) {
+        lightHoldBypass_ = false;
         setLight(nowMs, false, "ldr_sufficient");
       } else if (decision == LightDecision::unavailable) {
+        lightHoldBypass_ = false;
         setLight(nowMs, false, "ldr_input_unavailable");
       } else if (decision == LightDecision::on && !lightOn_) {
-        if (controlIntervalElapsed(nowMs, lightChangedMs_, kLightMinStateMs)) {
+        if (lightHoldBypass_ ||
+            controlIntervalElapsed(nowMs, lightChangedMs_, kLightMinStateMs)) {
+          lightHoldBypass_ = false;
           setLight(nowMs, true, "ldr_low");
         } else {
           lightReason_ = "minimum_hold";
@@ -401,6 +419,7 @@ class RelayController {
   bool lightManual_ = false;
   bool lightManualOn_ = false;
   bool lightManualExpired_ = false;
+  bool lightHoldBypass_ = false;
   uint32_t lightManualSinceMs_ = 0;
   uint32_t lightManualDurationMs_ = 0;
   const char* pumpReason_ = "not_initialized";

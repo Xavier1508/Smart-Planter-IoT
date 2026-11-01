@@ -147,7 +147,10 @@ Future<void> smoke({required bool oversized}) async {
         client,
         () => client.status == LocalWifiStatus.disconnected,
       );
-      check(client.snapshot == null, 'Stale sample must be removed');
+      check(
+        client.snapshot?.soilRelativePercent == 77,
+        'Stale sample must be retained',
+      );
       check(client.message.contains('terlambat'), 'Expected stale-data notice');
     }
   } finally {
@@ -183,7 +186,10 @@ Future<void> smokeReconnect() async {
     await waitFor(client, () => client.snapshot?.soilRelativePercent == 25);
     first.destroy();
     await waitFor(client, () => client.status == LocalWifiStatus.disconnected);
-    check(client.snapshot == null, 'Disconnected value must be cleared');
+    check(
+      client.snapshot?.soilRelativePercent == 25,
+      'Disconnected value must be retained',
+    );
     check(
       await incoming.moveNext().timeout(const Duration(seconds: 3)),
       'Automatic reconnect missing',

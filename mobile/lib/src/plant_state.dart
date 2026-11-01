@@ -112,6 +112,7 @@ class PlantState {
   /// reception time is not substituted for a device measurement timestamp.
   factory PlantState.fromLocalWifi(
     SerialSensorSnapshot reading, {
+    bool live = true,
     int? mqAverageAdc,
     int mqAverageSamples = 0,
     int? mqTrend,
@@ -119,8 +120,8 @@ class PlantState {
     String mqGasStatus = 'unavailable',
     int? mqGasBaselineMv,
   }) => PlantState(
-    isLive: true,
-    isLocalLive: true,
+    isLive: live,
+    isLocalLive: live,
     soilPercent: reading.soilRelativePercent,
     waterPercent: reading.waterRelativePercent,
     waterObservationPercent: reading.waterObservationPercent,
@@ -199,46 +200,21 @@ class PlantState {
   int? get uvAdcPercent => adcDisplayPercent(uvAdc);
   int? get mqAdcPercent => adcDisplayPercent(mqAdc);
 
-  /// The firmware's 100% reference is near-full, not a verified full tank.
-  /// These thresholds are provisional display buckets, never pump decisions.
+  /// Raw-ADC display buckets from the device's reported water span. The
+  /// sensor is a level strip, not a calibrated tank-volume gauge: LOW is a
+  /// warning at or below 800 ADC, MEDIUM is 801-1099, and FULL starts at 1100.
+  /// The firmware's own `low` flag stays authoritative so a flagged low tank
+  /// can never be shown as full.
   WaterLevel? get waterLevel {
     if (waterEmpty == true) return WaterLevel.empty;
-    if (!waterClassificationInputsValid ||
-        waterAdc == null ||
-        waterAdc! <= 0 ||
-        waterAdc! >= 4095) {
-      return null;
-    }
-
-    WaterLevel? band(int? percent) {
-      if (percent == null || percent < 0 || percent > 100) return null;
-      if (percent < 20) return WaterLevel.low;
-      // The top pins are already covered around half of the 826..1150 span,
-      // so Full is a coarse display bucket, not half of the tank volume.
-      if (percent < 50) return WaterLevel.medium;
-      return WaterLevel.full;
-    }
-
-    if ((waterPercent != null && band(waterPercent) == null) ||
-        (waterObservationPercent != null &&
-            band(waterObservationPercent) == null)) {
-      return null;
-    }
-    final controlBand = band(waterPercent);
-    final observationBand = band(waterObservationPercent);
-    if (controlBand != null &&
-        observationBand != null &&
-        controlBand != observationBand) {
-      return null;
-    }
-    final relativeBand = controlBand ?? observationBand;
-    if (waterLow != null &&
-        relativeBand != null &&
-        waterLow != (relativeBand == WaterLevel.low)) {
-      return null;
-    }
+    if (!waterClassificationInputsValid) return null;
+    final raw = waterAdc;
+    if (raw == null || raw <= 0 || raw >= 4095) return null;
+    if (raw <= 450) return WaterLevel.empty;
     if (waterLow == true) return WaterLevel.low;
-    return relativeBand;
+    if (raw <= 800) return WaterLevel.low;
+    if (raw < 1100) return WaterLevel.medium;
+    return WaterLevel.full;
   }
 
   bool get hasSensorData =>

@@ -28,22 +28,52 @@ void main() {
     expect(lightLong.label, contains('30:00'));
   });
 
-  test('schedule serialization keeps local time and duration', () {
-    final at = DateTime(2026, 11, 1, 7, 5, 3);
+  test(
+    'schedule serialization keeps local time, duration and immediate mode',
+    () {
+      final at = DateTime(2026, 11, 1, 7, 5, 3);
+      final entry = ScheduleEntry(
+        id: 11,
+        target: 'pump',
+        on: true,
+        at: at,
+        durationSeconds: 30,
+        immediate: true,
+      );
+      final restored = ScheduleEntry.fromMap(entry.toMap());
+      expect(restored, isNotNull);
+      expect(restored!.id, 11);
+      expect(restored.target, 'pump');
+      expect(restored.on, isTrue);
+      expect(restored.at, at);
+      expect(restored.durationSeconds, 30);
+      expect(restored.immediate, isTrue);
+      expect(restored.label, startsWith('Sekarang'));
+    },
+  );
+
+  test('running schedules expose a bounded countdown', () {
+    final start = DateTime(2026, 11, 1, 12, 0, 0);
     final entry = ScheduleEntry(
-      id: 11,
-      target: 'pump',
+      id: 12,
+      target: 'light',
       on: true,
-      at: at,
-      durationSeconds: 30,
+      at: start,
+      durationSeconds: 90,
+      immediate: true,
     );
-    final restored = ScheduleEntry.fromMap(entry.toMap());
-    expect(restored, isNotNull);
-    expect(restored!.id, 11);
-    expect(restored.target, 'pump');
-    expect(restored.on, isTrue);
-    expect(restored.at, at);
-    expect(restored.durationSeconds, 30);
+    final running = RunningSchedule(
+      entry: entry,
+      startedAt: start,
+      endsAt: start.add(const Duration(seconds: 90)),
+    );
+    expect(running.remainingSeconds(start), 90);
+    expect(
+      running.remainingSeconds(start.add(const Duration(seconds: 30))),
+      60,
+    );
+    expect(running.progress(start.add(const Duration(seconds: 45))), .5);
+    expect(running.expired(start.add(const Duration(seconds: 90))), isTrue);
   });
 
   test('invalid schedule records are rejected', () {

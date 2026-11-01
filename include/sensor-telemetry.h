@@ -127,28 +127,41 @@ inline int waterDisplayRelativePercent(int relativePercent) {
 }
 
 inline const char* waterControlBandName(int relativePercent, int rawAdc) {
-  if (!controlPercentValid(relativePercent)) return "unavailable";
-  if (controlWaterAdcUsable(rawAdc) &&
-      rawAdc <= kWaterEmptyRawReferenceAdc) {
-    return "empty";
+  if (controlWaterAdcUsable(rawAdc)) {
+    if (rawAdc <= kWaterEmptyRawReferenceAdc) return "empty";
+    if (rawAdc <= kWaterLowRawReferenceAdc) return "below_threshold";
+    return "at_or_above_threshold";
   }
+  if (!controlPercentValid(relativePercent)) return "unavailable";
   return relativePercent < kWaterLowBelowPercent ? "below_threshold"
                                                    : "at_or_above_threshold";
+}
+
+// Raw-ADC display bands. LOW is a warning only; the pump keeps its separate
+// raw cutoff, so a LOW reading does not immediately stop an active pump.
+inline const char* waterLevelBandName(int rawAdc) {
+  if (!controlWaterAdcUsable(rawAdc)) return "unavailable";
+  if (rawAdc <= kWaterEmptyRawReferenceAdc) return "empty";
+  if (rawAdc <= kWaterLowRawReferenceAdc) return "low";
+  if (rawAdc < kWaterFullRawReferenceAdc) return "medium";
+  return "full";
 }
 
 inline void formatWaterLcd(char* output, size_t capacity, int relativePercent,
                            int rawAdc) {
   if (output == nullptr || capacity == 0) return;
-  if (!controlPercentValid(relativePercent)) {
+  if (!controlWaterAdcUsable(rawAdc)) {
     std::snprintf(output, capacity, "Water:--");
-  } else if (controlWaterAdcUsable(rawAdc) &&
-             rawAdc <= kWaterEmptyRawReferenceAdc) {
+  } else if (rawAdc <= kWaterEmptyRawReferenceAdc) {
     std::snprintf(output, capacity, "Water:EMPTY");
-  } else if (relativePercent < kWaterLowBelowPercent) {
+  } else if (rawAdc <= kWaterLowRawReferenceAdc) {
     std::snprintf(output, capacity, "Water:LOW");
+  } else if (rawAdc < kWaterFullRawReferenceAdc) {
+    std::snprintf(output, capacity, "Water:MED");
   } else {
-    std::snprintf(output, capacity, "Water:~%d%%", relativePercent);
+    std::snprintf(output, capacity, "Water:FULL");
   }
+  (void)relativePercent;
 }
 
 // A tentative relative scale for display, not the pump's raw-ADC rule.
@@ -207,8 +220,12 @@ inline RulePreview previewRules(const SensorSnapshot& sample,
                          ? -1 : (soilBand == PumpSoilBand::dry ? 1 : 0);
   const int lightOn = lightBand == LightDecision::on ? 1
                       : lightBand == LightDecision::off ? 0 : -1;
-  return {soil, light, water, pumpOn, lightOn,
-          belowThresholdPreview(water, kWaterLowBelowPercent)};
+  const int waterLow =
+      sample.waterEnabled && waterScaleEnabled &&
+              controlWaterAdcUsable(sample.waterAdcRaw)
+          ? (sample.waterAdcRaw <= kWaterLowRawReferenceAdc ? 1 : 0)
+          : -1;
+  return {soil, light, water, pumpOn, lightOn, waterLow};
 }
 
 inline RulePreview previewRules(const SensorSnapshot& sample) {

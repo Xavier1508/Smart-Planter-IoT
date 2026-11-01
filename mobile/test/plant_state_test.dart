@@ -195,95 +195,46 @@ void main() {
     expect(sample.waterObservationPercent, 50);
   });
 
-  test('water categories use bounded provisional firmware inputs', () {
-    PlantState stateFor(Map<String, Object?> water) => PlantState.fromLocalWifi(
-      SerialSensorSnapshot.parse(
-        jsonEncode({
-          'type': 'sample',
-          'water_level': {'adc_raw': 2000, 'status': 'unverified', ...water},
-        }),
-      ),
-    );
+  test('water categories use raw ADC bands', () {
+    PlantState stateFor(int? raw, {bool? low = false, bool? empty = false}) =>
+        PlantState.fromLocalWifi(
+          SerialSensorSnapshot.parse(
+            jsonEncode({
+              'type': 'sample',
+              'water_level': {
+                'adc_raw': raw,
+                'status': raw == null ? 'unavailable' : 'unverified',
+                'relative_percent': null,
+                'low': low,
+                'empty': empty,
+              },
+            }),
+          ),
+        );
 
-    for (final (value, expected) in [
-      (0, WaterLevel.low),
-      (19, WaterLevel.low),
-      (20, WaterLevel.medium),
-      (49, WaterLevel.medium),
-      (50, WaterLevel.full),
-      (100, WaterLevel.full),
+    for (final (raw, expected) in [
+      (451, WaterLevel.low),
+      (800, WaterLevel.low),
+      (801, WaterLevel.medium),
+      (900, WaterLevel.medium),
+      (1040, WaterLevel.medium),
+      (1099, WaterLevel.medium),
+      (1100, WaterLevel.full),
+      (1555, WaterLevel.full),
+      (2000, WaterLevel.full),
     ]) {
-      final state = stateFor({'relative_percent': value, 'low': value < 20});
-      expect(state.waterLevel, expected, reason: 'relative value $value');
+      expect(stateFor(raw).waterLevel, expected, reason: 'raw ADC $raw');
     }
 
-    // V18 deliberately hides clamped zero percentages but retains low:true.
-    final low = stateFor({
-      'relative_percent': null,
-      'low': true,
-      'observation_scale': {
-        'relative_percent': null,
-        'basis': 'operator_reported_window_means',
-        'quality': 'unverified',
-        'use_for_control': false,
-      },
-    });
-    expect(low.waterLevel, WaterLevel.low);
-    expect(low.mood, PlantMood.thirsty);
-    final empty = PlantState.fromLocalWifi(
-      SerialSensorSnapshot.parse(
-        jsonEncode({
-          'type': 'sample',
-          'water_level': {
-            'adc_raw': 450,
-            'status': 'unverified',
-            'relative_percent': 0,
-            'low': true,
-            'empty': true,
-          },
-        }),
-      ),
-    );
-    expect(empty.waterEmpty, isTrue);
-    expect(empty.waterLevel, WaterLevel.empty);
-    expect(empty.mood, PlantMood.thirsty);
-    final imported = PlantState.fromSerial(
-      SerialSensorSnapshot.parse(
-        jsonEncode({
-          'type': 'sample',
-          'water_level': {
-            'adc_raw': 2000,
-            'status': 'unverified',
-            'relative_percent': null,
-            'low': true,
-          },
-        }),
-      ),
-    );
-    expect(imported.waterLevel, WaterLevel.low);
-    expect(imported.isLive, isFalse);
-    expect(
-      stateFor({'relative_percent': null, 'low': false}).waterLevel,
-      isNull,
-    );
-
-    for (final basis in [
-      'operator_reported_window_means',
-      'generic_display_references',
-    ]) {
-      final observed = stateFor({
-        'observation_scale': {
-          'relative_percent': 30,
-          'basis': basis,
-          'quality': 'unverified',
-          'use_for_control': false,
-        },
-      });
-      expect(observed.waterLevel, WaterLevel.medium);
-    }
+    // The firmware's warning flag is authoritative even when the raw value is
+    // borderline, so a flagged low tank can never be shown as full.
+    expect(stateFor(2000, low: true).waterLevel, WaterLevel.low);
+    expect(stateFor(450, empty: true).waterLevel, WaterLevel.empty);
+    expect(stateFor(450).waterLevel, WaterLevel.empty);
+    expect(stateFor(800, low: true).mood, PlantMood.thirsty);
   });
 
-  test('water rails, malformed and conflicting inputs stay unavailable', () {
+  test('water rails and malformed inputs stay unavailable', () {
     PlantState stateFor(Map<String, Object?> water) => PlantState.fromLocalWifi(
       SerialSensorSnapshot.parse(
         jsonEncode({
@@ -302,50 +253,22 @@ void main() {
         reason: 'unusable raw $raw',
       );
     }
-    for (final water in <Map<String, Object?>>[
-      {'status': 'unavailable', 'relative_percent': 50, 'low': true},
-      {'relative_percent': 19, 'low': false},
-      {'relative_percent': 50, 'low': true},
-      {'relative_percent': 101, 'low': true},
-      {'relative_percent': '50', 'low': true},
-      {'relative_percent': 50, 'low': 'false'},
-      {
-        'relative_percent': 95,
-        'low': false,
-        'observation_scale': {
-          'relative_percent': 40,
-          'basis': 'operator_reported_window_means',
-          'quality': 'unverified',
-          'use_for_control': false,
-        },
-      },
-      {
-        'relative_percent': null,
-        'low': true,
-        'observation_scale': {
-          'relative_percent': 101,
-          'basis': 'operator_reported_window_means',
-          'quality': 'unverified',
-          'use_for_control': false,
-        },
-      },
-      {
-        'relative_percent': null,
-        'observation_scale': {
-          'relative_percent': 100,
-          'basis': 'unknown',
-          'quality': 'unverified',
-          'use_for_control': false,
-        },
-      },
-    ]) {
-      final state = stateFor(water);
-      expect(state.waterLevel, isNull, reason: '$water');
-      expect(state.mood, PlantMood.waiting);
-    }
+    expect(
+      stateFor({'status': 'unavailable', 'relative_percent': 50, 'low': true})
+          .waterLevel,
+      isNull,
+    );
+    expect(stateFor({'relative_percent': 101, 'low': true}).waterLevel, isNull);
+    expect(
+      stateFor({'relative_percent': 50, 'low': true}).waterLevel,
+      WaterLevel.low,
+    );
+    expect(
+      stateFor({'relative_percent': 19, 'low': false}).waterLevel,
+      WaterLevel.full,
+    );
     expect(const PlantState.waiting().waterLevel, isNull);
   });
-
   test(
     'serial import rejects bad samples and preserves unavailable readings',
     () {
@@ -463,7 +386,7 @@ void main() {
       const PlantState(
         isLive: true,
         soilPercent: 30,
-        waterAdc: 2000,
+        waterAdc: 900,
         waterPercent: 20,
       ).mood,
       PlantMood.content,
@@ -472,7 +395,7 @@ void main() {
       const PlantState(
         isLive: true,
         soilPercent: 50,
-        waterAdc: 2000,
+        waterAdc: 800,
         waterPercent: 19,
       ).mood,
       PlantMood.thirsty,

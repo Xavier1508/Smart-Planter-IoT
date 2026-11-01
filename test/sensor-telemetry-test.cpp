@@ -248,7 +248,7 @@ int main() {
   assert(planter::kSoilAdcReadEnabled);
   assert(planter::kLightAutomationEnabled);
   assert(planter::kPumpAllowEstimatedSoil);
-  assert(planter::kFirmwareVersion == 28);
+  assert(planter::kFirmwareVersion == 30);
 
   // Bounded manual-control protocol.
   auto control = planter::parseControlLine("CTRL pump=on dur=5 id=12");
@@ -638,6 +638,31 @@ int main() {
   manualControl.setPumpAuto();
   manualControl.accept(15000, input);
   assert(manualControl.status().pumpOn);
+
+  // Releasing a manual override re-evaluates from a neutral output immediately.
+  planter::RelayController autoRelease;
+  autoRelease.begin(0);
+  input = {39, 70, 80, true, true, true, true};
+  autoRelease.setPumpManual(6000, true, 30000);
+  autoRelease.accept(6500, input);
+  assert(autoRelease.status().pumpOn);
+  autoRelease.setPumpAuto();
+  assert(!autoRelease.status().pumpOn);
+  input.soilAdcRaw = 1200;
+  autoRelease.accept(7000, input);
+  assert(!autoRelease.status().pumpOn);
+  input.soilAdcRaw = 39;
+  autoRelease.accept(8000, input);
+  assert(autoRelease.status().pumpOn);
+  autoRelease.setLightManual(true);
+  autoRelease.accept(9000, input);
+  assert(autoRelease.status().lightOn);
+  autoRelease.setLightAuto();
+  assert(!autoRelease.status().lightOn);
+  input.lightPercent = 10;
+  autoRelease.accept(10000, input);
+  assert(autoRelease.status().lightOn);
+
   input = {39, 64, 80, true, true, true, true};
   planter::RelayController lightControl;
   lightControl.begin(0);
@@ -929,7 +954,7 @@ int main() {
                              "\"adc_calibration_source\":\"efuse_vref\"") != nullptr);
   assert(std::strstr(output, "\"environment_compensation\":\"not_applied\"") != nullptr);
   assert(std::strstr(output, "\"observation_label\":null") != nullptr);
-  assert(std::strstr(output, "\"firmware_version\":28") != nullptr);
+  assert(std::strstr(output, "\"firmware_version\":30") != nullptr);
   char expectedSoilScale[96];
   std::snprintf(expectedSoilScale, sizeof(expectedSoilScale),
                 "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d",
@@ -1152,8 +1177,9 @@ int main() {
   assert(planter::waterDisplayRelativePercent(100) == 100);
   assert(planter::waterDisplayRelativePercent(101) == -1);
   assert(std::strcmp(planter::waterControlBandName(-1, -1), "unavailable") == 0);
-  assert(std::strcmp(planter::waterControlBandName(19, 900), "below_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(19, 900), "at_or_above_threshold") == 0);
   assert(std::strcmp(planter::waterControlBandName(20, 900), "at_or_above_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(20, 800), "below_threshold") == 0);
   assert(std::strcmp(planter::waterControlBandName(0, planter::kWaterEmptyRawReferenceAdc),
                      "empty") == 0);
   char lcdWaterEmpty[17];
@@ -1164,7 +1190,10 @@ int main() {
   planter::formatWaterLcd(lcdWater, sizeof(lcdWater), -1, -1);
   assert(std::strcmp(lcdWater, "Water:--") == 0);
   planter::formatWaterLcd(lcdWater, sizeof(lcdWater), 20, 900);
-  assert(std::strcmp(lcdWater, "Water:~20%") == 0);
+  assert(std::strcmp(lcdWater, "Water:MED") == 0);
+  planter::formatWaterLcd(lcdWater, sizeof(lcdWater), 100,
+                          planter::kWaterFullRawReferenceAdc);
+  assert(std::strcmp(lcdWater, "Water:FULL") == 0);
   rawReferenceFixture.waterAdcRaw = planter::kWaterLowRawReferenceAdc + 1;
   assert(formatTelemetry(rawReferenceFixture, output, sizeof(output), &reported));
   assert(std::strstr(output, "\"band\":\"near_low\"") != nullptr);
@@ -1196,7 +1225,7 @@ int main() {
   rawReferenceFixture.waterEnabled = false;
   assert(planter::observedWaterRelativePercent(rawReferenceFixture) == -1);
 
-  // Fixture-only endpoints exercise both directions and the exact 20% edge.
+  // Fixture-only endpoints exercise both directions and the raw LOW band.
   // They are not calibration values for the real sensor.
   SensorSnapshot waterFixture = valid;
   waterFixture.waterAdcRaw = 380;
@@ -1204,14 +1233,20 @@ int main() {
   assert(preview.waterPercent == 19 && preview.waterLow == 1);
   waterFixture.waterAdcRaw = 400;
   preview = planter::previewRules(waterFixture, true, 0, 2000);
-  assert(preview.waterPercent == 20 && preview.waterLow == 0);
+  assert(preview.waterPercent == 20 && preview.waterLow == 1);
+  waterFixture.waterAdcRaw = planter::kWaterLowRawReferenceAdc;
+  preview = planter::previewRules(waterFixture, true, 0, 2000);
+  assert(preview.waterLow == 1);
+  waterFixture.waterAdcRaw = planter::kWaterLowRawReferenceAdc + 1;
+  preview = planter::previewRules(waterFixture, true, 0, 2000);
+  assert(preview.waterLow == 0);
   waterFixture.waterAdcRaw = 1600;
   preview = planter::previewRules(waterFixture, true, 2000, 0);
   assert(preview.waterPercent == 20 && preview.waterLow == 0);
   preview = planter::previewRules(waterFixture, false, 0, 2000);
   assert(preview.waterPercent == -1 && preview.waterLow == -1);
   preview = planter::previewRules(waterFixture, true, 500, 500);
-  assert(preview.waterPercent == -1 && preview.waterLow == -1);
+  assert(preview.waterPercent == -1 && preview.waterLow == 0);
   waterFixture.waterEnabled = false;
   preview = planter::previewRules(waterFixture, true, 0, 2000);
   assert(preview.waterPercent == -1 && preview.waterLow == -1);

@@ -38,6 +38,8 @@ uint32_t lastSampleMs = 0;
 bool watchdogReady = false;
 bool mqAdcReady = false;
 planter::RelayController relayController;
+planter::ControlInput lastControlInput{0, 0, 0, false, false, false, false};
+bool hasControlInput = false;
 planter::ObservationLabels observationLabels;
 planter::LabelLineReader labelLineReader;
 planter::ControlLineReader controlLineReader;
@@ -114,6 +116,10 @@ void startLocalWifi() {
 
 void pollLocalWifi() {
   if (!localWifiReady) return;
+  if (localClient && !localClient.connected()) {
+    // Drop a half-open peer so a fresh phone connection can be accepted.
+    localClient.stop();
+  }
   if (localClient) {
     // Read a bounded number of command bytes per loop so serial/telemetry and
     // the watchdog are never starved. The command reader is line-bounded.
@@ -178,9 +184,11 @@ void applyControlLine(const char* line) {
     return;
   }
   const uint32_t nowMs = millis();
+  bool autoRequested = false;
   if (command.pumpSet) {
     if (command.pumpAuto) {
       relayController.setPumpAuto();
+      autoRequested = true;
     } else {
       relayController.setPumpManual(nowMs, command.pumpOn,
                                     command.durationSeconds * 1000UL);
@@ -189,10 +197,16 @@ void applyControlLine(const char* line) {
   if (command.lightSet) {
     if (command.lightAuto) {
       relayController.setLightAuto();
+      autoRequested = true;
     } else {
       relayController.setLightManual(nowMs, command.lightOn,
                                      command.durationSeconds * 1000UL);
     }
+  }
+  if (autoRequested && hasControlInput) {
+    // Apply the last measured sample immediately so AUTO does not keep a
+    // manual ON output until the next 5-second sample.
+    relayController.accept(nowMs, lastControlInput);
   }
   syncRelayCommands(true);
   sendControlAck(command, true, "null");
@@ -437,6 +451,8 @@ void printSample(uint32_t nowMs) {
       planter::kLightAutomationEnabled,
       waterUsable ? sample.waterAdcRaw : -1,
   };
+  lastControlInput = input;
+  hasControlInput = true;
   relayController.accept(sample.uptimeMs, input);
   syncRelayCommands();
   const planter::ControlStatus control = relayController.status();

@@ -939,9 +939,9 @@ Tes host, 16 frame sintetis v26, dan validasi `esptool` lulus.
 
 ### Firmware v28: EMPTY, durasi lampu, manual immediate
 
-- Status air **EMPTY** saat raw ADC ≤450. `LOW` tetap untuk nilai di bawah
-  referensi 826; pompa memakai cutoff raw **600**, jadi 700 masih boleh menyala
-  dan baru berhenti di bawah 600.
+- Status air **EMPTY** saat raw ADC ≤450. Pada v28 `LOW` masih memakai
+  referensi 826; v30 menggantinya dengan 800. Pompa memakai cutoff raw **600**,
+  jadi 700 masih boleh menyala dan baru berhenti di bawah 600.
 - Seluruh teks LCD menjadi bahasa Inggris: `Water:EMPTY`, `Water:LOW`,
   `Water:~50%`, `P:ON cmd DRY`, `L:OFF cmd`. `cmd` berarti perintah yang
   diminta, bukan keadaan kontak relay; akhiran `ref`/`rel` dihapus.
@@ -956,7 +956,26 @@ Build lokal: `analysis/platformio/firmware-v28-empty-lamp-duration-9a1b51c5/firm
 `9A1B51C52A5B7B34663B365C41BCB3E17C1652289E408593D03CFCF400033817`.
 Tes host, 16 frame sintetis v28, dan validasi `esptool` lulus.
 
-### Aplikasi Tunas 0.5.0: kontrol, histori CSV, dan model pohon
+### Firmware v30: skala air raw dan AUTO langsung
+
+- Bucket air memakai raw ADC langsung: **EMPTY ≤450**, **LOW ≤800**,
+  **MEDIUM 801–1099**, **FULL ≥1100**. Persentase 20/50 yang lama tidak lagi
+  menentukan tampilan; ini memperbaiki medium yang nyaris tidak pernah muncul
+  dan air rendah yang tampil full.
+- LCD: `Water:EMPTY`, `Water:LOW`, `Water:MED`, `Water:FULL`.
+- Flag `low` mengikuti raw ≤800; pompa tetap memakai cutoff terpisah raw 600.
+- Pindah dari manual ON ke AUTO mengosongkan output dan langsung mengevaluasi
+  sampel terakhir, tanpa menunggu sampel 5 detik berikutnya.
+- Lampu AUTO memakai `lightHoldBypass_` agar evaluasi LDR langsung berlaku.
+- Client TCP setengah terbuka dibuang; Wi-Fi sleep off dan `setNoDelay(true)`
+  dipertahankan.
+
+Build lokal: `analysis/platformio/firmware-v30-water-bands-27719b97/firmware.bin`
+(798.928 byte), SHA-256
+`27719B97346515596BC167592194F1535C261658868C4652B1A385B9B6C92A15`.
+Tes host lokal/generik, 16 frame sintetis v30, dan validasi `esptool` lulus.
+
+### Aplikasi Tunas 0.6.0: durasi, jadwal, dan koneksi stabil
 
 Nama aplikasi yang terlihat pengguna berubah dari **Moss** menjadi **Tunas ·
 Smart Planter**. Moss tetap dipakai sebagai nama profil/karakter pertama, bukan
@@ -975,9 +994,23 @@ kanal `moss/profile` dan dapat berisi sampai enam planter.
   dan 14 sampel terakhir. Histori ditulis append-only ke CSV harian per perangkat
   di penyimpanan aplikasi; UI hanya membaca 240 baris terakhir. Tombol ekspor di
   kanan atas menyalin seluruh CSV ke `Downloads/Tunas`.
-- **Kendali manual** memakai tombol segmen ON/OFF/AUTO dengan warna dan label
-  AKTIF yang jelas. Pompa memakai durasi 1–30 detik; lampu memakai menit + detik
-  (1 detik–30 menit). Jadwal juga mendukung durasi lampu.
+- **Kendali manual** memakai tombol segmen ON/OFF/AUTO tanpa ikon centang agar
+  label AUTO tidak terpotong. Menekan ON selalu membuka dialog durasi yang
+  memblokir pengiriman: pompa 1–30 detik, lampu menit + detik (1 detik–30
+  menit). OFF dan AUTO dikirim langsung.
+- **Jadwal & aksi** memakai wizard tiga langkah: pilih perangkat/aksi, pilih
+  **Sekarang** atau **Jadwalkan** (kalender + jam + menit + detik), atur durasi,
+  lalu konfirmasi. Daftar "Berikutnya" berurutan dan bisa dibatalkan; aksi yang
+  sedang berjalan menampilkan hitungan mundur dan otomatis hilang setelah
+  durasi. Eksekusi memakai satu pembacaan waktu per tick dan hanya satu job per
+  tick agar dua job tidak pernah dikirim bersamaan.
+- **Skala air** memakai raw ADC: ≤450 Empty, ≤800 Low, 801–1099 Medium, ≥1100
+  Full. Halaman utama dan Perangkat menampilkan bucket yang sama; angka ADC
+  mentah tetap tidak ditampilkan di halaman Perangkat.
+- **Koneksi** tidak lagi mengosongkan data saat timeout/reconnect. Snapshot
+  terakhir ditandai stale lewat status, timeout sampel dinaikkan ke 30 detik,
+  dan riwayat memuat ulang lalu menggabungkan baris file dengan data sesi agar
+  halaman Riwayat tidak kosong saat koneksi sempat terputus.
 - Halaman **Perangkat** hanya menampilkan **Tersedia / Tidak tersedia / Tidak
   dapat menampilkan data**; angka ADC mentah tidak lagi ditampilkan di sana.
   Blok "Kendali perangkat" yang redundan di bagian bawah dihapus.
@@ -990,11 +1023,12 @@ kanal `moss/profile` dan dapat berisi sampai enam planter.
   data nyata.
 - Halaman utama menampilkan status "Belum ada perangkat terhubung" dan tidak
   mengarang nilai saat tidak ada sampel.
-- **Notifikasi HP native**: peringatan air rendah (<20%, maksimal sekali per 30
-  menit) dan ringkasan prediksi setiap 3 jam lewat `NotificationManager` +
-  `AlarmManager`. Tombol "Izinkan notifikasi" dan "Tes notifikasi" ada di
-  Pengaturan. Data real-time hanya masuk saat aplikasi terhubung; notifikasi
-  berkala memakai prediksi terakhir yang tersimpan di alarm.
+- **Notifikasi HP native**: peringatan air rendah (bucket Low/Empty, maksimal
+  sekali per 30 menit) dan ringkasan prediksi setiap 3 jam lewat
+  `NotificationManager` + `AlarmManager`. Tombol "Izinkan notifikasi" dan "Tes
+  notifikasi" ada di Pengaturan. Data real-time hanya masuk saat aplikasi
+  terhubung; notifikasi berkala memakai prediksi terakhir yang tersimpan di
+  alarm.
 - Kartu "Belum ada perangkat" yang muncul-hilang di dalam halaman diganti
   **pop-up singkat di atas layar** (4 detik) saat koneksi terputus. Status
   offline yang stabil tetap ada di header.
@@ -1006,12 +1040,12 @@ Untuk lintas perangkat dalam satu jaringan, firmware masih mode AP (192.168.4.1)
 tahap berikutnya adalah mode STA pada hotspot/router bersama agar beberapa ESP32
 punya alamat berbeda di jaringan yang sama.
 
-Pemeriksaan lokal: `flutter analyze` bersih, **135 tes lulus, 2 dilewati**.
-Versi aplikasi `0.5.0+20`.
+Pemeriksaan lokal: `flutter analyze` bersih, **140 tes lulus, 2 dilewati**.
+Versi aplikasi `0.6.0+21`.
 
 ### Model XGBoost sintetis lama (arsip)
 
-Catatan: aplikasi 0.5.0 memakai model decision tree 3 kelas di
+Catatan: aplikasi 0.6.0 memakai model decision tree 3 kelas di
 `assets/ml/plant-health.json`, bukan model XGBoost 6 kelas ini. Bagian ini
 dipertahankan untuk mereproduksi eksperimen awal.
 

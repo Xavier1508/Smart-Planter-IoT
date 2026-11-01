@@ -11,6 +11,7 @@ class ScheduleEntry {
     required this.on,
     required this.at,
     this.durationSeconds = 5,
+    this.immediate = false,
   });
 
   final int id;
@@ -19,12 +20,17 @@ class ScheduleEntry {
   final DateTime at;
   final int durationSeconds;
 
+  /// Created with the "Sekarang" option. The command is sent as soon as the
+  /// app can reach the device; it is not a future calendar entry.
+  final bool immediate;
+
   Map<String, Object> toMap() => {
     'id': id,
     'target': target,
     'on': on,
     'at': at.toUtc().toIso8601String(),
     'durationSeconds': durationSeconds,
+    'immediate': immediate,
   };
 
   static ScheduleEntry? fromMap(Object? value) {
@@ -51,6 +57,7 @@ class ScheduleEntry {
       on: on,
       at: parsed.toLocal(),
       durationSeconds: duration,
+      immediate: value['immediate'] == true,
     );
   }
 
@@ -66,24 +73,67 @@ class ScheduleEntry {
         : 'CTRL light=off$idPart';
   }
 
-  String get label {
+  String get targetLabel => target == 'pump' ? 'Pompa' : 'Lampu';
+
+  String get durationLabel {
+    if (!on) return 'tanpa durasi';
+    if (target == 'pump') return '$durationSeconds dtk';
+    final minutes = durationSeconds ~/ 60;
+    final seconds = durationSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+  }
+
+  String get atLabel {
     final time =
-        '${at.day.toString().padLeft(2, '0')}/'
-        '${at.month.toString().padLeft(2, '0')} '
         '${at.hour.toString().padLeft(2, '0')}:'
         '${at.minute.toString().padLeft(2, '0')}:'
         '${at.second.toString().padLeft(2, '0')}';
-    if (target == 'pump') {
-      return on ? 'Pompa ON $time · $durationSeconds dtk' : 'Pompa OFF $time';
+    final today = DateTime.now();
+    if (at.year == today.year &&
+        at.month == today.month &&
+        at.day == today.day) {
+      return 'Hari ini $time';
     }
-    if (!on) return 'Lampu OFF $time';
-    final minutes = durationSeconds ~/ 60;
-    final seconds = durationSeconds % 60;
-    final duration =
-        '${minutes.toString().padLeft(2, '0')}:'
-        '${seconds.toString().padLeft(2, '0')}';
-    return 'Lampu ON $time · $duration';
+    final date =
+        '${at.day.toString().padLeft(2, '0')}/'
+        '${at.month.toString().padLeft(2, '0')}/${at.year}';
+    return '$date $time';
   }
+
+  String get label {
+    final action = '$targetLabel ${on ? 'ON' : 'OFF'}';
+    if (immediate && !on) return 'Sekarang · $action';
+    if (immediate) return 'Sekarang · $action · $durationLabel';
+    if (!on) return '$action · $atLabel';
+    return '$action · $atLabel · $durationLabel';
+  }
+}
+
+class RunningSchedule {
+  const RunningSchedule({
+    required this.entry,
+    required this.startedAt,
+    required this.endsAt,
+  });
+
+  final ScheduleEntry entry;
+  final DateTime startedAt;
+  final DateTime endsAt;
+
+  int remainingSeconds(DateTime now) {
+    final remaining = endsAt.difference(now).inMilliseconds;
+    return remaining <= 0 ? 0 : (remaining / 1000).ceil();
+  }
+
+  double progress(DateTime now) {
+    final total = endsAt.difference(startedAt).inMilliseconds;
+    if (total <= 0) return 1;
+    final elapsed = now.difference(startedAt).inMilliseconds;
+    return (elapsed / total).clamp(0.0, 1.0);
+  }
+
+  bool expired(DateTime now) => !now.isBefore(endsAt);
 }
 
 class ScheduleStore {
