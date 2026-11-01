@@ -161,6 +161,10 @@ class SerialSensorSnapshot {
     final soil = readable(adc['soil_status'])
         ? integer(adc['soil_raw'], 0, 4095)
         : null;
+    final soilZeroIsDry = adc['soil_zero_is_dry'] == true;
+    final soilUsable =
+        soil != null &&
+        ((soil > 0 && soil < 4095) || (soilZeroIsDry && soil == 0));
     final light = adcPresent ? integer(adc['light_raw'], 0, 4095) : null;
     final waterRaw = readable(water['status'])
         ? integer(water['adc_raw'], 0, 4095)
@@ -175,10 +179,11 @@ class SerialSensorSnapshot {
     // Keep rail values as raw diagnostics, but do not present an ambiguous
     // disconnected/saturated input as a calibrated-looking percentage.
     bool usableAdc(int? raw) => raw != null && raw > 0 && raw < 4095;
-    final soilPercent = !usableAdc(soil)
+    final soilPercent = !soilUsable
         ? null
         : integer(adc['soil_relative_percent'], 0, 100);
-    final lightPercent = !usableAdc(light)
+    // LDR 0/4095 are meaningful bright/dark extremes, not missing readings.
+    final lightPercent = light == null
         ? null
         : integer(adc['light_relative_percent'], 0, 100);
     final waterPercent = !usableAdc(waterRaw)

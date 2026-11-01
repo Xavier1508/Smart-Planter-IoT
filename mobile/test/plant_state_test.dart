@@ -51,7 +51,7 @@ void main() {
     expect(state.explanation, contains('waktu pembacaan tidak diketahui'));
   });
 
-  test('ADC rails remain raw diagnostics, not sensor percentages', () {
+  test('ADC rails stay raw; LDR rails remain bright/dark extremes', () {
     final snapshot = SerialSensorSnapshot.parse('''
       {"type":"sample",
        "adc":{"soil_raw":4095,"soil_status":"unverified","soil_relative_percent":100,
@@ -65,9 +65,29 @@ void main() {
     expect(snapshot.waterAdc, 0);
     expect(snapshot.uvAdc, 0);
     expect(snapshot.soilRelativePercent, isNull);
-    expect(snapshot.lightRelativePercent, isNull);
+    expect(snapshot.lightRelativePercent, 100);
     expect(snapshot.waterRelativePercent, isNull);
     expect(snapshot.waterObservationPercent, isNull);
+  });
+
+  test('zero soil is dry only when firmware confirms it', () {
+    SerialSensorSnapshot parseZero({required bool confirmed}) =>
+        SerialSensorSnapshot.parse(
+          jsonEncode({
+            'type': 'sample',
+            'adc': {
+              'soil_raw': 0,
+              'soil_status': 'unverified',
+              'soil_relative_percent': 0,
+              if (confirmed) 'soil_zero_is_dry': true,
+              'status': 'unverified',
+            },
+          }),
+        );
+    final confirmed = parseZero(confirmed: true);
+    expect(confirmed.soilAdc, 0);
+    expect(confirmed.soilRelativePercent, 0);
+    expect(parseZero(confirmed: false).soilRelativePercent, isNull);
   });
 
   test('new LDR-only firmware reasons are exposed to the app', () {
@@ -189,8 +209,8 @@ void main() {
       (0, WaterLevel.low),
       (19, WaterLevel.low),
       (20, WaterLevel.medium),
-      (89, WaterLevel.medium),
-      (90, WaterLevel.full),
+      (49, WaterLevel.medium),
+      (50, WaterLevel.full),
       (100, WaterLevel.full),
     ]) {
       final state = stateFor({'relative_percent': value, 'low': value < 20});
@@ -236,7 +256,7 @@ void main() {
     ]) {
       final observed = stateFor({
         'observation_scale': {
-          'relative_percent': 50,
+          'relative_percent': 30,
           'basis': basis,
           'quality': 'unverified',
           'use_for_control': false,

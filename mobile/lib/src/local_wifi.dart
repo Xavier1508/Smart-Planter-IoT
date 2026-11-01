@@ -37,6 +37,7 @@ class LocalWifiController {
   final MqGasIndex _mqGas = MqGasIndex();
   int? _lastUptime;
   int _generation = 0;
+  int _invalidFrames = 0;
   bool _disposed = false;
   bool _wanted = false;
   final StreamController<void> _changes = StreamController<void>.broadcast(
@@ -136,6 +137,7 @@ class LocalWifiController {
         if (delta == 0 || delta >= 0x80000000) return true;
       }
       _lastUptime = uptime;
+      _invalidFrames = 0;
       _mqAverage.add(next.mqAdc, uptime);
       _mqGas.update(next.mqPinMillivolts);
       snapshot = next;
@@ -145,8 +147,14 @@ class LocalWifiController {
       notifyListeners();
       return !_disposed && generation == _generation;
     } catch (_) {
-      _fail(generation, 'Data Wi-Fi lokal tidak valid.');
-      return false;
+      // One damaged line should not tear down a working stream. Keep the last
+      // good sample until several consecutive frames are unusable.
+      _invalidFrames++;
+      if (_invalidFrames >= 3) {
+        _fail(generation, 'Data Wi-Fi lokal tidak valid.');
+        return false;
+      }
+      return true;
     }
   }
 
@@ -202,6 +210,7 @@ class LocalWifiController {
     _socket = null;
     _pending.clear();
     _lastUptime = null;
+    _invalidFrames = 0;
     _mqAverage.clear();
     _mqGas.reset();
   }

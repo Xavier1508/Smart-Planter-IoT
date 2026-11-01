@@ -26,7 +26,7 @@ class FixtureLocalWifi extends LocalWifiController {
        "adc":{"soil_raw":1000,"soil_status":"unverified","soil_relative_percent":$soilPercent,
               "light_raw":2000,"light_relative_percent":51,"uv_raw":0,"status":"unverified"},
        "water_level":{"adc_raw":$waterAdc,"relative_percent":null,"status":"unverified",
-         "observation_scale":{"relative_percent":50,"basis":"operator_reported_window_means",
+         "observation_scale":{"relative_percent":30,"basis":"operator_reported_window_means",
            "quality":"unverified","use_for_control":false}},
        "mq135":{"adc_raw":null,"digital_raw":1,"adc_status":"adc_read_failed","status":"unverified"},
        "pump_cmd":false,"pump_reason":"soil_not_dry",
@@ -73,7 +73,7 @@ void main() {
       int soil, {
       int soilRaw = 1000,
       int waterRaw = 2000,
-      int? waterPercent = 50,
+      int? waterPercent = 30,
       bool? waterLow = false,
       int? mqAdc,
       bool adc1Failure = false,
@@ -153,7 +153,8 @@ void main() {
     expect(find.text('44%'), findsNothing);
     expect(find.text('68%'), findsOneWidget);
     expect(find.text('Full'), findsOneWidget);
-    expect(find.text('Perkiraan · bisa hampir penuh'), findsOneWidget);
+    // Water and LDR both use raw 2000 in this fixture.
+    expect(find.text('ADC 2000'), findsNWidgets(2));
     await tester.scrollUntilVisible(
       find.text('Sensor udara MQ135'),
       200,
@@ -167,10 +168,7 @@ void main() {
     expect(find.text('Arah sinyal: stabil dalam batas derau.'), findsNothing);
     expect(find.text('Tegangan pin: ~800 mV'), findsOneWidget);
     expect(find.text('Baseline sesi: ~554 mV'), findsOneWidget);
-    expect(
-      find.textContaining('MQ135: gas umum (asap/VOC) · indeks relatif'),
-      findsOneWidget,
-    );
+    expect(find.text('MQ135 · gas umum (asap/VOC)'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Kelembapan tanah'),
       -200,
@@ -187,7 +185,10 @@ void main() {
     await tester.pump();
     expect(find.text('68%'), findsNothing);
     expect(find.text('Belum terbaca'), findsOneWidget);
-    expect(find.text('ADC 0 · penyebab belum diketahui'), findsOneWidget);
+    expect(
+      find.text('ADC 0 · sinyal tidak valid; pompa dikunci'),
+      findsOneWidget,
+    );
     expect(find.text('Low'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Sensor udara MQ135'),
@@ -291,8 +292,8 @@ void main() {
       );
       expect(find.text('44%'), findsOneWidget);
       expect(find.text('Medium'), findsOneWidget);
-      expect(find.text('Perkiraan · belum terkalibrasi'), findsOneWidget);
-      expect(find.text('UV (skala ADC)'), findsOneWidget);
+      expect(find.text('ADC 1200'), findsOneWidget);
+      expect(find.text('UV'), findsOneWidget);
       expect(find.text('~0%'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Sensor udara MQ135'),
@@ -415,7 +416,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('32%'), findsOneWidget);
-    expect(find.text('UV (skala ADC)'), findsOneWidget);
+    expect(find.text('UV'), findsOneWidget);
     expect(find.text('~0%'), findsOneWidget);
   });
 
@@ -496,7 +497,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('32%'), findsOneWidget);
-    expect(find.text('UV (skala ADC)'), findsOneWidget);
+    expect(find.text('UV'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Sensor udara MQ135'),
       200,
@@ -623,9 +624,12 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Belum terbaca'), findsOneWidget);
-    expect(find.text('ADC 0 · penyebab belum diketahui'), findsOneWidget);
+    expect(
+      find.text('ADC 0 · sinyal tidak valid; pompa dikunci'),
+      findsOneWidget,
+    );
     expect(find.text('Full'), findsOneWidget);
-    expect(find.text('Perkiraan · bisa hampir penuh'), findsOneWidget);
+    expect(find.text('ADC 2000'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Sensor udara MQ135'),
       180,
@@ -640,14 +644,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('Kategori perkiraan · belum terkalibrasi'),
+      find.text('ADC 2000'),
       180,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(
-      find.text('Kategori perkiraan · belum terkalibrasi'),
-      findsOneWidget,
-    );
+    expect(find.text('ADC 2000'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -737,7 +738,7 @@ void main() {
     readings.add(PlantTelemetry(recordedAt: DateTime.now(), uvIndex: 3.5));
     await tester.pump();
     await tester.scrollUntilVisible(
-      find.text('UV (perkiraan)'),
+      find.text('UV'),
       200,
       scrollable: find.byType(Scrollable).first,
     );

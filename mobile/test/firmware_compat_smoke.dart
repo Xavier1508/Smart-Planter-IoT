@@ -41,13 +41,13 @@ Future<void> main() async {
     }
     final json = jsonDecode(jsonLine) as Map<String, dynamic>;
     if (json['schema'] != 'serial_observation_2' ||
-        json['firmware_version'] != 20) {
+        json['firmware_version'] != 21) {
       throw StateError('Unexpected firmware fixture');
     }
     final snapshot = SerialSensorSnapshot.parse(jsonLine);
     final preview = json['control_preview'];
     if (preview is Map<String, dynamic> && preview['pump_on'] is bool) {
-      // The app does not guess a diagnostic threshold for v20; this
+      // The app does not guess a diagnostic threshold for v21; this
       // does not prevent it from accepting live values or firmware commands.
       if (snapshot.pumpRuleThreshold != null ||
           snapshot.pumpRulePreview != null) {
@@ -56,7 +56,11 @@ Future<void> main() async {
     }
     final debug = json['pump_soil_debug'];
     final soil = snapshot.soilAdc;
-    final usableSoil = soil != null && soil > 0 && soil < 4095;
+    final zeroIsDry =
+        json['adc'] is Map<String, dynamic> &&
+        (json['adc'] as Map<String, dynamic>)['soil_zero_is_dry'] == true;
+    final usableSoil =
+        soil != null && ((soil > 0 && soil < 4095) || (zeroIsDry && soil == 0));
     final expectedBand = !usableSoil
         ? 'unavailable'
         : soil < 1200
@@ -73,7 +77,7 @@ Future<void> main() async {
     }
     final sampling = json['adc_sampling'];
     if (sampling is! Map<String, dynamic> ||
-        sampling['method'] != 'mean_rounded' ||
+        sampling['method'] != 'median_5' ||
         sampling['samples_per_cycle'] != 5 ||
         sampling['mixed_rail'] != 'unavailable' ||
         sampling['failed_read'] != 'unavailable') {
@@ -186,7 +190,7 @@ Future<void> main() async {
     throw StateError('Fixture coverage incomplete');
   }
 
-  // Exercise the local client with generated v20 frames and a real loopback
+  // Exercise the local client with generated v21 frames and a real loopback
   // socket. Never connects to an ESP32.
   final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
   final incoming = server.first;
@@ -224,7 +228,7 @@ Future<void> main() async {
         wifi.snapshot?.waterAdc != 750 ||
         wifi.snapshot?.waterRelativePercent != null ||
         wifi.snapshot?.waterObservationPercent != null) {
-      throw StateError('Local client did not receive v20 data');
+      throw StateError('Local client did not receive v21 data');
     }
   } finally {
     // The controller broadcasts synchronously. Let the current notification
@@ -235,7 +239,7 @@ Future<void> main() async {
     await server.close();
   }
   stdout.writeln(
-    'Firmware-to-mobile compatibility: $count synthetic v20 fixtures, '
+    'Firmware-to-mobile compatibility: $count synthetic v21 fixtures, '
     'max frame $maxFrameBytes bytes, and three-frame loopback passed; '
     'no ESP32 contacted.',
   );

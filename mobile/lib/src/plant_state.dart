@@ -208,7 +208,9 @@ class PlantState {
     WaterLevel? band(int? percent) {
       if (percent == null || percent < 0 || percent > 100) return null;
       if (percent < 20) return WaterLevel.low;
-      if (percent < 90) return WaterLevel.medium;
+      // The top pins are already covered around half of the 826..1150 span,
+      // so Full is a coarse display bucket, not half of the tank volume.
+      if (percent < 50) return WaterLevel.medium;
       return WaterLevel.full;
     }
 

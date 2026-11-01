@@ -612,10 +612,12 @@ class _Home extends StatelessWidget {
                               : 'Belum terbaca',
                           detail: state.soilPercent != null
                               ? state.soilAdc != null
-                                    ? 'ADC ${state.soilAdc} · perkiraan'
-                                    : 'Skala belum diverifikasi'
+                                    ? 'ADC ${state.soilAdc}'
+                                    : 'Belum tersedia'
                               : state.soilAdc != null
-                              ? 'ADC ${state.soilAdc} · penyebab belum diketahui'
+                              ? state.soilAdc == 0
+                                    ? 'ADC 0 · sinyal tidak valid; pompa dikunci'
+                                    : 'ADC ${state.soilAdc} · penyebab belum diketahui'
                               : 'Menunggu sensor',
                           color: const Color(0xFF51859A),
                         ),
@@ -631,12 +633,8 @@ class _Home extends StatelessWidget {
                             WaterLevel.full => 'Full',
                             null => 'Belum terbaca',
                           },
-                          detail: state.waterLevel == WaterLevel.full
-                              ? 'Perkiraan · bisa hampir penuh'
-                              : state.waterLevel != null
-                              ? 'Perkiraan · belum terkalibrasi'
-                              : state.waterAdc != null
-                              ? 'ADC ${state.waterAdc} · belum dapat diklasifikasi'
+                          detail: state.waterAdc != null
+                              ? 'ADC ${state.waterAdc}'
                               : 'Belum tersedia',
                           color: const Color(0xFF568896),
                         ),
@@ -665,10 +663,10 @@ class _Home extends StatelessWidget {
                               : '—',
                           detail: state.lightAdc != null
                               ? state.lightPercent != null
-                                    ? 'ADC ${state.lightAdc} · perkiraan'
+                                    ? 'ADC ${state.lightAdc}'
                                     : 'ADC ${state.lightAdc} · belum dapat diestimasi'
                               : state.lightPercent != null
-                              ? 'Skala belum diverifikasi'
+                              ? 'Belum tersedia'
                               : 'Menunggu sensor',
                           color: const Color(0xFFAB843A),
                         ),
@@ -677,9 +675,7 @@ class _Home extends StatelessWidget {
                         width: constraints.maxWidth,
                         child: _Metric(
                           icon: Icons.wb_twilight_rounded,
-                          title: state.uvAdc == null
-                              ? 'UV (perkiraan)'
-                              : 'UV (skala ADC)',
+                          title: 'UV',
                           value:
                               (state.uvAdcPercent == null
                                   ? null
@@ -687,7 +683,7 @@ class _Home extends StatelessWidget {
                               state.uvIndex?.toStringAsFixed(1) ??
                               '—',
                           detail: state.uvAdc != null
-                              ? 'ADC ${state.uvAdc} · bukan indeks UV'
+                              ? 'ADC ${state.uvAdc}'
                               : state.uvIndex == null
                               ? 'Menunggu data sensor'
                               : 'Belum diverifikasi',
@@ -982,11 +978,7 @@ class _AirRow extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 10),
-          Text(
-            'MQ135: gas umum (asap/VOC) · indeks relatif 0–100 terhadap '
-            'baseline sesi, bukan ppm/CO₂.',
-            style: detailStyle,
-          ),
+          Text('MQ135 · gas umum (asap/VOC)', style: detailStyle),
         ],
       ),
     );

@@ -24,11 +24,17 @@ diperlakukan sebagai proksi UV rendah sesuai permintaan, tetapi 0 juga dapat
 berarti sensor atau sambungan bermasalah. Jangan menganggapnya bukti UV rendah.
 Proksi UV adalah pemetaan ADC perkiraan, bukan indeks UV terkalibrasi.
 
-Pada firmware lokal v20, lampu memakai **LDR saja** dengan satu ambang:
+Pada firmware lokal v21, relay pompa memakai polaritas **active-LOW** (ON = LOW,
+OFF = HIGH) dan relay lampu **active-HIGH** (ON = HIGH, OFF = LOW), mengikuti
+contoh kerja pengguna. Sebelumnya pompa active-HIGH sehingga pin OFF (LOW)
+justru menyalakan modul relay active-LOW. Lampu memakai **LDR saja** dengan satu ambang:
 ON di bawah 65% kecerahan relatif, OFF pada 65% ke atas. UV hanya dipantau.
 Pompa mencoba ON saat rata-rata ADC tanah 1–1199 dan OFF pada 1200 ke atas;
-ADC 0/4095 atau data tidak tersedia tetap menghalangi ON. Dengan acuan lokal
-kering 308 dan jenuh 1800, ambang 1200 setara **≈60% kelembapan relatif**.
+ADC 4095 atau data tidak tersedia menghalangi ON. Pada perangkat ini ADC 0
+diverifikasi sebagai tanah benar-benar kering sehingga diperlakukan sebagai 0%.
+Dengan acuan lokal kering 0 dan jenuh 1800, ambang 1200 setara **≈67%**.
+Air memakai rentang **826 (rendah) sampai 1150 (penuh)**; indikator Full
+dimulai pada 50% rentang karena pin atas sudah terendam di sekitar 1000.
 Interlock air, watchdog, batas waktu, jeda pompa, dan jeda lampu tetap berlaku.
 Nilai rata-rata memakai lima konversi berturutan per siklus untuk setiap input
 ADC, bukan rata-rata lima siklus. DHT dan input digital MQ tidak dirata-ratakan.

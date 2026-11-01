@@ -336,7 +336,7 @@ unggah varian itu ke Google Play. SDK App Distribution Android masih berstatus
 beta. Update APK tetap memerlukan persetujuan pemasangan dari pengguna.
 
 Perubahan Wi-Fi lokal, kartu MQ135, dan XGBoost berada pada aplikasi yang sama,
-bukan aplikasi pratinjau baru. Sumber saat ini memakai `0.3.9+14`. Pengguna melaporkan build 8
+bukan aplikasi pratinjau baru. Sumber saat ini memakai `0.3.10+15`. Pengguna melaporkan build 8
 sudah ada di App Tester; workflow GitHub menggunakan run berikutnya sebagai
 version code untuk membangun dan menandatangani varian `beta` dengan kunci
 release yang sama. Jangan mengirim keystore, password, konfigurasi privat, atau

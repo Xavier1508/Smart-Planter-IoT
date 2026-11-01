@@ -93,7 +93,9 @@ class DevicesPage extends StatelessWidget {
           status: state.soilPercent != null
               ? 'Skala belum diverifikasi'
               : state.soilAdc != null
-              ? 'Belum terbaca · ADC ${state.soilAdc}'
+              ? state.soilAdc == 0
+                    ? 'Sinyal tidak valid · ADC 0'
+                    : 'Belum terbaca · ADC ${state.soilAdc}'
               : 'Belum ada data',
         ),
         _SensorRow(
@@ -118,8 +120,8 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.water_drop_outlined,
           name: 'Level air',
-          status: state.waterLevel != null
-              ? 'Kategori perkiraan · belum terkalibrasi'
+          status: state.waterAdc != null
+              ? 'ADC ${state.waterAdc}'
               : 'Belum dapat diklasifikasi',
         ),
         _SensorRow(

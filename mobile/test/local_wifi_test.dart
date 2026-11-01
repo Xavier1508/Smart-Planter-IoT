@@ -240,6 +240,35 @@ void main() {
     expect(controller.mqGasStatus, 'unavailable');
   });
 
+  test('a couple of malformed frames do not drop the live stream', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final incoming = server.first;
+    final controller = LocalWifiController(
+      address: '127.0.0.1',
+      port: server.port,
+    );
+    final connecting = controller.connect();
+    final peer = await incoming;
+    addTearDown(() async {
+      peer.destroy();
+      controller.dispose();
+      await server.close();
+    });
+    await connecting;
+    peer.write('not json\n');
+    peer.write('{"type":"sample"}\n');
+    peer.write('${sample(5000, version: 21, mqAdc: 500)}\n');
+    await waitFor(controller, () => controller.status == LocalWifiStatus.live);
+    expect(controller.snapshot?.uptimeMs, 5000);
+
+    peer.write('broken 1\nbroken 2\nbroken 3\n');
+    await waitFor(
+      controller,
+      () => controller.status == LocalWifiStatus.disconnected,
+    );
+    expect(controller.snapshot, isNull);
+  });
+
   test(
     'reconnect clears stale data and manual disconnect stops retries',
     () async {
