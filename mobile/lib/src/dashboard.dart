@@ -80,6 +80,7 @@ class _DashboardState extends State<Dashboard> {
   int? _lastSequence;
   StreamSubscription<PlantTelemetry>? _subscription;
   Timer? _expiry;
+  Timer? _cloudRetry;
   late LocalWifiController _localWifi;
   late bool _ownsLocalWifi;
   String get _historyDeviceId =>
@@ -651,6 +652,8 @@ class _DashboardState extends State<Dashboard> {
 
   void _acceptReading(PlantTelemetry reading) {
     if (!mounted) return;
+    _cloudRetry?.cancel();
+    _cloudRetry = null;
     final now = DateTime.now();
     if (!reading.isFreshAt(now, maxAge: _readingMaxAge)) {
       if (!_liveState.isLive) {
@@ -729,6 +732,16 @@ class _DashboardState extends State<Dashboard> {
       _liveState = const PlantState.waiting();
       _sourceNotice = 'Koneksi data terputus.';
     });
+    final cloud = widget.cloud;
+    if (cloud != null && !_useLocalWifi && cloud.hasDevice) {
+      _cloudRetry?.cancel();
+      _cloudRetry = Timer(const Duration(seconds: 15), () {
+        if (!mounted || _useLocalWifi || widget.cloud?.hasDevice != true) {
+          return;
+        }
+        unawaited(widget.cloud!.refreshDevice());
+      });
+    }
   }
 
   Future<void> _importSerialSnapshot() async {
@@ -872,6 +885,7 @@ class _DashboardState extends State<Dashboard> {
   void dispose() {
     dismissTopNotice();
     _expiry?.cancel();
+    _cloudRetry?.cancel();
     _scheduleTimer?.cancel();
     final localChanges = _localWifiChanges;
     if (localChanges != null) unawaited(localChanges.cancel());
