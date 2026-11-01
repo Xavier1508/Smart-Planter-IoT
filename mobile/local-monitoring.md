@@ -26,8 +26,9 @@ Proksi UV adalah pemetaan ADC perkiraan, bukan indeks UV terkalibrasi.
 
 Pada firmware lokal v21, relay pompa memakai polaritas **active-LOW** (ON = LOW,
 OFF = HIGH) dan relay lampu **active-HIGH** (ON = HIGH, OFF = LOW). Lampu
-memakai **LDR saja** dengan satu ambang 65%; pada perangkat ini LDR gelap
-sekitar 0 ADC dan terang sekitar 2360 ADC. UV hanya dipantau.
+memakai **LDR saja** dengan satu ambang 65%; pada perangkat ini ADC yang
+**lebih besar berarti lebih gelap** (gelap sekitar 2360, terang sekitar 0).
+UV hanya dipantau.
 
 Pompa memakai histeresis: ON di bawah **1000 ADC**, OFF pada **1200 ADC** ke
 atas. Setelah berhenti karena batas waktu 30 detik, pompa menunggu **5 menit**
