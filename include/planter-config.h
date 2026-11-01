@@ -43,7 +43,7 @@
 
 namespace planter {
 
-constexpr unsigned kFirmwareVersion = 26;
+constexpr unsigned kFirmwareVersion = 28;
 
 // Historical project assignments, not a verified wiring diagram.
 constexpr int kDhtPin = 4;
@@ -112,6 +112,10 @@ constexpr int kPumpDryConfirmSamples = 1;
 constexpr int kLightOnBelowPercent = 65;
 constexpr int kLightOffAtOrAbovePercent = 65;
 constexpr int kWaterLowBelowPercent = 20;
+// The display can warn at the 826 ADC low reference, but the pump guard is
+// intentionally lower so a tilted or partly empty tank can still water. The
+// user observed ~400 ADC only when the level sensor was completely dry.
+constexpr int kPumpWaterLowRawAdc = 600;
 // The pump's own load pulls the water-level reading down while it runs, so a
 // single low sample is not proof of an empty reservoir. A running pump stops
 // only after this many consecutive low samples (6 x 5 s = 30 s). While the
@@ -128,6 +132,7 @@ constexpr uint32_t kBootGraceMs = 5000;
 // water path fails; manual commands remain capped separately at 30 seconds.
 constexpr uint32_t kPumpMaxOnMs = 300000;
 constexpr uint32_t kPumpManualMaxOnMs = 30000;
+constexpr uint32_t kLightManualMaxOnMs = 1800000;  // 30 minutes
 constexpr uint32_t kPumpCooldownMs = 30000;
 // After hitting the hard cap, lock out automatic watering for 30 minutes so a
 // failed sensor cannot flood the pot. A manual command can still be used.
@@ -150,6 +155,9 @@ constexpr int kWaterFullAdc = MOSS_WATER_OBSERVED_NEAR_FULL_ADC;
 // Display-only low reference bands; these do not authorize pump operation.
 constexpr int kWaterLowRawReferenceAdc = MOSS_WATER_LOW_REFERENCE_ADC;
 constexpr int kWaterNearRawReferenceAdc = MOSS_WATER_NEAR_REFERENCE_ADC;
+// The user observed ~400 ADC only when the level sensor was completely out of
+// water. At or below this raw value the UI reports EMPTY, distinct from LOW.
+constexpr int kWaterEmptyRawReferenceAdc = 450;
 
 // Relative references shared by the display and provisional water control;
 // they are not measured tank volume or verified empty/full calibration.

@@ -16,7 +16,16 @@ void main() {
     final pumpOff = ScheduleEntry(id: 8, target: 'pump', on: false, at: at);
     expect(pumpOff.command, 'CTRL pump=off id=8');
     final light = ScheduleEntry(id: 9, target: 'light', on: true, at: at);
-    expect(light.command, 'CTRL light=on id=9');
+    expect(light.command, 'CTRL light=on dur=5 id=9');
+    final lightLong = ScheduleEntry(
+      id: 10,
+      target: 'light',
+      on: true,
+      at: at,
+      durationSeconds: 1800,
+    );
+    expect(lightLong.command, 'CTRL light=on dur=1800 id=10');
+    expect(lightLong.label, contains('30:00'));
   });
 
   test('schedule serialization keeps local time and duration', () {

@@ -15,6 +15,135 @@ class HistoryPoint {
   final PlantState state;
 }
 
+/// CSV schema shared by the append-only phone history and the export file. The
+/// columns are intentionally flat so the file can be used directly for ML
+/// training after a quick import.
+class HistoryCsv {
+  const HistoryCsv._();
+
+  static const header =
+      'timestamp_utc,device_id,firmware_version,uptime_ms,soil_adc,'
+      'soil_percent,water_adc,water_percent,water_observation_percent,'
+      'water_empty,water_low,light_adc,light_percent,temperature_c,'
+      'humidity_percent,uv_adc,uv_index,mq_adc,mq_gas_index,pump_cmd,'
+      'pump_reason,light_cmd,light_reason,emotion,confidence';
+
+  static String line({
+    required DateTime now,
+    required String deviceId,
+    required int? firmwareVersion,
+    required int? uptimeMs,
+    required PlantState state,
+    required EmotionReading emotion,
+  }) {
+    String field(Object? value) {
+      final text = value?.toString() ?? '';
+      if (text.contains(',') || text.contains('"') || text.contains('\n')) {
+        return '"${text.replaceAll('"', '""')}"';
+      }
+      return text;
+    }
+
+    String flag(bool? value) => value == null ? '' : (value ? '1' : '0');
+
+    return [
+      field(now.toUtc().toIso8601String()),
+      field(deviceId),
+      field(firmwareVersion),
+      field(uptimeMs),
+      field(state.soilAdc),
+      field(state.soilPercent),
+      field(state.waterAdc),
+      field(state.waterPercent),
+      field(state.waterObservationPercent),
+      flag(state.waterEmpty),
+      flag(state.waterLow),
+      field(state.lightAdc),
+      field(state.lightPercent),
+      field(state.temperatureC),
+      field(state.humidityPercent),
+      field(state.uvAdc),
+      field(state.uvIndex),
+      field(state.mqAdc),
+      field(state.mqGasIndex),
+      flag(state.pumpCommand),
+      field(state.pumpReason),
+      flag(state.lightCommand),
+      field(state.lightReason),
+      field(emotion.emotion.name),
+      field(emotion.confidence.toStringAsFixed(3)),
+    ].join(',');
+  }
+
+  static HistoryPoint? parse(String line) {
+    final fields = _split(line);
+    if (fields.length != 25) return null;
+    final at = DateTime.tryParse(fields[0]);
+    if (at == null) return null;
+    int? number(int index) => int.tryParse(fields[index]);
+    double? decimal(int index) => double.tryParse(fields[index]);
+    bool? flag(int index) => fields[index] == '1'
+        ? true
+        : fields[index] == '0'
+        ? false
+        : null;
+    String? text(int index) => fields[index].isEmpty ? null : fields[index];
+    final state = PlantState(
+      isSerialSnapshot: true,
+      soilAdc: number(4),
+      soilPercent: number(5),
+      waterAdc: number(6),
+      waterPercent: number(7),
+      waterObservationPercent: number(8),
+      waterEmpty: flag(9),
+      waterLow: flag(10),
+      lightAdc: number(11),
+      lightPercent: number(12),
+      temperatureC: decimal(13),
+      humidityPercent: decimal(14),
+      uvAdc: number(15),
+      uvIndex: decimal(16),
+      mqAdc: number(17),
+      mqGasIndex: number(18),
+      pumpCommand: flag(19),
+      pumpReason: text(20),
+      lightCommand: flag(21),
+      lightReason: text(22),
+    );
+    return HistoryPoint(at.toLocal(), state);
+  }
+
+  static List<String> _split(String line) {
+    final fields = <String>[];
+    final current = StringBuffer();
+    var quoted = false;
+    for (var i = 0; i < line.length; i++) {
+      final char = line[i];
+      if (quoted) {
+        if (char == '"') {
+          if (i + 1 < line.length && line[i + 1] == '"') {
+            current.write('"');
+            i++;
+          } else {
+            quoted = false;
+          }
+        } else {
+          current.write(char);
+        }
+      } else if (char == '"') {
+        quoted = true;
+      } else if (char == ',') {
+        fields.add(current.toString());
+        current.clear();
+      } else {
+        current.write(char);
+      }
+    }
+    fields.add(current.toString());
+    return fields;
+  }
+}
+
 /// Session history. It is intentionally not presented as a permanent archive:
 /// persistence is a separate feature and must not be implied by this page.
 class JournalPage extends StatelessWidget {
@@ -23,11 +152,13 @@ class JournalPage extends StatelessWidget {
     required this.history,
     required this.profile,
     required this.emotion,
+    required this.onExport,
   });
 
   final List<HistoryPoint> history;
   final DeviceProfile profile;
   final EmotionReading emotion;
+  final Future<void> Function() onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -45,20 +176,32 @@ class JournalPage extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 7),
-        const Text(
-          'Riwayat',
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.8,
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            const Expanded(
+              child: Text(
+                'Riwayat',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.8,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Export CSV',
+              onPressed: onExport,
+              icon: const Icon(Icons.file_download_outlined),
+            ),
+          ],
         ),
         const SizedBox(height: 18),
         _CharacterSummary(profile: profile, emotion: emotion),
         const SizedBox(height: 16),
         if (history.isEmpty)
           _EmptyHistory(
-            message: 'Belum ada sampel pada sesi ini. Hubungkan perangkat dan biarkan halaman terbuka agar riwayat terisi.',
+            message: 'Belum ada sampel tersimpan. Hubungkan perangkat dan biarkan aplikasi menerima data.',
           )
         else ...[
           _HistoryChart(history: history),
@@ -79,7 +222,7 @@ class JournalPage extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           Text(
-            'SESI INI',
+            'TERBARU',
             style: TextStyle(
               fontSize: 10,
               letterSpacing: 1.5,
@@ -92,7 +235,7 @@ class JournalPage extends StatelessWidget {
             _HistoryRow(point: point),
           const SizedBox(height: 8),
           Text(
-            'Riwayat sesi ini belum disimpan permanen; menutup aplikasi akan mengosongkannya.',
+            'Riwayat tersimpan sebagai CSV perangkat. Tombol ekspor di kanan atas menyimpan seluruh data ke Downloads/Tunas.',
             style: TextStyle(
               fontSize: 10,
               height: 1.4,

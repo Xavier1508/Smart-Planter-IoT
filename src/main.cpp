@@ -53,7 +53,7 @@ char localWifiPassword[planter::kLocalWifiPasswordLength + 1] = {};
 void applyControlLine(const char* line);
 void sendControlAck(const planter::ControlCommand& command, bool ok,
                     const char* error);
-void syncRelayCommands();
+void syncRelayCommands(bool immediate = false);
 
 struct HardwareRandom {
   uint32_t next() { return esp_random(); }
@@ -67,6 +67,9 @@ void startLocalWifi() {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_mode_failed\"}");
     return;
   }
+  // The planter is mains-powered. Disable modem sleep so the first command
+  // after a long idle does not wait for a Wi-Fi wake-up interval.
+  WiFi.setSleep(false);
   bool passwordReady = false;
 #ifdef MOSS_LOCAL_WIFI_PASSWORD
   // Fixed local-only WPA2 password from an ignored header. The phone stores it
@@ -129,13 +132,12 @@ void pollLocalWifi() {
   if (!localClient) {
     localClient.stop();
     localClient = localServer.available();
+    if (localClient) localClient.setNoDelay(true);
   } else if (localServer.hasClient()) {
     WiFiClient extra = localServer.available();
     extra.stop();
   }
 }
-
-void syncRelayCommands();
 
 void sendLocalLine(const char* line) {
   if (!localWifiReady || !localClient || line == nullptr) return;
@@ -188,10 +190,11 @@ void applyControlLine(const char* line) {
     if (command.lightAuto) {
       relayController.setLightAuto();
     } else {
-      relayController.setLightManual(command.lightOn);
+      relayController.setLightManual(nowMs, command.lightOn,
+                                     command.durationSeconds * 1000UL);
     }
   }
-  syncRelayCommands();
+  syncRelayCommands(true);
   sendControlAck(command, true, "null");
 }
 
@@ -267,9 +270,10 @@ struct ArduinoSoilGpio {
 ArduinoGpio relayGpio;
 planter::RelayStager<ArduinoGpio> relayStager;
 
-void syncRelayCommands() {
+void syncRelayCommands(bool immediate) {
   const planter::ControlStatus status = relayController.status();
-  relayStager.update(millis(), status.pumpOn, status.lightOn, relayGpio);
+  relayStager.update(millis(), status.pumpOn, status.lightOn, relayGpio,
+                     immediate);
 }
 
 int readSoilRaw() {
@@ -354,7 +358,7 @@ void updateLcd(const planter::SensorSnapshot& sample,
     }
   } else if (page == 2) {
     const int water = planter::observedWaterRelativePercent(sample);
-    planter::formatWaterLcd(first, sizeof(first), water);
+    planter::formatWaterLcd(first, sizeof(first), water, sample.waterAdcRaw);
     if (sample.mqEnabled && sample.mqAdcReadable &&
         planter::validAdcRaw(sample.mqAdcRaw)) {
       const int mqAdcPercent = planter::relativePercent(sample.mqAdcRaw, 0, 4095);
@@ -374,7 +378,7 @@ void updateLcd(const planter::SensorSnapshot& sample,
         : planter::PumpSoilBand::unavailable;
     snprintf(first, sizeof(first), "P:%s cmd %s", control.pumpOn ? "ON" : "OFF",
              planter::pumpSoilBandLcd(soilBand));
-    snprintf(second, sizeof(second), "L:%s diminta", control.lightOn ? "ON" : "OFF");
+    snprintf(second, sizeof(second), "L:%s cmd", control.lightOn ? "ON" : "OFF");
   } else if (localWifiReady) {
     // The password is shown only on the physical LCD, not serial or telemetry.
     snprintf(first, sizeof(first), "%s", localWifiName);
@@ -431,6 +435,7 @@ void printSample(uint32_t nowMs) {
       planter::kWaterRelativeScaleEnabled,
       watchdogReady,
       planter::kLightAutomationEnabled,
+      waterUsable ? sample.waterAdcRaw : -1,
   };
   relayController.accept(sample.uptimeMs, input);
   syncRelayCommands();

@@ -937,7 +937,26 @@ Build lokal: `analysis/platformio/firmware-v26-wifi-password-fec68a0a/firmware.b
 `FEC68A0ACBFA116344080A7768F92A34F8A4C1C6A857D31699F7822C0FD04BC5`.
 Tes host, 16 frame sintetis v26, dan validasi `esptool` lulus.
 
-### Aplikasi Tunas 0.4.1: profil, karakter, dan emosi ML
+### Firmware v28: EMPTY, durasi lampu, manual immediate
+
+- Status air **EMPTY** saat raw ADC ≤450. `LOW` tetap untuk nilai di bawah
+  referensi 826; pompa memakai cutoff raw **600**, jadi 700 masih boleh menyala
+  dan baru berhenti di bawah 600.
+- Seluruh teks LCD menjadi bahasa Inggris: `Water:EMPTY`, `Water:LOW`,
+  `Water:~50%`, `P:ON cmd DRY`, `L:OFF cmd`. `cmd` berarti perintah yang
+  diminta, bukan keadaan kontak relay; akhiran `ref`/`rel` dihapus.
+- Lampu manual menerima durasi 1–1800 detik (maks 30 menit). Setelah durasi
+  habis lampu OFF dan tetap manual OFF sampai AUTO dipilih.
+- Perintah manual memakai jalur **immediate** (melewati jeda staging 150 ms),
+  Wi-Fi modem sleep dimatikan, dan TCP client memakai `setNoDelay(true)` supaya
+  perintah pertama setelah idle tidak tertahan.
+
+Build lokal: `analysis/platformio/firmware-v28-empty-lamp-duration-9a1b51c5/firmware.bin`
+(798.768 byte), SHA-256
+`9A1B51C52A5B7B34663B365C41BCB3E17C1652289E408593D03CFCF400033817`.
+Tes host, 16 frame sintetis v28, dan validasi `esptool` lulus.
+
+### Aplikasi Tunas 0.5.0: kontrol, histori CSV, dan model pohon
 
 Nama aplikasi yang terlihat pengguna berubah dari **Moss** menjadi **Tunas ·
 Smart Planter**. Moss tetap dipakai sebagai nama profil/karakter pertama, bukan
@@ -953,13 +972,22 @@ kanal `moss/profile` dan dapat berisi sampai enam planter.
   gerak berbeda: **Moss** (daun), **Bara** (topi matahari), **Rintik** (awan
   hujan). Pemilih karakter memakai geser ala game dan tombol konfirmasi.
 - Halaman **Riwayat** menampilkan kartu karakter aktif, grafik tanah/air/cahaya,
-  dan 14 sampel terakhir. Riwayat masih per sesi; belum disimpan permanen.
-- **Emosi ML** dijalankan di ponsel, bukan ESP32. Model XGBoost sintetis yang
-  sudah ada (4 fitur: tanah, air, cahaya, UV) dipetakan ke tiga emosi:
-  **Nyaman**, **Waspada**, **Perlu perhatian**. Aturan ambang tetap menjadi
-  pengaman: tanah <35% atau air <20% tidak boleh tampil sebagai "Nyaman".
-  Kartu prediksi menampilkan sinyal utama, arah tren 6 sampel, dan keyakinan
-  model. Label ini demo, bukan diagnosis tanaman.
+  dan 14 sampel terakhir. Histori ditulis append-only ke CSV harian per perangkat
+  di penyimpanan aplikasi; UI hanya membaca 240 baris terakhir. Tombol ekspor di
+  kanan atas menyalin seluruh CSV ke `Downloads/Tunas`.
+- **Kendali manual** memakai tombol segmen ON/OFF/AUTO dengan warna dan label
+  AKTIF yang jelas. Pompa memakai durasi 1–30 detik; lampu memakai menit + detik
+  (1 detik–30 menit). Jadwal juga mendukung durasi lampu.
+- Halaman **Perangkat** hanya menampilkan **Tersedia / Tidak tersedia / Tidak
+  dapat menampilkan data**; angka ADC mentah tidak lagi ditampilkan di sana.
+  Blok "Kendali perangkat" yang redundan di bagian bawah dihapus.
+- **Emosi ML** dijalankan di ponsel dengan decision tree 3 kelas (healthy,
+  warning, critical) berfitur 8, termasuk interaksi tanah×air. Model dilatih dari
+  band agronomi sintetis (holdout 96,2%; 93 node) dan mencakup banjir,
+  kekeringan, panas, serta gas tinggi. Aturan ambang tetap menjadi pengaman:
+  tanah ≥85% atau air <20% tidak boleh tampil "Nyaman". Ini model demo, bukan
+  diagnosis agronomi tervalidasi; CSV ekspor disiapkan untuk retraining dengan
+  data nyata.
 - Halaman utama menampilkan status "Belum ada perangkat terhubung" dan tidak
   mengarang nilai saat tidak ada sampel.
 - **Notifikasi HP native**: peringatan air rendah (<20%, maksimal sekali per 30
@@ -978,10 +1006,14 @@ Untuk lintas perangkat dalam satu jaringan, firmware masih mode AP (192.168.4.1)
 tahap berikutnya adalah mode STA pada hotspot/router bersama agar beberapa ESP32
 punya alamat berbeda di jaringan yang sama.
 
-Pemeriksaan lokal: `flutter analyze` bersih, **131 tes lulus, 2 dilewati**.
-Versi aplikasi `0.4.1+19`.
+Pemeriksaan lokal: `flutter analyze` bersih, **135 tes lulus, 2 dilewati**.
+Versi aplikasi `0.5.0+20`.
 
-### Model XGBoost sintetis di Moss
+### Model XGBoost sintetis lama (arsip)
+
+Catatan: aplikasi 0.5.0 memakai model decision tree 3 kelas di
+`assets/ml/plant-health.json`, bukan model XGBoost 6 kelas ini. Bagian ini
+dipertahankan untuk mereproduksi eksperimen awal.
 
 Model eksperimental dilatih dengan 60.000 baris buatan berdasarkan rentang
 0–100 untuk tanah, air relatif, dan LDR serta UV sintetis 1–14 atau kosong.

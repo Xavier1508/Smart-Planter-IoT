@@ -344,7 +344,7 @@ void main() {
     },
   );
 
-  testWidgets('serial rule previews are shown without claiming relay control', (
+  testWidgets('device page shows availability without raw ADC values', (
     tester,
   ) async {
     const sample = '''
@@ -371,17 +371,13 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('Air <20%: Belum tersedia'),
+      find.text('Kelembapan tanah'),
       150,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Pompa <50%: Menyala (pratinjau)'), findsOneWidget);
-    expect(find.text('Lampu <60%: Menyala (pratinjau)'), findsOneWidget);
-    expect(find.text('Air <20%: Belum tersedia'), findsOneWidget);
-    expect(
-      find.textContaining('bukan perintah, status relay, atau notifikasi live'),
-      findsOneWidget,
-    );
+    expect(find.text('Tersedia'), findsWidgets);
+    expect(find.textContaining('ADC'), findsNothing);
+    expect(find.text('Pratinjau aturan serial'), findsNothing);
   });
 
   testWidgets('packaged serial snapshot starts as offline data, not demo', (
@@ -644,11 +640,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('ADC 2000'),
+      find.text('Cahaya'),
       180,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('ADC 2000'), findsOneWidget);
+    expect(find.text('Tersedia'), findsWidgets);
+    expect(find.textContaining('ADC'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

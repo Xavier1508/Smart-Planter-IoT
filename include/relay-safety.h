@@ -29,6 +29,19 @@ struct ControlStatus {
 };
 
 struct ControlInput {
+  ControlInput(int soilAdcRaw_, int lightPercent_, int waterPercent_,
+               bool soilControlAllowed_, bool waterScaleEnabled_,
+               bool watchdogReady_, bool lightAutomationEnabled_,
+               int waterAdcRaw_ = -1)
+      : soilAdcRaw(soilAdcRaw_),
+        lightPercent(lightPercent_),
+        waterPercent(waterPercent_),
+        soilControlAllowed(soilControlAllowed_),
+        waterScaleEnabled(waterScaleEnabled_),
+        watchdogReady(watchdogReady_),
+        lightAutomationEnabled(lightAutomationEnabled_),
+        waterAdcRaw(waterAdcRaw_) {}
+
   int soilAdcRaw;
   int lightPercent;
   int waterPercent;
@@ -36,9 +49,19 @@ struct ControlInput {
   bool waterScaleEnabled;
   bool watchdogReady;
   bool lightAutomationEnabled;
+  // Raw water ADC for the pump cutoff. Negative keeps the older percentage
+  // behavior for fixtures that only model a relative level.
+  int waterAdcRaw;
 };
 
 inline bool controlPercentValid(int value) { return value >= 0 && value <= 100; }
+
+// The pump uses the raw cutoff when available; the visible "low" warning can
+// still trigger earlier at the 20% display reference.
+inline bool pumpWaterLow(const ControlInput& input) {
+  if (input.waterAdcRaw >= 0) return input.waterAdcRaw < kPumpWaterLowRawAdc;
+  return input.waterPercent < kWaterLowBelowPercent;
+}
 
 // A soil-only diagnostic using the same raw ADC threshold as RelayController.
 // It never overrides water, watchdog, timing, or other pump safety guards.
@@ -70,9 +93,9 @@ inline const char* pumpSoilBandName(PumpSoilBand band) {
 
 inline const char* pumpSoilBandLcd(PumpSoilBand band) {
   switch (band) {
-    case PumpSoilBand::dry: return "KERING";
-    case PumpSoilBand::hold: return "TAHAN";
-    case PumpSoilBand::wet: return "BASAH";
+    case PumpSoilBand::dry: return "DRY";
+    case PumpSoilBand::hold: return "HOLD";
+    case PumpSoilBand::wet: return "WET";
     default: return "N/A";
   }
 }
@@ -146,6 +169,17 @@ class RelayController {
       pumpOn_ = false;
       pumpReason_ = "manual_expired";
     }
+    if (lightManual_ && lightManualOn_ && lightManualDurationMs_ > 0 &&
+        controlIntervalElapsed(nowMs, lightManualSinceMs_,
+                               lightManualDurationMs_)) {
+      // A timed lamp run ends OFF and stays manually OFF until the user
+      // selects AUTO; returning to AUTO in a dark room would turn it back on.
+      lightManualOn_ = false;
+      lightManualDurationMs_ = 0;
+      lightManualExpired_ = true;
+      lightOn_ = false;
+      lightReason_ = "manual_expired";
+    }
     if (pumpOn_ && !pumpManual_ &&
         controlIntervalElapsed(nowMs, pumpStartedMs_, kPumpMaxOnMs)) {
       stopPump(nowMs, "runtime_limit");
@@ -183,15 +217,28 @@ class RelayController {
     pumpReason_ = "manual_released";
   }
 
-  void setLightManual(bool on) {
+  void setLightManual(bool on) { setLightManual(0, on, 0); }
+
+  void setLightManual(uint32_t nowMs, bool on, uint32_t durationMs) {
     lightManual_ = true;
     lightManualOn_ = on;
+    lightManualExpired_ = false;
+    lightManualSinceMs_ = nowMs;
+    lightManualDurationMs_ =
+        on && durationMs > 0
+            ? (durationMs < 1000
+                   ? 1000
+                   : (durationMs > kLightManualMaxOnMs ? kLightManualMaxOnMs
+                                                       : durationMs))
+            : 0;
     lightOn_ = on;
     lightReason_ = on ? "manual_on" : "manual_off";
   }
 
   void setLightAuto() {
     lightManual_ = false;
+    lightManualDurationMs_ = 0;
+    lightManualExpired_ = false;
     lightReason_ = "manual_released";
   }
 
@@ -223,7 +270,7 @@ class RelayController {
 
     if (!input.waterScaleEnabled || !controlPercentValid(input.waterPercent)) {
       stopPump(nowMs, "water_unavailable");
-    } else if (!pumpOn_ && input.waterPercent < kWaterLowBelowPercent) {
+    } else if (!pumpOn_ && pumpWaterLow(input)) {
       // The reservoir is checked while the pump is idle, where the reading is
       // not disturbed by the pump's own load. One low sample blocks a start.
       stopPump(nowMs, "water_low");
@@ -235,7 +282,7 @@ class RelayController {
       // A running pump disturbs the water-level sensor, so require the low
       // reading to persist before treating it as an empty reservoir. Otherwise
       // a healthy tank would stop the pump every few seconds.
-      if (input.waterPercent < kWaterLowBelowPercent) {
+      if (pumpWaterLow(input)) {
         ++waterLowRunningConfirm_;
       } else {
         waterLowRunningConfirm_ = 0;
@@ -303,7 +350,9 @@ class RelayController {
     }
     if (lightManual_) {
       lightOn_ = lightManualOn_;
-      lightReason_ = lightManualOn_ ? "manual_on" : "manual_off";
+      lightReason_ = lightManualExpired_
+                         ? "manual_expired"
+                         : (lightManualOn_ ? "manual_on" : "manual_off");
     }
   }
 
@@ -351,6 +400,9 @@ class RelayController {
   uint32_t pumpManualDurationMs_ = 0;
   bool lightManual_ = false;
   bool lightManualOn_ = false;
+  bool lightManualExpired_ = false;
+  uint32_t lightManualSinceMs_ = 0;
+  uint32_t lightManualDurationMs_ = 0;
   const char* pumpReason_ = "not_initialized";
   const char* lightReason_ = "not_initialized";
 };

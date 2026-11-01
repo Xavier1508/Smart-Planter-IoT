@@ -9,6 +9,7 @@ import 'app_version_panel.dart';
 import 'character_look.dart';
 import 'character_picker.dart';
 import 'devices_page.dart';
+import 'history_service.dart';
 import 'journal_page.dart';
 import 'local_wifi.dart';
 import 'moss_app.dart';
@@ -17,13 +18,13 @@ import 'moss_gaze.dart';
 import 'moss_sky.dart';
 import 'notification_service.dart';
 import 'plant_emotion.dart';
+import 'plant_health.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
 import 'prediction_card.dart';
 import 'profile_panel.dart';
 import 'profile_store.dart';
 import 'schedule.dart';
-import 'synthetic_xgboost.dart';
 import 'top_notice.dart';
 
 class Dashboard extends StatefulWidget {
@@ -86,9 +87,10 @@ class _DashboardState extends State<Dashboard> {
   bool _scheduleBusy = false;
   final ProfileStore _profileStore = const ProfileStore();
   ProfileSettings _profiles = ProfileSettings.defaults;
-  SyntheticXgboostModel? _emotionModel;
-  final List<HistoryPoint> _history = [];
+  PlantHealthModel? _emotionModel;
+  List<HistoryPoint> _history = [];
   int? _lastHistoryUptime;
+  final HistoryService _historyService = const HistoryService();
   final NotificationService _notifications = const NotificationService();
   LocalWifiStatus _lastNoticeStatus = LocalWifiStatus.disconnected;
   DateTime? _lastWaterAlertAt;
@@ -159,6 +161,7 @@ class _DashboardState extends State<Dashboard> {
         loaded.active.host != previous.host ||
         loaded.active.port != previous.port;
     setState(() => _profiles = loaded);
+    unawaited(_loadHistory());
     if (widget.localWifi == null && changed) {
       final wasWanted = _useLocalWifi;
       _rebindLocalWifi();
@@ -166,10 +169,24 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
+  Future<void> _loadHistory() async {
+    final device = _profiles.active;
+    final rows = await _historyService.readTail(
+      deviceId: device.id,
+      limit: 240,
+    );
+    if (!mounted) return;
+    final points = rows
+        .map(HistoryCsv.parse)
+        .whereType<HistoryPoint>()
+        .toList(growable: false);
+    setState(() => _history = points);
+  }
+
   Future<void> _loadEmotionModel() async {
     try {
-      final raw = await rootBundle.loadString('assets/ml/pattern-models.json');
-      final model = SyntheticXgboostModel.parse(raw);
+      final raw = await rootBundle.loadString('assets/ml/plant-health.json');
+      final model = PlantHealthModel.parse(raw);
       if (mounted) setState(() => _emotionModel = model);
     } catch (_) {
       // The threshold rules still drive the presentation if the asset is
@@ -226,15 +243,41 @@ class _DashboardState extends State<Dashboard> {
       );
       _history.add(HistoryPoint(now, state));
       if (_history.length > 240) _history.removeAt(0);
+      final emotion = PlantEmotionEngine(_emotionModel)
+          .evaluate(state, recent: _recentStates());
       _maybeNotifyLowWater(state, now);
-      _maybeSchedulePrediction(state, now);
+      _maybeSchedulePrediction(now, emotion);
+      unawaited(
+        _historyService.append(
+          deviceId: _profiles.active.id,
+          header: HistoryCsv.header,
+          line: HistoryCsv.line(
+            now: now,
+            deviceId: _profiles.active.id,
+            firmwareVersion: sample.firmwareVersion,
+            uptimeMs: sample.uptimeMs,
+            state: state,
+            emotion: emotion,
+          ),
+        ),
+      );
     }
     if (mounted) setState(() {});
   }
 
+  List<PlantState> _recentStates() =>
+      _history.length > PlantEmotionEngine.window
+      ? _history
+            .sublist(_history.length - PlantEmotionEngine.window)
+            .map((point) => point.state)
+            .toList()
+      : _history.map((point) => point.state).toList();
+
   void _maybeNotifyLowWater(PlantState state, DateTime now) {
     final water = state.waterObservationPercent ?? state.waterPercent;
-    final low = state.waterLow == true || (water != null && water < 20);
+    final empty = state.waterEmpty == true;
+    final low =
+        empty || state.waterLow == true || (water != null && water < 20);
     if (!low) return;
     final last = _lastWaterAlertAt;
     if (last != null && now.difference(last) < const Duration(minutes: 30)) {
@@ -244,8 +287,10 @@ class _DashboardState extends State<Dashboard> {
     unawaited(
       _notifications.show(
         id: NotificationService.waterAlertId,
-        title: 'Air penampung hampir habis',
-        body: water == null
+        title: empty ? 'Air penampung habis' : 'Air penampung hampir habis',
+        body: empty
+            ? 'Level air kosong. Isi ulang penampung.'
+            : water == null
             ? 'Sensor air menandai level rendah. Isi ulang penampung.'
             : 'Level air $water%. Isi ulang penampung.',
         channel: 'tunas_alerts',
@@ -253,15 +298,7 @@ class _DashboardState extends State<Dashboard> {
     );
   }
 
-  void _maybeSchedulePrediction(PlantState state, DateTime now) {
-    final recent = _history.length > PlantEmotionEngine.window
-        ? _history
-              .sublist(_history.length - PlantEmotionEngine.window)
-              .map((point) => point.state)
-              .toList()
-        : _history.map((point) => point.state).toList();
-    final emotion = PlantEmotionEngine(_emotionModel)
-        .evaluate(state, recent: recent);
+  void _maybeSchedulePrediction(DateTime now, EmotionReading emotion) {
     if (!emotion.available) return;
     final body =
         '${emotion.emotion.label}: ${emotion.signal} ${emotion.prediction}';
@@ -317,6 +354,7 @@ class _DashboardState extends State<Dashboard> {
       _lastHistoryUptime = null;
     });
     await _profileStore.write(_profiles);
+    unawaited(_loadHistory());
     if (widget.localWifi == null) {
       final wasWanted = _useLocalWifi;
       _rebindLocalWifi();
@@ -366,6 +404,26 @@ class _DashboardState extends State<Dashboard> {
           'akan muncul di sini.',
       channel: 'tunas_alerts',
     );
+  }
+
+  Future<void> _exportHistory() async {
+    final path = await _historyService.export(deviceId: _profiles.active.id);
+    if (!mounted) return;
+    if (path == null || path.isEmpty) {
+      showTopNotice(
+        context,
+        title: 'Export CSV gagal',
+        message: 'Belum ada data tersimpan untuk perangkat ini.',
+        icon: Icons.error_outline_rounded,
+      );
+    } else {
+      showTopNotice(
+        context,
+        title: 'CSV tersimpan',
+        message: path,
+        icon: Icons.file_download_done_rounded,
+      );
+    }
   }
 
   void _connectLocalWifi() {
@@ -617,6 +675,7 @@ class _DashboardState extends State<Dashboard> {
             history: List<HistoryPoint>.unmodifiable(_history),
             profile: active,
             emotion: emotion,
+            onExport: _exportHistory,
           ),
           2 => DevicesPage(
             state: state,
@@ -1041,13 +1100,16 @@ class _Home extends StatelessWidget {
                             icon: Icons.waves_rounded,
                             title: 'Level air',
                             value: switch (state.waterLevel) {
+                              WaterLevel.empty => 'Empty',
                               WaterLevel.low => 'Low',
                               WaterLevel.medium => 'Medium',
                               WaterLevel.full => 'Full',
                               null => 'Belum terbaca',
                             },
                             detail: state.waterAdc != null
-                                ? 'ADC ${state.waterAdc}'
+                                ? state.waterEmpty == true
+                                      ? 'ADC ${state.waterAdc} · empty'
+                                      : 'ADC ${state.waterAdc}'
                                 : 'Belum tersedia',
                             color: const Color(0xFF568896),
                           ),

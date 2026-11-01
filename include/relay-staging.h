@@ -25,7 +25,8 @@ class RelayStager {
     writeLight(gpio, false);
   }
 
-  void update(uint32_t nowMs, bool pumpOn, bool lightOn, Gpio& gpio) {
+  void update(uint32_t nowMs, bool pumpOn, bool lightOn, Gpio& gpio,
+              bool immediate = false) {
     if (!initialized_) begin(nowMs, gpio);
 
     if (!controlIntervalElapsed(nowMs, startedMs_, kRelayEnableDelayMs)) {
@@ -49,7 +50,8 @@ class RelayStager {
     const bool pumpOnRequest = !pumpOn_ && pumpOn;
     const bool lightOnRequest = !lightOn_ && lightOn;
     if (!pumpOnRequest && !lightOnRequest) return;
-    if (!controlIntervalElapsed(nowMs, lastChangeMs_, kRelaySwitchGapMs)) {
+    if (!immediate && !controlIntervalElapsed(nowMs, lastChangeMs_,
+                                               kRelaySwitchGapMs)) {
       return;
     }
 

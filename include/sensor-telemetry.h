@@ -79,6 +79,7 @@ inline const char* mqSignalQuality(const SensorSnapshot& sample) {
 inline const char* waterRawReferenceBand(int raw) {
   if (!validAdcRaw(raw)) return "unavailable";
   if (raw == 0 || raw == 4095) return "rail_unverified";
+  if (raw <= kWaterEmptyRawReferenceAdc) return "empty";
   if (raw <= kWaterLowRawReferenceAdc) return "at_or_below_low";
   if (raw < kWaterNearRawReferenceAdc) return "near_low";
   return "above_reference";
@@ -125,20 +126,28 @@ inline int waterDisplayRelativePercent(int relativePercent) {
   return relativePercent > 0 && relativePercent <= 100 ? relativePercent : -1;
 }
 
-inline const char* waterControlBandName(int relativePercent) {
+inline const char* waterControlBandName(int relativePercent, int rawAdc) {
   if (!controlPercentValid(relativePercent)) return "unavailable";
+  if (controlWaterAdcUsable(rawAdc) &&
+      rawAdc <= kWaterEmptyRawReferenceAdc) {
+    return "empty";
+  }
   return relativePercent < kWaterLowBelowPercent ? "below_threshold"
                                                    : "at_or_above_threshold";
 }
 
-inline void formatWaterLcd(char* output, size_t capacity, int relativePercent) {
+inline void formatWaterLcd(char* output, size_t capacity, int relativePercent,
+                           int rawAdc) {
   if (output == nullptr || capacity == 0) return;
   if (!controlPercentValid(relativePercent)) {
-    std::snprintf(output, capacity, "Air:--");
+    std::snprintf(output, capacity, "Water:--");
+  } else if (controlWaterAdcUsable(rawAdc) &&
+             rawAdc <= kWaterEmptyRawReferenceAdc) {
+    std::snprintf(output, capacity, "Water:EMPTY");
   } else if (relativePercent < kWaterLowBelowPercent) {
-    std::snprintf(output, capacity, "Air:RENDAH ref");
+    std::snprintf(output, capacity, "Water:LOW");
   } else {
-    std::snprintf(output, capacity, "Air:~%d%% rel", relativePercent);
+    std::snprintf(output, capacity, "Water:~%d%%", relativePercent);
   }
 }
 
@@ -293,9 +302,12 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
                  waterDisplayRelativePercent(preview.waterPercent));
   formatAdcValue(waterObservedRelative, sizeof(waterObservedRelative),
                  waterDisplayRelativePercent(observedWaterRelativePercent(sample)));
+  const bool waterEmpty = controlWaterAdcUsable(sample.waterAdcRaw) &&
+                          sample.waterAdcRaw <= kWaterEmptyRawReferenceAdc;
   if (sample.waterEnabled) {
     std::snprintf(waterLevel, sizeof(waterLevel),
                   "{\"adc_raw\":%s,\"relative_percent\":%s,\"low\":%s,"
+                  "\"empty\":%s,"
                   "\"status\":\"%s\",\"raw_reference\":{\"band\":\"%s\","
                   "\"low_at_or_below\":%d,\"near_below\":%d,"
                   "\"quality\":\"historical_conflicting\"},"
@@ -306,11 +318,13 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
                   "\"quality\":\"unverified\",\"use_for_control\":false}}",
                   waterRaw, waterRelative,
                   jsonPreviewBoolean(preview.waterLow),
+                  waterEmpty ? "true" : "false",
                   validAdcRaw(sample.waterAdcRaw) ? "unverified" : "unavailable",
                   waterRawReferenceBand(sample.waterAdcRaw),
                   kWaterLowRawReferenceAdc, kWaterNearRawReferenceAdc,
                   adcSignalQuality(sample.waterAdcRaw),
-                  waterControlBandName(preview.waterPercent), waterObservedRelative,
+                  waterControlBandName(preview.waterPercent, sample.waterAdcRaw),
+                  waterObservedRelative,
                   kWaterObservedLowMeanAdc, kWaterObservedNearFullMeanAdc,
                   kDisplayUsesOperatorReferences ? "operator_reported_window_means"
                                                  : "generic_display_references");

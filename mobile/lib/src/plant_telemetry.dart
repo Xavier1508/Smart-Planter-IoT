@@ -42,6 +42,7 @@ class PlantTelemetry {
 class SerialSensorSnapshot {
   const SerialSensorSnapshot._({
     this.uptimeMs,
+    this.firmwareVersion,
     this.temperatureC,
     this.humidityPercent,
     this.soilAdc,
@@ -53,6 +54,7 @@ class SerialSensorSnapshot {
     this.waterRelativePercent,
     this.waterObservationPercent,
     this.waterLow,
+    this.waterEmpty,
     this.waterClassificationInputsValid = false,
     this.mqAdc,
     this.mqDigital,
@@ -71,6 +73,7 @@ class SerialSensorSnapshot {
   });
 
   final int? uptimeMs;
+  final int? firmwareVersion;
   final double? temperatureC;
   final double? humidityPercent;
   final int? soilAdc;
@@ -87,6 +90,9 @@ class SerialSensorSnapshot {
 
   /// Firmware's provisional low-water result, not a physical level switch.
   final bool? waterLow;
+
+  /// Raw-ADC empty flag from the firmware; stricter than [waterLow].
+  final bool? waterEmpty;
 
   /// Malformed classification inputs must not be mistaken for missing fields.
   final bool waterClassificationInputsValid;
@@ -202,6 +208,7 @@ class SerialSensorSnapshot {
     final waterInputsValid =
         usableAdc(waterRaw) &&
         (water['low'] == null || water['low'] is bool) &&
+        (water['empty'] == null || water['empty'] is bool) &&
         (water['relative_percent'] == null || waterPercent != null) &&
         (!observationScaleRecognized ||
             waterObservation['relative_percent'] == null ||
@@ -227,6 +234,7 @@ class SerialSensorSnapshot {
 
     final snapshot = SerialSensorSnapshot._(
       uptimeMs: integer(decoded['uptime_ms'], 0, 0xffffffff),
+      firmwareVersion: version,
       temperatureC: climatePresent
           ? decimal(dht['temperature_c'], -40, 80)
           : null,
@@ -243,6 +251,9 @@ class SerialSensorSnapshot {
       waterObservationPercent: observationPercent,
       waterLow: usableAdc(waterRaw) && water['low'] is bool
           ? water['low'] as bool
+          : null,
+      waterEmpty: usableAdc(waterRaw) && water['empty'] is bool
+          ? water['empty'] as bool
           : null,
       waterClassificationInputsValid: waterInputsValid,
       mqAdc: mqRaw,

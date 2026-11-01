@@ -71,7 +71,7 @@ inline ControlCommand parseControlLine(const char* line) {
     } else if (strcmp(key, "dur") == 0) {
       char* end = nullptr;
       const unsigned long seconds = strtoul(value, &end, 10);
-      if (end == value || *end != '\0' || seconds < 1 || seconds > 30) {
+      if (end == value || *end != '\0' || seconds < 1 || seconds > 1800) {
         return command;
       }
       command.durationSeconds = static_cast<uint32_t>(seconds);

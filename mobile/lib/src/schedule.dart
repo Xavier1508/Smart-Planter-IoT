@@ -40,7 +40,7 @@ class ScheduleEntry {
         at is! String ||
         duration is! int ||
         duration < 1 ||
-        duration > 30) {
+        duration > (target == 'pump' ? 30 : 1800)) {
       return null;
     }
     final parsed = DateTime.tryParse(at);
@@ -61,7 +61,9 @@ class ScheduleEntry {
           ? 'CTRL pump=on dur=$durationSeconds$idPart'
           : 'CTRL pump=off$idPart';
     }
-    return on ? 'CTRL light=on$idPart' : 'CTRL light=off$idPart';
+    return on
+        ? 'CTRL light=on dur=$durationSeconds$idPart'
+        : 'CTRL light=off$idPart';
   }
 
   String get label {
@@ -74,7 +76,13 @@ class ScheduleEntry {
     if (target == 'pump') {
       return on ? 'Pompa ON $time · $durationSeconds dtk' : 'Pompa OFF $time';
     }
-    return on ? 'Lampu ON $time' : 'Lampu OFF $time';
+    if (!on) return 'Lampu OFF $time';
+    final minutes = durationSeconds ~/ 60;
+    final seconds = durationSeconds % 60;
+    final duration =
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+    return 'Lampu ON $time · $duration';
   }
 }
 

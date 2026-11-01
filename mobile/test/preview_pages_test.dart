@@ -29,17 +29,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Belum terhubung'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.text('Kendali perangkat'),
+      find.text('Kelembapan tanah'),
       200,
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.byType(SwitchListTile), findsNothing);
-    expect(
-      find.text(
-        'Otomasi pompa dan lampu berjalan di ESP32; aplikasi ini hanya memantau.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Kendali perangkat'), findsNothing);
+    expect(find.text('Tidak tersedia'), findsWidgets);
   });
 
   testWidgets('pages fit a narrow Android screen', (tester) async {

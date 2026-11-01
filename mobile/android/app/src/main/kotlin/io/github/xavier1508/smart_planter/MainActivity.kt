@@ -196,6 +196,53 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/history")
+            .setMethodCallHandler { call, result ->
+                val deviceId = call.argument<String>("deviceId")
+                when (call.method) {
+                    "append" -> {
+                        val header = call.argument<String>("header")
+                        val line = call.argument<String>("line")
+                        if (deviceId == null || header == null || line == null) {
+                            result.error("invalid", "History payload is invalid.", null)
+                        } else {
+                            try {
+                                HistoryStore.append(this, deviceId, header, line)
+                                result.success(null)
+                            } catch (error: Exception) {
+                                result.error("write_failed", "History write failed.", null)
+                            }
+                        }
+                    }
+                    "readTail" -> {
+                        if (deviceId == null) {
+                            result.error("invalid", "Device id is missing.", null)
+                        } else {
+                            val limit = call.argument<Int>("limit") ?: 240
+                            result.success(HistoryStore.readTail(this, deviceId, limit))
+                        }
+                    }
+                    "export" -> {
+                        if (deviceId == null) {
+                            result.error("invalid", "Device id is missing.", null)
+                        } else {
+                            try {
+                                result.success(HistoryStore.export(this, deviceId))
+                            } catch (error: Exception) {
+                                result.error("export_failed", "History export failed.", null)
+                            }
+                        }
+                    }
+                    "clear" -> {
+                        if (deviceId == null) {
+                            result.error("invalid", "Device id is missing.", null)
+                        } else {
+                            result.success(HistoryStore.clear(this, deviceId))
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/build_info")
             .setMethodCallHandler { call, result ->
                 if (call.method != "read") {

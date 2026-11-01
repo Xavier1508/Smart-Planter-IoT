@@ -1,5 +1,5 @@
+import 'plant_health.dart';
 import 'plant_state.dart';
-import 'synthetic_xgboost.dart';
 
 /// Three presentation emotions driven by the experimental synthetic model,
 /// with threshold rules kept as a safety-oriented override. This is a demo
@@ -79,7 +79,7 @@ class EmotionReading {
 class PlantEmotionEngine {
   const PlantEmotionEngine(this.model);
 
-  final SyntheticXgboostModel? model;
+  final PlantHealthModel? model;
 
   static const window = 6;
 
@@ -104,15 +104,18 @@ class PlantEmotionEngine {
     final light = state.lightPercent;
     final uv = state.uvIndex;
 
-    // The model expects a 0-100 soil value, a 0-100 water observation value,
-    // a 0-100 light value and an optional 1-14 UV index.
-    SyntheticPrediction? prediction;
+    // The tree expects soil/water/light percentages plus optional climate/gas
+    // values. Missing optional sensors are imputed inside the model.
+    PlantHealthPrediction? prediction;
     if (model != null) {
       prediction = model!.predict(
         soilPercent: soil,
-        waterObservationPercent: water,
+        waterPercent: water,
         lightPercent: light,
-        uvIndex: uv != null && uv >= 1 && uv <= 14 ? uv : null,
+        temperatureC: state.temperatureC,
+        humidityPercent: state.humidityPercent?.toDouble(),
+        uvIndex: uv,
+        mqGasIndex: state.mqGasIndex,
       );
     }
 
@@ -121,16 +124,13 @@ class PlantEmotionEngine {
     double alert = 0;
     if (prediction != null) {
       double score(String name) {
-        final index = SyntheticXgboostModel.classes.indexOf(name);
+        final index = PlantHealthModel.classes.indexOf(name);
         return index < 0 ? 0 : prediction!.scores[index];
       }
 
-      happy += score('no_synthetic_alert');
-      alert += score('soil_relative_low') + score('water_near_low_reference');
-      neutral +=
-          score('uv_unavailable') +
-          score('light_hold_band') +
-          score('light_relative_low');
+      happy += score('healthy');
+      neutral += score('warning');
+      alert += score('critical');
     }
 
     // Rule guard. The rules are not a second model; they keep the demo from
@@ -154,6 +154,11 @@ class PlantEmotionEngine {
       }
     }
     if (state.waterLow == true) alert += .35;
+    // Saturated soil is not healthy, even when the reservoir is full. A full
+    // water sensor plus saturated soil is the classic flood/overwatering case.
+    final waterlogged = soil != null && soil >= 85;
+    final flooded = waterlogged && water != null && water >= 75;
+    if (waterlogged) alert += flooded ? 1.2 : .7;
     final gas = state.mqGasIndex;
     if (gas != null && gas >= 70) alert += .15;
     final temperature = state.temperatureC;
@@ -185,9 +190,15 @@ class PlantEmotionEngine {
     final measuredAlert =
         (soil != null && soil < 35) ||
         (water != null && water < 20) ||
-        state.waterLow == true;
+        state.waterLow == true ||
+        waterlogged;
+    final measuredNeutral =
+        (soil != null && soil >= 35 && soil < 55) ||
+        (water != null && water >= 20 && water < 35);
     final emotion = measuredAlert
         ? PlantEmotion.alert
+        : measuredNeutral
+        ? PlantEmotion.neutral
         : (alert >= .48
               ? PlantEmotion.alert
               : (happy >= .46 && happy >= neutral
@@ -204,7 +215,7 @@ class PlantEmotionEngine {
       trend: trend,
       confidence: confidence,
       signal: _signal(state, soil, water, gas, emotion),
-      prediction: _prediction(emotion, trend),
+      prediction: _prediction(emotion, trend, flooded: flooded),
       modelLabel: prediction?.label ?? 'aturan lokal',
       available: true,
     );
@@ -245,6 +256,14 @@ class PlantEmotionEngine {
     int? gas,
     PlantEmotion emotion,
   ) {
+    if (state.waterEmpty == true) {
+      return 'Air penampung kosong (empty).';
+    }
+    if (soil != null && soil >= 85) {
+      return water != null && water >= 75
+          ? 'Tanah dan air terlalu tinggi — risiko banjir.'
+          : 'Tanah terlalu basah — risiko kelebihan air.';
+    }
     if (soil != null && soil < 35) return 'Kelembapan tanah rendah ($soil%).';
     if (water != null && water < 20) {
       return 'Air di bawah batas relatif ($water%).';
@@ -262,8 +281,15 @@ class PlantEmotionEngine {
     return 'Tanah dan air dalam rentang pantau.';
   }
 
-  String _prediction(PlantEmotion emotion, ConditionTrend trend) {
+  String _prediction(
+    PlantEmotion emotion,
+    ConditionTrend trend, {
+    bool flooded = false,
+  }) {
     if (emotion == PlantEmotion.alert) {
+      if (flooded) {
+        return 'Kurangi air dan pastikan drainase; jangan siram lagi.';
+      }
       return 'Perlu perhatian sekarang; cek pompa, air, dan probe tanah.';
     }
     if (trend == ConditionTrend.worsening) {

@@ -31,7 +31,12 @@ class DevicesPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    String status(bool available) => available ? 'Tersedia' : 'Belum ada data';
+    String availability({required bool available, required bool usable}) =>
+        !available
+        ? 'Tidak tersedia'
+        : usable
+        ? 'Tersedia'
+        : 'Tidak dapat menampilkan data';
     final connected =
         localSelected &&
         (localStatus == LocalWifiStatus.live ||
@@ -112,7 +117,11 @@ class DevicesPage extends StatelessWidget {
         ),
         if (onCommand != null && controlId != null) ...[
           const SizedBox(height: 20),
-          _ManualControls(onCommand: onCommand!, controlId: controlId!),
+          _ManualControls(
+            state: state,
+            onCommand: onCommand!,
+            controlId: controlId!,
+          ),
         ],
         if (onAddSchedule != null && onDeleteSchedule != null) ...[
           const SizedBox(height: 20),
@@ -131,74 +140,56 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.grass_rounded,
           name: 'Kelembapan tanah',
-          status: state.soilPercent != null && state.soilAdc != null
-              ? 'ADC ${state.soilAdc} · ${state.soilPercent}%'
-              : state.soilAdc != null
-              ? 'Belum ada data · ADC ${state.soilAdc}'
-              : 'Belum ada data',
+          status: availability(
+            available: state.soilAdc != null,
+            usable: state.soilPercent != null,
+          ),
         ),
         _SensorRow(
           icon: Icons.thermostat_rounded,
           name: 'Suhu & kelembapan udara',
-          status: status(
-            state.temperatureC != null || state.humidityPercent != null,
+          status: availability(
+            available:
+                state.temperatureC != null || state.humidityPercent != null,
+            usable: state.temperatureC != null || state.humidityPercent != null,
           ),
         ),
         _SensorRow(
           icon: Icons.wb_sunny_outlined,
           name: 'Cahaya',
-          status: state.lightPercent != null && state.lightAdc != null
-              ? 'ADC ${state.lightAdc} · ${state.lightPercent}%'
-              : status(state.lightPercent != null),
+          status: availability(
+            available: state.lightAdc != null,
+            usable: state.lightPercent != null,
+          ),
         ),
         _SensorRow(
           icon: Icons.wb_twilight_rounded,
           name: 'UV',
-          status: state.uvAdc != null
-              ? 'ADC ${state.uvAdc}'
-              : state.uvIndex != null
-              ? 'Tersedia'
-              : 'Belum ada data',
+          status: availability(
+            available: state.uvAdc != null,
+            usable: state.uvAdc != null,
+          ),
         ),
         _SensorRow(
           icon: Icons.water_drop_outlined,
           name: 'Level air',
-          status: state.waterAdc != null
-              ? 'ADC ${state.waterAdc}'
-              : 'Belum dapat diklasifikasi',
+          status: state.waterAdc == null
+              ? 'Tidak tersedia'
+              : state.waterEmpty == true
+              ? 'Empty'
+              : (state.waterObservationPercent != null ||
+                    state.waterPercent != null)
+              ? 'Tersedia'
+              : 'Tidak dapat menampilkan data',
         ),
         _SensorRow(
           icon: Icons.air_rounded,
           name: 'Sensor udara MQ135',
-          status: state.mqGasIndex != null
-              ? 'Indeks gas ${state.mqGasIndex}/100 · relatif'
-              : state.mqAdc != null
-              ? 'ADC ${state.mqAdc} · indeks belum tersedia'
-              : state.mqDigital == null
-              ? 'Belum tersedia'
-              : 'Digital ${state.mqDigital}',
+          status: availability(
+            available: state.mqAdc != null || state.mqDigital != null,
+            usable: state.mqGasIndex != null,
+          ),
         ),
-        if (state.isSerialSnapshot &&
-            (state.pumpRulePreview != null ||
-                state.lightRulePreview != null ||
-                state.waterLowPreview != null)) ...[
-          const SizedBox(height: 22),
-          const Text(
-            'Pratinjau aturan serial',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Perhitungan dari snapshot; bukan perintah, status relay, '
-            'atau notifikasi live.',
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Pompa <${state.pumpRuleThreshold ?? '?'}%: ${_previewText(state.pumpRulePreview)}',
-          ),
-          Text('Lampu <60%: ${_previewText(state.lightRulePreview)}'),
-          Text('Air <20%: ${_waterPreviewText(state.waterLowPreview)}'),
-        ],
         if (state.isLocalLive &&
             (state.pumpCommand != null || state.lightCommand != null)) ...[
           const SizedBox(height: 22),
@@ -217,53 +208,9 @@ class DevicesPage extends StatelessWidget {
             'Perintah bukan pengukuran kontak relay atau keadaan beban.',
           ),
         ],
-        const SizedBox(height: 22),
-        const Text(
-          'Kendali perangkat',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: context.mossColors.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.lock_outline_rounded,
-                color: context.mossColors.onSurfaceVariant,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Otomasi pompa dan lampu berjalan di ESP32; aplikasi ini hanya memantau.',
-                  style: TextStyle(
-                    color: context.mossColors.onSurfaceVariant,
-                    height: 1.4,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
-
-  String _previewText(bool? value) => value == null
-      ? 'Belum tersedia'
-      : value
-      ? 'Menyala (pratinjau)'
-      : 'Mati (pratinjau)';
-
-  String _waterPreviewText(bool? value) => value == null
-      ? 'Belum tersedia'
-      : value
-      ? 'Di bawah ambang (snapshot)'
-      : 'Tidak di bawah ambang (snapshot)';
 
   String _commandText(bool? value) => value == null
       ? 'Tidak diketahui'
@@ -388,6 +335,8 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
   DateTime _at = DateTime.now().add(const Duration(minutes: 5));
   int _second = 0;
   double _duration = 5;
+  int _lampMinutes = 5;
+  int _lampSeconds = 0;
   String? _error;
 
   Future<void> _pickDate() async {
@@ -443,6 +392,10 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
       setState(() => _error = 'Waktu jadwal harus di masa depan.');
       return;
     }
+    final lampTotal = _lampMinutes * 60 + _lampSeconds;
+    final durationSeconds = _target == 'pump'
+        ? _duration.round()
+        : (lampTotal < 1 ? 1 : (lampTotal > 1800 ? 1800 : lampTotal));
     Navigator.pop(
       context,
       ScheduleEntry(
@@ -450,7 +403,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
         target: _target,
         on: _on,
         at: at,
-        durationSeconds: _duration.round(),
+        durationSeconds: durationSeconds,
       ),
     );
   }
@@ -517,6 +470,52 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
               onChanged: (value) => setState(() => _duration = value),
             ),
           ],
+          if (_target == 'light' && _on) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Durasi lampu: '
+              '${_lampMinutes.toString().padLeft(2, '0')}:'
+              '${_lampSeconds.toString().padLeft(2, '0')} (menit + detik)',
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Menit: $_lampMinutes'),
+                      Slider(
+                        value: _lampMinutes.toDouble(),
+                        min: 0,
+                        max: 30,
+                        divisions: 30,
+                        label: '$_lampMinutes m',
+                        onChanged: (value) =>
+                            setState(() => _lampMinutes = value.round()),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Detik: $_lampSeconds'),
+                      Slider(
+                        value: _lampSeconds.toDouble(),
+                        min: 0,
+                        max: 59,
+                        divisions: 59,
+                        label: '$_lampSeconds s',
+                        onChanged: (value) =>
+                            setState(() => _lampSeconds = value.round()),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (_error != null)
             Text(
               _error!,
@@ -535,8 +534,24 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
   );
 }
 
+enum _ManualMode { on, off, auto }
+
+extension on _ManualMode {
+  String get label => switch (this) {
+    _ManualMode.on => 'ON',
+    _ManualMode.off => 'OFF',
+    _ManualMode.auto => 'AUTO',
+  };
+}
+
 class _ManualControls extends StatefulWidget {
-  const _ManualControls({required this.onCommand, required this.controlId});
+  const _ManualControls({
+    required this.state,
+    required this.onCommand,
+    required this.controlId,
+  });
+
+  final PlantState state;
   final Future<bool> Function(String line) onCommand;
   final int Function() controlId;
 
@@ -545,27 +560,146 @@ class _ManualControls extends StatefulWidget {
 }
 
 class _ManualControlsState extends State<_ManualControls> {
-  double _duration = 5;
+  double _pumpSeconds = 5;
+  int _lampMinutes = 5;
+  int _lampSeconds = 0;
+  _ManualMode _pumpMode = _ManualMode.auto;
+  _ManualMode _lightMode = _ManualMode.auto;
   bool _busy = false;
-  String _message = 'Pilih perintah; status relay fisik tidak diukur.';
+  String _message = 'Pilih mode. Tombol yang aktif ditandai.';
+  Timer? _pumpTimer;
+  Timer? _lightTimer;
 
-  Future<void> _send(String line) async {
+  int get _lampTotalSeconds {
+    final total = _lampMinutes * 60 + _lampSeconds;
+    return total < 1 ? 1 : (total > 1800 ? 1800 : total);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _pumpMode = _pumpModeFromReason(widget.state.pumpReason);
+    _lightMode = _lightModeFromReason(widget.state.lightReason);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ManualControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final pump = _manualPumpMode(widget.state.pumpReason);
+    final light = _manualLightMode(widget.state.lightReason);
+    if (pump != null) _pumpMode = pump;
+    if (light != null) _lightMode = light;
+  }
+
+  @override
+  void dispose() {
+    _pumpTimer?.cancel();
+    _lightTimer?.cancel();
+    super.dispose();
+  }
+
+  _ManualMode _pumpModeFromReason(String? reason) =>
+      _manualPumpMode(reason) ?? _ManualMode.auto;
+
+  _ManualMode _lightModeFromReason(String? reason) =>
+      _manualLightMode(reason) ?? _ManualMode.auto;
+
+  _ManualMode? _manualPumpMode(String? reason) => switch (reason) {
+    'manual_on' => _ManualMode.on,
+    'manual_off' => _ManualMode.off,
+    'manual_expired' || 'manual_released' => _ManualMode.auto,
+    _ => null,
+  };
+
+  _ManualMode? _manualLightMode(String? reason) => switch (reason) {
+    'manual_on' => _ManualMode.on,
+    'manual_off' || 'manual_expired' => _ManualMode.off,
+    'manual_released' => _ManualMode.auto,
+    _ => null,
+  };
+
+  Future<void> _send(
+    String line, {
+    required _ManualMode mode,
+    required bool pump,
+  }) async {
     if (_busy) return;
+    final previousPump = _pumpMode;
+    final previousLight = _lightMode;
     setState(() {
       _busy = true;
       _message = 'Mengirim…';
+      if (pump) {
+        _pumpMode = mode;
+      } else {
+        _lightMode = mode;
+      }
     });
     final ok = await widget.onCommand(line);
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _message = ok
-          ? 'Perintah terkirim. Pompa ON maksimal ${_duration.round()} detik.'
-          : 'Perintah gagal; sambungkan Wi-Fi Moss.';
+      if (!ok) {
+        if (pump) {
+          _pumpMode = previousPump;
+        } else {
+          _lightMode = previousLight;
+        }
+        _message = 'Perintah gagal; sambungkan Wi-Fi perangkat.';
+      } else {
+        _message = pump
+            ? 'Pompa ${mode.label}${mode == _ManualMode.on ? ' · ${_pumpSeconds.round()} detik' : ''}.'
+            : 'Lampu ${mode.label}${mode == _ManualMode.on ? ' · ${_durationText(_lampTotalSeconds)}' : ''}.';
+      }
     });
+    if (!ok) return;
+    if (pump) {
+      _pumpTimer?.cancel();
+      if (mode == _ManualMode.on) {
+        _pumpTimer = Timer(Duration(seconds: _pumpSeconds.round()), () {
+          if (mounted && _pumpMode == _ManualMode.on) {
+            setState(() => _pumpMode = _ManualMode.auto);
+          }
+        });
+      }
+    } else {
+      _lightTimer?.cancel();
+      if (mode == _ManualMode.on) {
+        _lightTimer = Timer(Duration(seconds: _lampTotalSeconds), () {
+          if (mounted && _lightMode == _ManualMode.on) {
+            setState(() => _lightMode = _ManualMode.off);
+          }
+        });
+      }
+    }
   }
 
-  String _id() => widget.controlId().toString();
+  void _setPump(_ManualMode mode) {
+    final id = widget.controlId();
+    final line = switch (mode) {
+      _ManualMode.on => 'CTRL pump=on dur=${_pumpSeconds.round()} id=$id',
+      _ManualMode.off => 'CTRL pump=off id=$id',
+      _ManualMode.auto => 'CTRL pump=auto id=$id',
+    };
+    unawaited(_send(line, mode: mode, pump: true));
+  }
+
+  void _setLight(_ManualMode mode) {
+    final id = widget.controlId();
+    final line = switch (mode) {
+      _ManualMode.on => 'CTRL light=on dur=$_lampTotalSeconds id=$id',
+      _ManualMode.off => 'CTRL light=off id=$id',
+      _ManualMode.auto => 'CTRL light=auto id=$id',
+    };
+    unawaited(_send(line, mode: mode, pump: false));
+  }
+
+  static String _durationText(int seconds) {
+    final minutes = seconds ~/ 60;
+    final rest = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${rest.toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) => Container(
@@ -584,79 +718,94 @@ class _ManualControlsState extends State<_ManualControls> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Override otomatis. Pompa ON dibatasi 30 detik, lalu kembali otomatis.',
+          'Pilih ON, OFF, atau AUTO. Tombol yang aktif diberi warna dan label AKTIF. '
+          'Perintah dikirim langsung ke ESP32.',
           style: TextStyle(
             fontSize: 11,
             height: 1.4,
             color: context.mossColors.onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 12),
-        Text('Durasi pompa: ${_duration.round()} detik'),
-        Slider(
-          value: _duration,
-          min: 1,
-          max: 30,
-          divisions: 29,
-          label: '${_duration.round()} s',
-          onChanged: _busy
-              ? null
-              : (value) => setState(() => _duration = value),
-        ),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+        const SizedBox(height: 16),
+        _ControlBlock(
+          title: 'Pompa',
+          icon: Icons.water_drop_rounded,
+          accent: const Color(0xFF3F7FA8),
+          mode: _pumpMode,
+          busy: _busy,
+          onMode: _setPump,
           children: [
-            FilledButton(
-              onPressed: _busy
+            Text('Durasi pompa: ${_pumpSeconds.round()} detik'),
+            Slider(
+              value: _pumpSeconds,
+              min: 1,
+              max: 30,
+              divisions: 29,
+              label: '${_pumpSeconds.round()} s',
+              onChanged: _busy
                   ? null
-                  : () => unawaited(
-                      _send(
-                        'CTRL pump=on dur=${_duration.round()} id=${_id()}',
+                  : (value) => setState(() => _pumpSeconds = value),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _ControlBlock(
+          title: 'Lampu',
+          icon: Icons.lightbulb_outline_rounded,
+          accent: const Color(0xFFB8862E),
+          mode: _lightMode,
+          busy: _busy,
+          onMode: _setLight,
+          children: [
+            Text(
+              'Durasi lampu: ${_durationText(_lampTotalSeconds)} '
+              '(menit + detik)',
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Menit: $_lampMinutes'),
+                      Slider(
+                        value: _lampMinutes.toDouble(),
+                        min: 0,
+                        max: 30,
+                        divisions: 30,
+                        label: '$_lampMinutes m',
+                        onChanged: _busy
+                            ? null
+                            : (value) =>
+                                  setState(() => _lampMinutes = value.round()),
                       ),
-                    ),
-              child: const Text('Pompa ON'),
-            ),
-            OutlinedButton(
-              onPressed: _busy
-                  ? null
-                  : () => unawaited(_send('CTRL pump=off id=${_id()}')),
-              child: const Text('Pompa OFF'),
-            ),
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () => unawaited(_send('CTRL pump=auto id=${_id()}')),
-              child: const Text('Pompa AUTO'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            FilledButton.tonal(
-              onPressed: _busy
-                  ? null
-                  : () => unawaited(_send('CTRL light=on id=${_id()}')),
-              child: const Text('Lampu ON'),
-            ),
-            OutlinedButton(
-              onPressed: _busy
-                  ? null
-                  : () => unawaited(_send('CTRL light=off id=${_id()}')),
-              child: const Text('Lampu OFF'),
-            ),
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () => unawaited(_send('CTRL light=auto id=${_id()}')),
-              child: const Text('Lampu AUTO'),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Detik: $_lampSeconds'),
+                      Slider(
+                        value: _lampSeconds.toDouble(),
+                        min: 0,
+                        max: 59,
+                        divisions: 59,
+                        label: '$_lampSeconds s',
+                        onChanged: _busy
+                            ? null
+                            : (value) =>
+                                  setState(() => _lampSeconds = value.round()),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         Text(
           _message,
           style: TextStyle(
@@ -666,6 +815,99 @@ class _ManualControlsState extends State<_ManualControls> {
         ),
       ],
     ),
+  );
+}
+
+class _ControlBlock extends StatelessWidget {
+  const _ControlBlock({
+    required this.title,
+    required this.icon,
+    required this.accent,
+    required this.mode,
+    required this.busy,
+    required this.onMode,
+    required this.children,
+  });
+
+  final String title;
+  final IconData icon;
+  final Color accent;
+  final _ManualMode mode;
+  final bool busy;
+  final ValueChanged<_ManualMode> onMode;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Icon(icon, color: accent, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: .14),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'AKTIF: ${mode.label}',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                color: accent,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: SegmentedButton<_ManualMode>(
+          segments: const [
+            ButtonSegment(
+              value: _ManualMode.on,
+              label: Text('ON'),
+              icon: Icon(Icons.power_settings_new_rounded),
+            ),
+            ButtonSegment(
+              value: _ManualMode.off,
+              label: Text('OFF'),
+              icon: Icon(Icons.power_off_rounded),
+            ),
+            ButtonSegment(
+              value: _ManualMode.auto,
+              label: Text('AUTO'),
+              icon: Icon(Icons.autorenew_rounded),
+            ),
+          ],
+          selected: {mode},
+          onSelectionChanged: busy ? null : (values) => onMode(values.first),
+          showSelectedIcon: true,
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            backgroundColor: WidgetStateProperty.resolveWith((states) {
+              return states.contains(WidgetState.selected)
+                  ? accent.withValues(alpha: .18)
+                  : null;
+            }),
+            foregroundColor: WidgetStateProperty.resolveWith((states) {
+              return states.contains(WidgetState.selected) ? accent : null;
+            }),
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      ...children,
+    ],
   );
 }
 

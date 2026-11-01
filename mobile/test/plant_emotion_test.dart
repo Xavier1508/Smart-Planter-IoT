@@ -3,14 +3,14 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/plant_emotion.dart';
 import 'package:smart_planter/src/plant_state.dart';
-import 'package:smart_planter/src/synthetic_xgboost.dart';
+import 'package:smart_planter/src/plant_health.dart';
 
 void main() {
-  late SyntheticXgboostModel model;
+  late PlantHealthModel model;
 
   setUpAll(() async {
-    final asset = await File('assets/ml/pattern-models.json').readAsString();
-    model = SyntheticXgboostModel.parse(asset);
+    final asset = await File('assets/ml/plant-health.json').readAsString();
+    model = PlantHealthModel.parse(asset);
   });
 
   PlantState live({
@@ -58,6 +58,21 @@ void main() {
         .evaluate(live(soil: 70, water: 12, waterLow: true));
     expect(reading.emotion, PlantEmotion.alert);
     expect(reading.signal, contains('Air'));
+  });
+
+  test('saturated soil with a full reservoir is a flood, not healthy', () {
+    final reading = PlantEmotionEngine(model)
+        .evaluate(live(soil: 99, water: 99));
+    expect(reading.emotion, PlantEmotion.alert);
+    expect(reading.signal, contains('banjir'));
+    expect(reading.prediction, contains('Kurangi air'));
+  });
+
+  test('saturated soil alone is overwatering', () {
+    final reading = PlantEmotionEngine(model)
+        .evaluate(live(soil: 95, water: 40));
+    expect(reading.emotion, PlantEmotion.alert);
+    expect(reading.signal, contains('terlalu basah'));
   });
 
   test('the middle band is never presented as happy', () {

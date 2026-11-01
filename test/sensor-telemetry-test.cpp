@@ -195,6 +195,8 @@ int main() {
   assert(planter::kPumpOffAtOrAboveRawAdc == 1200);
   assert(planter::kLightOnBelowPercent == 65);
   assert(planter::kWaterLowBelowPercent == 20);
+  assert(planter::kPumpWaterLowRawAdc == 600);
+  assert(planter::kWaterEmptyRawReferenceAdc == 450);
   assert(planter::belowThresholdPreview(64, planter::kLightOnBelowPercent) == 1);
   assert(planter::belowThresholdPreview(65, planter::kLightOnBelowPercent) == 0);
   assert(planter::belowThresholdPreview(66, planter::kLightOnBelowPercent) == 0);
@@ -210,6 +212,10 @@ int main() {
   assert(planter::kWaterNearRawReferenceAdc > planter::kWaterLowRawReferenceAdc);
   assert(std::strcmp(planter::waterRawReferenceBand(-1), "unavailable") == 0);
   assert(std::strcmp(planter::waterRawReferenceBand(0), "rail_unverified") == 0);
+  assert(std::strcmp(planter::waterRawReferenceBand(planter::kWaterEmptyRawReferenceAdc),
+                     "empty") == 0);
+  assert(std::strcmp(planter::waterRawReferenceBand(planter::kWaterEmptyRawReferenceAdc + 1),
+                     "at_or_below_low") == 0);
   assert(std::strcmp(planter::waterRawReferenceBand(planter::kWaterLowRawReferenceAdc),
                      "at_or_below_low") == 0);
   assert(std::strcmp(planter::waterRawReferenceBand(planter::kWaterLowRawReferenceAdc + 1),
@@ -242,7 +248,7 @@ int main() {
   assert(planter::kSoilAdcReadEnabled);
   assert(planter::kLightAutomationEnabled);
   assert(planter::kPumpAllowEstimatedSoil);
-  assert(planter::kFirmwareVersion == 26);
+  assert(planter::kFirmwareVersion == 28);
 
   // Bounded manual-control protocol.
   auto control = planter::parseControlLine("CTRL pump=on dur=5 id=12");
@@ -253,9 +259,13 @@ int main() {
   assert(control.valid && control.pumpSet && control.pumpAuto);
   control = planter::parseControlLine("CTRL light=off id=9");
   assert(control.valid && control.lightSet && !control.lightOn);
+  control = planter::parseControlLine("CTRL light=on dur=300 id=10");
+  assert(control.valid && control.lightSet && control.lightOn &&
+         control.durationSeconds == 300);
   assert(!planter::parseControlLine("CTRL pump=maybe").valid);
   assert(!planter::parseControlLine("CTRL pump=on dur=0").valid);
-  assert(!planter::parseControlLine("CTRL pump=on dur=31").valid);
+  assert(!planter::parseControlLine("CTRL pump=on dur=1801").valid);
+  assert(!planter::parseControlLine("CTRL light=on dur=1801").valid);
   assert(!planter::parseControlLine("CTRL").valid);
   assert(!planter::parseControlLine("HELLO pump=on").valid);
   planter::ControlLineReader controlReader;
@@ -292,9 +302,9 @@ int main() {
   assert(std::strcmp(planter::pumpSoilBandName(PumpSoilBand::wet), "wet") == 0);
   assert(std::strcmp(planter::pumpSoilBandName(PumpSoilBand::unavailable),
                      "unavailable") == 0);
-  assert(std::strcmp(planter::pumpSoilBandLcd(PumpSoilBand::dry), "KERING") == 0);
-  assert(std::strcmp(planter::pumpSoilBandLcd(PumpSoilBand::hold), "TAHAN") == 0);
-  assert(std::strcmp(planter::pumpSoilBandLcd(PumpSoilBand::wet), "BASAH") == 0);
+  assert(std::strcmp(planter::pumpSoilBandLcd(PumpSoilBand::dry), "DRY") == 0);
+  assert(std::strcmp(planter::pumpSoilBandLcd(PumpSoilBand::hold), "HOLD") == 0);
+  assert(std::strcmp(planter::pumpSoilBandLcd(PumpSoilBand::wet), "WET") == 0);
   assert(std::strcmp(planter::pumpSoilBandLcd(PumpSoilBand::unavailable), "N/A") == 0);
   for (const auto band : {PumpSoilBand::dry, PumpSoilBand::hold,
                           PumpSoilBand::wet, PumpSoilBand::unavailable}) {
@@ -602,6 +612,25 @@ int main() {
   manualControl.setLightAuto();
   manualControl.accept(13000, input);
   assert(!manualControl.status().lightOn);
+
+  // A timed lamp run ends OFF and stays manually OFF until AUTO.
+  planter::RelayController lampTimer;
+  lampTimer.begin(0);
+  input = {39, 70, 80, true, true, true, true};
+  lampTimer.setLightManual(6000, true, 5000);
+  lampTimer.accept(6500, input);
+  assert(lampTimer.status().lightOn);
+  assert(std::strcmp(lampTimer.status().lightReason, "manual_on") == 0);
+  lampTimer.tick(11000);
+  assert(!lampTimer.status().lightOn);
+  assert(std::strcmp(lampTimer.status().lightReason, "manual_expired") == 0);
+  lampTimer.accept(15000, input);
+  assert(!lampTimer.status().lightOn);
+  assert(std::strcmp(lampTimer.status().lightReason, "manual_expired") == 0);
+  lampTimer.setLightAuto();
+  lampTimer.accept(20000, input);
+  assert(!lampTimer.status().lightOn);
+
   manualControl.setPumpManual(14000, false, 0);
   manualControl.accept(14500, input);
   assert(!manualControl.status().pumpOn);
@@ -700,6 +729,28 @@ int main() {
   input.waterPercent = 45;
   blockedPump.accept(390000, input);
   assert(blockedPump.status().pumpOn);
+
+  // Raw water guard: 700 ADC is below the 20% display warning but above the
+  // 600 ADC pump cutoff, so automatic watering may run. 590 ADC stops it.
+  planter::RelayController rawWaterPump;
+  rawWaterPump.begin(0);
+  input = {39, 70, 0, true, true, true, true};
+  input.waterAdcRaw = 700;
+  rawWaterPump.accept(5000, input);
+  assert(rawWaterPump.status().pumpOn);
+  assert(std::strcmp(rawWaterPump.status().pumpReason, "soil_dry") == 0);
+  input.waterAdcRaw = 590;
+  for (int i = 0; i < planter::kWaterLowRunningConfirmSamples; ++i) {
+    rawWaterPump.accept(10000 + static_cast<uint32_t>(i) * 5000, input);
+  }
+  assert(!rawWaterPump.status().pumpOn);
+  assert(std::strcmp(rawWaterPump.status().pumpReason, "water_low") == 0);
+  rawWaterPump.accept(60000, input);
+  assert(!rawWaterPump.status().pumpOn);
+  assert(std::strcmp(rawWaterPump.status().pumpReason, "water_low") == 0);
+  input.waterAdcRaw = 700;
+  rawWaterPump.accept(65000, input);
+  assert(rawWaterPump.status().pumpOn);
 
   planter::RelayController boundaryWater;
   boundaryWater.begin(0);
@@ -855,7 +906,7 @@ int main() {
                 expectedLightPercent);
   assert(std::strstr(output, expectedLight) != nullptr);
   assert(std::strstr(output, "\"water_level\":{\"adc_raw\":1789,\"relative_percent\":100,"
-                             "\"low\":false,\"status\":\"unverified\",\"raw_reference\":{") != nullptr);
+                             "\"low\":false,\"empty\":false,\"status\":\"unverified\",\"raw_reference\":{") != nullptr);
   char expectedWaterBand[160];
   std::snprintf(expectedWaterBand, sizeof(expectedWaterBand),
                 "\"band\":\"above_reference\",\"low_at_or_below\":%d,"
@@ -878,7 +929,7 @@ int main() {
                              "\"adc_calibration_source\":\"efuse_vref\"") != nullptr);
   assert(std::strstr(output, "\"environment_compensation\":\"not_applied\"") != nullptr);
   assert(std::strstr(output, "\"observation_label\":null") != nullptr);
-  assert(std::strstr(output, "\"firmware_version\":26") != nullptr);
+  assert(std::strstr(output, "\"firmware_version\":28") != nullptr);
   char expectedSoilScale[96];
   std::snprintf(expectedSoilScale, sizeof(expectedSoilScale),
                 "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d",
@@ -1019,7 +1070,7 @@ int main() {
   SensorSnapshot rawReferenceFixture = valid;
   rawReferenceFixture.waterAdcRaw = planter::kWaterLowRawReferenceAdc;
   assert(formatTelemetry(rawReferenceFixture, output, sizeof(output), &reported));
-  assert(std::strstr(output, "\"relative_percent\":null,\"low\":true") != nullptr);
+  assert(std::strstr(output, "\"relative_percent\":null,\"low\":true,\"empty\":false") != nullptr);
   assert(std::strstr(output, "\"band\":\"at_or_below_low\"") != nullptr);
   assert(std::strstr(output, "\"pump_cmd\":false") != nullptr);
   assert(planter::previewRules(rawReferenceFixture).waterPercent == 0);
@@ -1032,11 +1083,11 @@ int main() {
     const planter::RulePreview nearEmptyPreview = planter::previewRules(almostEmpty);
     assert(nearEmptyPreview.waterPercent == 0 && nearEmptyPreview.waterLow == 1);
     assert(planter::waterDisplayRelativePercent(nearEmptyPreview.waterPercent) == -1);
-    assert(std::strcmp(planter::waterControlBandName(nearEmptyPreview.waterPercent),
+    assert(std::strcmp(planter::waterControlBandName(nearEmptyPreview.waterPercent, almostEmpty.waterAdcRaw),
                        "below_threshold") == 0);
     char lcdWater[17];
-    planter::formatWaterLcd(lcdWater, sizeof(lcdWater), nearEmptyPreview.waterPercent);
-    assert(std::strcmp(lcdWater, "Air:RENDAH ref") == 0);
+    planter::formatWaterLcd(lcdWater, sizeof(lcdWater), nearEmptyPreview.waterPercent, almostEmpty.waterAdcRaw);
+    assert(std::strcmp(lcdWater, "Water:LOW") == 0);
     planter::RelayController lowTank;
     lowTank.begin(0);
     planter::ControlInput dryInput = convertedTrial;
@@ -1048,13 +1099,31 @@ int main() {
     const planter::ControlStatus lowStatus = lowTank.status();
     almostEmpty.uptimeMs = 15000;  // Ordered after the boundary fixtures for loopback.
     assert(formatTelemetry(almostEmpty, output, sizeof(output), &lowStatus));
-    assert(std::strstr(output, "\"relative_percent\":null,\"low\":true") != nullptr);
+    assert(std::strstr(output, "\"relative_percent\":null,\"low\":true,\"empty\":false") != nullptr);
     assert(std::strstr(output, "\"control_band\":\"below_threshold\"") != nullptr);
     assert(std::strstr(output, "\"observation_scale\":{\"relative_percent\":null") != nullptr);
     assert(std::strstr(output, "\"pump_cmd\":false,\"pump_reason\":\"water_low\"") != nullptr);
     assert(std::strstr(output, "\"pump_gpio_level_requested\":\"HIGH\"") != nullptr);
     if (raw == 750) std::cout << "TEST_FIXTURE " << output << '\n';
   }
+
+  SensorSnapshot emptyTank = trialSample;
+  emptyTank.waterAdcRaw = planter::kWaterEmptyRawReferenceAdc;
+  const planter::RulePreview emptyPreview = planter::previewRules(emptyTank);
+  assert(emptyPreview.waterPercent == 0 && emptyPreview.waterLow == 1);
+  assert(std::strcmp(planter::waterRawReferenceBand(emptyTank.waterAdcRaw), "empty") == 0);
+  assert(std::strcmp(planter::waterControlBandName(emptyPreview.waterPercent,
+                                                   emptyTank.waterAdcRaw),
+                     "empty") == 0);
+  char lcdEmpty[17];
+  planter::formatWaterLcd(lcdEmpty, sizeof(lcdEmpty), emptyPreview.waterPercent,
+                          emptyTank.waterAdcRaw);
+  assert(std::strcmp(lcdEmpty, "Water:EMPTY") == 0);
+  emptyTank.uptimeMs = 20000;
+  assert(formatTelemetry(emptyTank, output, sizeof(output), &reported));
+  assert(std::strstr(output, "\"low\":true,\"empty\":true") != nullptr);
+  assert(std::strstr(output, "\"band\":\"empty\"") != nullptr);
+  assert(std::strstr(output, "\"control_band\":\"empty\"") != nullptr);
   // In the reported combination, both the water guard and the ambiguous soil
   // rail independently prevent ON; restoring the water input alone is not enough.
   SensorSnapshot bothBlocked = trialSample;
@@ -1082,14 +1151,20 @@ int main() {
   assert(planter::waterDisplayRelativePercent(1) == 1);
   assert(planter::waterDisplayRelativePercent(100) == 100);
   assert(planter::waterDisplayRelativePercent(101) == -1);
-  assert(std::strcmp(planter::waterControlBandName(-1), "unavailable") == 0);
-  assert(std::strcmp(planter::waterControlBandName(19), "below_threshold") == 0);
-  assert(std::strcmp(planter::waterControlBandName(20), "at_or_above_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(-1, -1), "unavailable") == 0);
+  assert(std::strcmp(planter::waterControlBandName(19, 900), "below_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(20, 900), "at_or_above_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(0, planter::kWaterEmptyRawReferenceAdc),
+                     "empty") == 0);
+  char lcdWaterEmpty[17];
+  planter::formatWaterLcd(lcdWaterEmpty, sizeof(lcdWaterEmpty), 0,
+                          planter::kWaterEmptyRawReferenceAdc);
+  assert(std::strcmp(lcdWaterEmpty, "Water:EMPTY") == 0);
   char lcdWater[17];
-  planter::formatWaterLcd(lcdWater, sizeof(lcdWater), -1);
-  assert(std::strcmp(lcdWater, "Air:--") == 0);
-  planter::formatWaterLcd(lcdWater, sizeof(lcdWater), 20);
-  assert(std::strcmp(lcdWater, "Air:~20% rel") == 0);
+  planter::formatWaterLcd(lcdWater, sizeof(lcdWater), -1, -1);
+  assert(std::strcmp(lcdWater, "Water:--") == 0);
+  planter::formatWaterLcd(lcdWater, sizeof(lcdWater), 20, 900);
+  assert(std::strcmp(lcdWater, "Water:~20%") == 0);
   rawReferenceFixture.waterAdcRaw = planter::kWaterLowRawReferenceAdc + 1;
   assert(formatTelemetry(rawReferenceFixture, output, sizeof(output), &reported));
   assert(std::strstr(output, "\"band\":\"near_low\"") != nullptr);
@@ -1106,7 +1181,7 @@ int main() {
   assert(planter::observedWaterRelativePercent(rawReferenceFixture) == 50);
   assert(formatTelemetry(rawReferenceFixture, output, sizeof(output), &reported));
   assert(std::strstr(output, "\"observation_scale\":{\"relative_percent\":50,") != nullptr);
-  assert(std::strstr(output, "\"relative_percent\":50,\"low\":false") != nullptr);
+  assert(std::strstr(output, "\"relative_percent\":50,\"low\":false,\"empty\":false") != nullptr);
   assert(std::strstr(output, "\"pump_cmd\":false") != nullptr);
   assert(planter::previewRules(rawReferenceFixture).waterPercent == 50);
   std::cout << "TEST_FIXTURE " << output << '\n';
@@ -1154,7 +1229,7 @@ int main() {
   assert(std::strstr(output, "\"humidity_percent\":null") != nullptr);
   assert(std::strstr(output, "\"status\":\"partial\"") != nullptr);
   assert(std::strstr(output, "\"water_level\":{\"adc_raw\":null,\"relative_percent\":null,"
-                             "\"low\":null,\"status\":\"unavailable\",\"raw_reference\":{") != nullptr);
+                             "\"low\":null,\"empty\":false,\"status\":\"unavailable\",\"raw_reference\":{") != nullptr);
   assert(std::strstr(output, "\"band\":\"unavailable\"") != nullptr);
   assert(std::strstr(output, "\"mq135\":{\"adc_raw\":null,\"adc_percent\":null,"
                              "\"digital_raw\":0,"
@@ -1172,7 +1247,7 @@ int main() {
   assert(std::strstr(output, "\"soil_raw\":null,\"soil_status\":\"not_configured\"") != nullptr);
   // Zero is a raw ADC reading, not proof that a sensor is present or absent.
   assert(std::strstr(output, "\"water_level\":{\"adc_raw\":0,\"relative_percent\":null,"
-                             "\"low\":null,\"status\":\"unverified\",\"raw_reference\":{") != nullptr);
+                             "\"low\":null,\"empty\":false,\"status\":\"unverified\",\"raw_reference\":{") != nullptr);
   assert(std::strstr(output, "\"band\":\"rail_unverified\"") != nullptr);
   assert(std::strstr(output, "\"mq135\":null") != nullptr);
   std::cout << "TEST_FIXTURE " << output << '\n';

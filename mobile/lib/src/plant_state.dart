@@ -4,7 +4,7 @@ import 'plant_telemetry.dart';
 enum PlantMood { waiting, content, thirsty, airConcern }
 
 /// Coarse display categories, not a calibrated volume or actuator control.
-enum WaterLevel { low, medium, full }
+enum WaterLevel { empty, low, medium, full }
 
 class PlantState {
   const PlantState({
@@ -15,6 +15,7 @@ class PlantState {
     this.waterPercent,
     this.waterObservationPercent,
     this.waterLow,
+    this.waterEmpty,
     this.waterClassificationInputsValid = true,
     this.temperatureC,
     this.humidityPercent,
@@ -82,6 +83,7 @@ class PlantState {
     waterPercent: reading.waterRelativePercent,
     waterObservationPercent: reading.waterObservationPercent,
     waterLow: reading.waterLow,
+    waterEmpty: reading.waterEmpty,
     waterClassificationInputsValid: reading.waterClassificationInputsValid,
     temperatureC: reading.temperatureC,
     humidityPercent: reading.humidityPercent,
@@ -123,6 +125,7 @@ class PlantState {
     waterPercent: reading.waterRelativePercent,
     waterObservationPercent: reading.waterObservationPercent,
     waterLow: reading.waterLow,
+    waterEmpty: reading.waterEmpty,
     waterClassificationInputsValid: reading.waterClassificationInputsValid,
     temperatureC: reading.temperatureC,
     humidityPercent: reading.humidityPercent,
@@ -156,6 +159,7 @@ class PlantState {
   final int? waterPercent;
   final int? waterObservationPercent;
   final bool? waterLow;
+  final bool? waterEmpty;
   final bool waterClassificationInputsValid;
   final double? temperatureC;
   final num? humidityPercent;
@@ -198,6 +202,7 @@ class PlantState {
   /// The firmware's 100% reference is near-full, not a verified full tank.
   /// These thresholds are provisional display buckets, never pump decisions.
   WaterLevel? get waterLevel {
+    if (waterEmpty == true) return WaterLevel.empty;
     if (!waterClassificationInputsValid ||
         waterAdc == null ||
         waterAdc! <= 0 ||
@@ -253,7 +258,8 @@ class PlantState {
   PlantMood get mood {
     if (!isLive) return PlantMood.waiting;
     if ((soilPercent != null && soilPercent! < 30) ||
-        waterLevel == WaterLevel.low) {
+        waterLevel == WaterLevel.low ||
+        waterLevel == WaterLevel.empty) {
       return PlantMood.thirsty;
     }
     if (airChanged) return PlantMood.airConcern;

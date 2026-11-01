@@ -230,6 +230,23 @@ void main() {
     });
     expect(low.waterLevel, WaterLevel.low);
     expect(low.mood, PlantMood.thirsty);
+    final empty = PlantState.fromLocalWifi(
+      SerialSensorSnapshot.parse(
+        jsonEncode({
+          'type': 'sample',
+          'water_level': {
+            'adc_raw': 450,
+            'status': 'unverified',
+            'relative_percent': 0,
+            'low': true,
+            'empty': true,
+          },
+        }),
+      ),
+    );
+    expect(empty.waterEmpty, isTrue);
+    expect(empty.waterLevel, WaterLevel.empty);
+    expect(empty.mood, PlantMood.thirsty);
     final imported = PlantState.fromSerial(
       SerialSensorSnapshot.parse(
         jsonEncode({

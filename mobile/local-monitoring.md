@@ -58,6 +58,14 @@ password acak 10 karakter, bukan mematikan AP. Status AP dicetak ke serial.
 Aplikasi 0.4.1 menambahkan notifikasi HP untuk air rendah dan ringkasan prediksi
 setiap 3 jam, plus pop-up singkat di atas layar saat koneksi terputus.
 
+Firmware v28 menambahkan status air **EMPTY** (raw ≤450), cutoff pompa raw 600,
+LCD bahasa Inggris, durasi lampu manual 1–1800 detik, jalur manual immediate,
+dan TCP/Wi-Fi no-delay. Aplikasi **Tunas 0.5.0** menambahkan kontrol segmen
+ON/OFF/AUTO yang jelas, durasi lampu menit+detik, status sensor Tersedia/Tidak
+tersedia/Tidak dapat menampilkan data, histori CSV harian permanen, ekspor CSV
+ke `Downloads/Tunas`, serta model decision tree 3 kelas dengan deteksi banjir.
+CSV menyimpan semua angka sensor dan perintah untuk retraining model.
+
 Halaman **Perangkat** menyediakan kendali manual pompa/lampu lewat socket lokal
 yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; pompa OFF
 dan lampu manual bertahan sampai AUTO. Perintah memakai baris `CTRL` dan
