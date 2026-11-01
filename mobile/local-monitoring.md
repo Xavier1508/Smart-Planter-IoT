@@ -50,6 +50,14 @@ pertama setelah setup. Setiap boot mencetak `reset_reason` dan `brownout_count`
 hanya ke serial. Brownout detector tetap aktif; staging hanya mengurangi inrush,
 bukan menggantikan adaptor 5V yang kuat atau pull-up relay saat boot.
 
+Firmware v26 memperbaiki AP yang gagal menyala: password lokal harus 8–10
+karakter agar muat di buffer LCD; nilai 19 karakter ditolak dan AP dimatikan.
+Password lokal harus 8–10 karakter agar muat di buffer LCD; nilai aktualnya ada
+di header lokal yang diabaikan Git. Jika header tidak valid, firmware memakai
+password acak 10 karakter, bukan mematikan AP. Status AP dicetak ke serial.
+Aplikasi 0.4.1 menambahkan notifikasi HP untuk air rendah dan ringkasan prediksi
+setiap 3 jam, plus pop-up singkat di atas layar saat koneksi terputus.
+
 Halaman **Perangkat** menyediakan kendali manual pompa/lampu lewat socket lokal
 yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; pompa OFF
 dan lampu manual bertahan sampai AUTO. Perintah memakai baris `CTRL` dan

@@ -242,7 +242,7 @@ int main() {
   assert(planter::kSoilAdcReadEnabled);
   assert(planter::kLightAutomationEnabled);
   assert(planter::kPumpAllowEstimatedSoil);
-  assert(planter::kFirmwareVersion == 25);
+  assert(planter::kFirmwareVersion == 26);
 
   // Bounded manual-control protocol.
   auto control = planter::parseControlLine("CTRL pump=on dur=5 id=12");
@@ -878,7 +878,7 @@ int main() {
                              "\"adc_calibration_source\":\"efuse_vref\"") != nullptr);
   assert(std::strstr(output, "\"environment_compensation\":\"not_applied\"") != nullptr);
   assert(std::strstr(output, "\"observation_label\":null") != nullptr);
-  assert(std::strstr(output, "\"firmware_version\":25") != nullptr);
+  assert(std::strstr(output, "\"firmware_version\":26") != nullptr);
   char expectedSoilScale[96];
   std::snprintf(expectedSoilScale, sizeof(expectedSoilScale),
                 "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d",

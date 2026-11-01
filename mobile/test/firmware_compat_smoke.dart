@@ -41,13 +41,13 @@ Future<void> main() async {
     }
     final json = jsonDecode(jsonLine) as Map<String, dynamic>;
     if (json['schema'] != 'serial_observation_2' ||
-        json['firmware_version'] != 25) {
+        json['firmware_version'] != 26) {
       throw StateError('Unexpected firmware fixture');
     }
     final snapshot = SerialSensorSnapshot.parse(jsonLine);
     final preview = json['control_preview'];
     if (preview is Map<String, dynamic> && preview['pump_on'] is bool) {
-      // The app does not guess a diagnostic threshold for v25; this
+      // The app does not guess a diagnostic threshold for v26; this
       // does not prevent it from accepting live values or firmware commands.
       if (snapshot.pumpRuleThreshold != null ||
           snapshot.pumpRulePreview != null) {
@@ -197,7 +197,7 @@ Future<void> main() async {
     );
   }
 
-  // Exercise the local client with generated v25 frames and a real loopback
+  // Exercise the local client with generated v26 frames and a real loopback
   // socket. Never connects to an ESP32.
   final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
   final incoming = server.first;
@@ -241,7 +241,7 @@ Future<void> main() async {
         wifi.snapshot?.waterAdc != 750 ||
         wifi.snapshot?.waterRelativePercent != null ||
         wifi.snapshot?.waterObservationPercent != null) {
-      throw StateError('Local client did not receive v25 data');
+      throw StateError('Local client did not receive v26 data');
     }
   } finally {
     // The controller broadcasts synchronously. Let the current notification
@@ -252,7 +252,7 @@ Future<void> main() async {
     await server.close();
   }
   stdout.writeln(
-    'Firmware-to-mobile compatibility: $count synthetic v25 fixtures, '
+    'Firmware-to-mobile compatibility: $count synthetic v26 fixtures, '
     'max frame $maxFrameBytes bytes, and three-frame loopback passed; '
     'no ESP32 contacted.',
   );

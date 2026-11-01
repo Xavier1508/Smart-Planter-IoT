@@ -15,6 +15,7 @@ import 'moss_app.dart';
 import 'moss_avatar.dart';
 import 'moss_gaze.dart';
 import 'moss_sky.dart';
+import 'notification_service.dart';
 import 'plant_emotion.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
@@ -23,6 +24,7 @@ import 'profile_panel.dart';
 import 'profile_store.dart';
 import 'schedule.dart';
 import 'synthetic_xgboost.dart';
+import 'top_notice.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({
@@ -87,6 +89,12 @@ class _DashboardState extends State<Dashboard> {
   SyntheticXgboostModel? _emotionModel;
   final List<HistoryPoint> _history = [];
   int? _lastHistoryUptime;
+  final NotificationService _notifications = const NotificationService();
+  LocalWifiStatus _lastNoticeStatus = LocalWifiStatus.disconnected;
+  DateTime? _lastWaterAlertAt;
+  DateTime? _lastPredictionScheduleAt;
+  String? _lastPredictionBody;
+  bool _predictionScheduled = false;
 
   @override
   void initState() {
@@ -96,6 +104,9 @@ class _DashboardState extends State<Dashboard> {
     _loadSchedules();
     _loadProfiles();
     _loadEmotionModel();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_notifications.requestPermission());
+    });
     _scheduleTimer = Timer.periodic(
       const Duration(seconds: 1),
       (_) => unawaited(_runSchedules()),
@@ -179,27 +190,109 @@ class _DashboardState extends State<Dashboard> {
   }
 
   void _onLocalWifiChanged() {
+    final status = _localWifi.status;
+    final previousStatus = _lastNoticeStatus;
+    _lastNoticeStatus = status;
+    if (status == LocalWifiStatus.disconnected &&
+        previousStatus != LocalWifiStatus.disconnected &&
+        _useLocalWifi &&
+        mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showTopNotice(
+          context,
+          title: 'Perangkat terputus',
+          message:
+              'Tidak dapat terhubung ke ${_profiles.active.charName}. '
+              'Periksa jaringan perangkat lalu coba lagi.',
+          icon: Icons.wifi_off_rounded,
+        );
+      });
+    }
+
     final sample = _localWifi.snapshot;
     final uptime = sample?.uptimeMs;
     if (sample != null && uptime != null && uptime != _lastHistoryUptime) {
       _lastHistoryUptime = uptime;
-      _history.add(
-        HistoryPoint(
-          DateTime.now(),
-          PlantState.fromLocalWifi(
-            sample,
-            mqAverageAdc: _localWifi.mqAverageAdc,
-            mqAverageSamples: _localWifi.mqAverageSamples,
-            mqTrend: _localWifi.mqTrend,
-            mqGasIndex: _localWifi.mqGasIndex,
-            mqGasStatus: _localWifi.mqGasStatus,
-            mqGasBaselineMv: _localWifi.mqGasBaselineMv,
-          ),
-        ),
+      final now = DateTime.now();
+      final state = PlantState.fromLocalWifi(
+        sample,
+        mqAverageAdc: _localWifi.mqAverageAdc,
+        mqAverageSamples: _localWifi.mqAverageSamples,
+        mqTrend: _localWifi.mqTrend,
+        mqGasIndex: _localWifi.mqGasIndex,
+        mqGasStatus: _localWifi.mqGasStatus,
+        mqGasBaselineMv: _localWifi.mqGasBaselineMv,
       );
+      _history.add(HistoryPoint(now, state));
       if (_history.length > 240) _history.removeAt(0);
+      _maybeNotifyLowWater(state, now);
+      _maybeSchedulePrediction(state, now);
     }
     if (mounted) setState(() {});
+  }
+
+  void _maybeNotifyLowWater(PlantState state, DateTime now) {
+    final water = state.waterObservationPercent ?? state.waterPercent;
+    final low = state.waterLow == true || (water != null && water < 20);
+    if (!low) return;
+    final last = _lastWaterAlertAt;
+    if (last != null && now.difference(last) < const Duration(minutes: 30)) {
+      return;
+    }
+    _lastWaterAlertAt = now;
+    unawaited(
+      _notifications.show(
+        id: NotificationService.waterAlertId,
+        title: 'Air penampung hampir habis',
+        body: water == null
+            ? 'Sensor air menandai level rendah. Isi ulang penampung.'
+            : 'Level air $water%. Isi ulang penampung.',
+        channel: 'tunas_alerts',
+      ),
+    );
+  }
+
+  void _maybeSchedulePrediction(PlantState state, DateTime now) {
+    final recent = _history.length > PlantEmotionEngine.window
+        ? _history
+              .sublist(_history.length - PlantEmotionEngine.window)
+              .map((point) => point.state)
+              .toList()
+        : _history.map((point) => point.state).toList();
+    final emotion = PlantEmotionEngine(_emotionModel)
+        .evaluate(state, recent: recent);
+    if (!emotion.available) return;
+    final body =
+        '${emotion.emotion.label}: ${emotion.signal} ${emotion.prediction}';
+    if (body == _lastPredictionBody) return;
+    final last = _lastPredictionScheduleAt;
+    if (last != null && now.difference(last) < const Duration(minutes: 10)) {
+      return;
+    }
+    _lastPredictionBody = body;
+    _lastPredictionScheduleAt = now;
+    if (!_predictionScheduled) {
+      _predictionScheduled = true;
+      unawaited(
+        _notifications.schedule(
+          id: NotificationService.predictionId,
+          title: 'Prediksi tanaman',
+          body: body,
+          intervalMinutes: 180,
+          channel: 'tunas_predictions',
+        ),
+      );
+    } else {
+      unawaited(
+        _notifications.update(
+          id: NotificationService.predictionId,
+          title: 'Prediksi tanaman',
+          body: body,
+          channel: 'tunas_predictions',
+        ),
+      );
+    }
   }
 
   Future<void> _saveProfile(DeviceProfile profile) async {
@@ -259,6 +352,22 @@ class _DashboardState extends State<Dashboard> {
     );
   }
 
+  Future<void> _requestNotificationPermission() async {
+    await _notifications.requestPermission();
+  }
+
+  Future<void> _testNotification() async {
+    await _notifications.requestPermission();
+    await _notifications.show(
+      id: 4199,
+      title: 'Tunas siap memberi kabar',
+      body:
+          'Notifikasi HP aktif. Peringatan air rendah dan prediksi berkala '
+          'akan muncul di sini.',
+      channel: 'tunas_alerts',
+    );
+  }
+
   void _connectLocalWifi() {
     setState(() {
       _useLocalWifi = true;
@@ -268,8 +377,8 @@ class _DashboardState extends State<Dashboard> {
   }
 
   void _disconnectLocalWifi() {
-    _localWifi.disconnect();
     setState(() => _useLocalWifi = false);
+    _localWifi.disconnect();
   }
 
   int _nextControlId = 1;
@@ -444,6 +553,7 @@ class _DashboardState extends State<Dashboard> {
 
   @override
   void dispose() {
+    dismissTopNotice();
     _expiry?.cancel();
     _scheduleTimer?.cancel();
     final localChanges = _localWifiChanges;
@@ -502,7 +612,6 @@ class _DashboardState extends State<Dashboard> {
             profile: active,
             emotion: emotion,
             onPickCharacter: _pickCharacter,
-            onOpenSettings: () => setState(() => _page = 3),
           ),
           1 => JournalPage(
             history: List<HistoryPoint>.unmodifiable(_history),
@@ -540,6 +649,8 @@ class _DashboardState extends State<Dashboard> {
             onSaveProfile: _saveProfile,
             onDeleteProfile: _deleteProfile,
             render3d: widget.render3d,
+            onTestNotification: _testNotification,
+            onRequestNotificationPermission: _requestNotificationPermission,
           ),
         },
       ),
@@ -590,7 +701,6 @@ class _Home extends StatelessWidget {
     required this.profile,
     required this.emotion,
     required this.onPickCharacter,
-    required this.onOpenSettings,
   });
 
   final PlantState state;
@@ -608,7 +718,6 @@ class _Home extends StatelessWidget {
   final DeviceProfile profile;
   final EmotionReading emotion;
   final VoidCallback onPickCharacter;
-  final VoidCallback onOpenSettings;
 
   bool get _deviceConnected =>
       state.isLive ||
@@ -858,10 +967,6 @@ class _Home extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 14),
-                if (!_deviceConnected) ...[
-                  _NoDeviceNotice(onOpenSettings: onOpenSettings),
-                  const SizedBox(height: 10),
-                ],
                 PredictionCard(reading: emotion, look: profile.look),
                 const SizedBox(height: 25),
                 Row(
@@ -1050,53 +1155,6 @@ class _StatusPill extends StatelessWidget {
             color: live ? forest : muted,
           ),
         ),
-      ],
-    ),
-  );
-}
-
-class _NoDeviceNotice extends StatelessWidget {
-  const _NoDeviceNotice({required this.onOpenSettings});
-
-  final VoidCallback onOpenSettings;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
-    decoration: BoxDecoration(
-      color: context.mossColors.primaryContainer,
-      borderRadius: BorderRadius.circular(16),
-    ),
-    child: Row(
-      children: [
-        Icon(
-          Icons.devices_other_rounded,
-          size: 22,
-          color: context.mossColors.primary,
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Belum ada perangkat terhubung',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'No device has connected. Daftarkan planter dan pilih profilnya.',
-                style: TextStyle(
-                  fontSize: 11,
-                  height: 1.35,
-                  color: context.mossColors.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 6),
-        TextButton(onPressed: onOpenSettings, child: const Text('Atur')),
       ],
     ),
   );
@@ -1363,6 +1421,8 @@ class _SettingsPage extends StatelessWidget {
     required this.onSaveProfile,
     required this.onDeleteProfile,
     required this.render3d,
+    required this.onTestNotification,
+    required this.onRequestNotificationPermission,
   });
   final Widget? cloudSettings;
   final String? serialMessage;
@@ -1384,6 +1444,8 @@ class _SettingsPage extends StatelessWidget {
   final Future<void> Function(DeviceProfile) onSaveProfile;
   final Future<void> Function(String) onDeleteProfile;
   final bool render3d;
+  final VoidCallback onTestNotification;
+  final VoidCallback onRequestNotificationPermission;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -1482,6 +1544,39 @@ class _SettingsPage extends StatelessWidget {
       ),
       if (serialMessage != null)
         Text(serialMessage!, style: const TextStyle(fontSize: 12)),
+      const Divider(height: 32),
+      const Text(
+        'Notifikasi HP',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 5),
+      Text(
+        'Peringatan air rendah dan prediksi berkala muncul di notifikasi '
+        'Android. Data real-time hanya masuk saat aplikasi terhubung ke '
+        'perangkat; notifikasi berkala memakai prediksi terakhir.',
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.4,
+          color: context.mossColors.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton.icon(
+            onPressed: onRequestNotificationPermission,
+            icon: const Icon(Icons.notifications_outlined, size: 18),
+            label: const Text('Izinkan notifikasi'),
+          ),
+          TextButton.icon(
+            onPressed: onTestNotification,
+            icon: const Icon(Icons.notifications_active_outlined, size: 18),
+            label: const Text('Tes notifikasi'),
+          ),
+        ],
+      ),
       const Divider(height: 32),
       const AppVersionPanel(),
     ],

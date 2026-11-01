@@ -63,34 +63,50 @@ void startLocalWifi() {
   // All Wi-Fi configuration stays in RAM. This is an isolated AP rather than
   // a router connection; no router password is requested, stored or printed.
   WiFi.persistent(false);
-  if (!WiFi.mode(WIFI_AP)) return;
+  if (!WiFi.mode(WIFI_AP)) {
+    Serial.println("{\"type\":\"wifi\",\"status\":\"ap_mode_failed\"}");
+    return;
+  }
+  bool passwordReady = false;
 #ifdef MOSS_LOCAL_WIFI_PASSWORD
   // Fixed local-only WPA2 password from an ignored header. The phone stores it
-  // once and can reconnect automatically after every ESP32 reboot.
+  // once and can reconnect automatically after every ESP32 reboot. An invalid
+  // local value must not disable the AP; fall back to the boot-random password
+  // so the LCD can still show a usable network.
   const size_t fixedLength = strlen(MOSS_LOCAL_WIFI_PASSWORD);
-  if (fixedLength < 8 || fixedLength >= sizeof(localWifiPassword)) {
-    WiFi.mode(WIFI_OFF);
-    return;
-  }
-  memcpy(localWifiPassword, MOSS_LOCAL_WIFI_PASSWORD, fixedLength + 1);
-#else
-  HardwareRandom random;
-  if (!planter::makeLocalWifiPassword(localWifiPassword,
-                                      sizeof(localWifiPassword), random)) {
-    WiFi.mode(WIFI_OFF);
-    return;
+  if (fixedLength >= 8 && fixedLength < sizeof(localWifiPassword)) {
+    memcpy(localWifiPassword, MOSS_LOCAL_WIFI_PASSWORD, fixedLength + 1);
+    passwordReady = true;
+  } else {
+    Serial.println("{\"type\":\"wifi\",\"status\":\"local_password_rejected\"}");
   }
 #endif
+  if (!passwordReady) {
+    HardwareRandom random;
+    if (!planter::makeLocalWifiPassword(localWifiPassword,
+                                        sizeof(localWifiPassword), random)) {
+      Serial.println("{\"type\":\"wifi\",\"status\":\"password_failed\"}");
+      WiFi.mode(WIFI_OFF);
+      return;
+    }
+  }
   snprintf(localWifiName, sizeof(localWifiName), "Moss-%04X",
            static_cast<unsigned>(ESP.getEfuseMac() & 0xffffU));
   if (!WiFi.softAPConfig(localAddress, localAddress, IPAddress(255, 255, 255, 0)) ||
       !WiFi.softAP(localWifiName, localWifiPassword, 1, false, 1)) {
+    Serial.println("{\"type\":\"wifi\",\"status\":\"ap_failed\"}");
     WiFi.softAPdisconnect(true);
     return;
   }
   localServer.begin();
   localWifiReady = static_cast<bool>(localServer);
-  if (!localWifiReady) WiFi.softAPdisconnect(true);
+  if (!localWifiReady) {
+    Serial.println("{\"type\":\"wifi\",\"status\":\"server_failed\"}");
+    WiFi.softAPdisconnect(true);
+  } else {
+    Serial.printf("{\"type\":\"wifi\",\"status\":\"ap_ready\",\"ssid\":\"%s\"}\n",
+                  localWifiName);
+  }
 }
 
 void pollLocalWifi() {

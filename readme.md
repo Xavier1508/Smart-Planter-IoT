@@ -921,7 +921,23 @@ Tes host lokal/generik, timing relay, 16 frame sintetis v25, dan validasi
 `esptool` lulus. Staging hanya mengurangi inrush; adaptor lemah dan pull-up relay
 saat boot tetap perlu diperbaiki di hardware.
 
-### Aplikasi Tunas 0.4.0: profil, karakter, dan emosi ML
+### Firmware v26: AP password dan status Wi-Fi
+
+`include/local-wifi-secret.local.h` berisi password 19 karakter, sedangkan
+buffer firmware hanya 10 karakter. Firmware lama menolaknya lalu mematikan
+Wi-Fi, sehingga LCD menampilkan **“Local AP failed”** dan tidak ada jaringan.
+Password lokal di header sekarang 10 karakter; nilai aktualnya tetap hanya di
+header lokal yang diabaikan Git. Jika header di masa depan tidak valid,
+firmware memakai password acak 10 karakter alih-alih mematikan AP.
+Status AP dicetak ke serial (`ap_ready`, `ap_failed`, `local_password_rejected`,
+dan sebagainya).
+
+Build lokal: `analysis/platformio/firmware-v26-wifi-password-fec68a0a/firmware.bin`
+(798.192 byte), SHA-256
+`FEC68A0ACBFA116344080A7768F92A34F8A4C1C6A857D31699F7822C0FD04BC5`.
+Tes host, 16 frame sintetis v26, dan validasi `esptool` lulus.
+
+### Aplikasi Tunas 0.4.1: profil, karakter, dan emosi ML
 
 Nama aplikasi yang terlihat pengguna berubah dari **Moss** menjadi **Tunas ·
 Smart Planter**. Moss tetap dipakai sebagai nama profil/karakter pertama, bukan
@@ -946,6 +962,14 @@ kanal `moss/profile` dan dapat berisi sampai enam planter.
   model. Label ini demo, bukan diagnosis tanaman.
 - Halaman utama menampilkan status "Belum ada perangkat terhubung" dan tidak
   mengarang nilai saat tidak ada sampel.
+- **Notifikasi HP native**: peringatan air rendah (<20%, maksimal sekali per 30
+  menit) dan ringkasan prediksi setiap 3 jam lewat `NotificationManager` +
+  `AlarmManager`. Tombol "Izinkan notifikasi" dan "Tes notifikasi" ada di
+  Pengaturan. Data real-time hanya masuk saat aplikasi terhubung; notifikasi
+  berkala memakai prediksi terakhir yang tersimpan di alarm.
+- Kartu "Belum ada perangkat" yang muncul-hilang di dalam halaman diganti
+  **pop-up singkat di atas layar** (4 detik) saat koneksi terputus. Status
+  offline yang stabil tetap ada di header.
 
 Alasan ML di ponsel: model sudah berupa JSON dan inferensi pohon murni Dart;
 ESP32 klasik tetap menjadi pengendali relay real-time yang deterministik, tanpa
@@ -955,7 +979,7 @@ tahap berikutnya adalah mode STA pada hotspot/router bersama agar beberapa ESP32
 punya alamat berbeda di jaringan yang sama.
 
 Pemeriksaan lokal: `flutter analyze` bersih, **131 tes lulus, 2 dilewati**.
-Versi aplikasi `0.4.0+18`.
+Versi aplikasi `0.4.1+19`.
 
 ### Model XGBoost sintetis di Moss
 

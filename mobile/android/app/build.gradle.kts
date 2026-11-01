@@ -108,6 +108,9 @@ tasks.configureEach {
 }
 
 dependencies {
+    // NotificationCompat and ContextCompat are used by the local notification
+    // channels in every flavor, not only by the beta updater.
+    implementation("androidx.core:core-ktx:1.13.1")
     // The self-update SDK must never be included in a Google Play build.
     add("betaImplementation", "com.google.firebase:firebase-appdistribution:16.0.0-beta21")
     // Its installer activity inherits the application theme and needs AppCompat.
