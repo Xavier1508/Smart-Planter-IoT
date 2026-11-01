@@ -115,14 +115,18 @@ void appendNullableText(String& out, const char* key, const char* value) {
     return;
   }
   out += '"';
-  // Firmware reasons are fixed [a-z0-9_] tokens; reject anything else here so
-  // a future code path cannot accidentally break the JSON body.
+  // Escape JSON string bytes. The caller still owns semantic validation; the
+  // device reasons are restricted by the server to [a-z0-9_], while
+  // captured_at needs the ISO punctuation (`-`, `:`, `T`, `Z`).
   for (const char* cursor = value; *cursor != '\0'; ++cursor) {
-    const char c = *cursor;
-    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+    const unsigned char c = static_cast<unsigned char>(*cursor);
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += static_cast<char>(c);
+    } else if (c < 0x20) {
       out += '?';
     } else {
-      out += c;
+      out += static_cast<char>(c);
     }
   }
   out += '"';
