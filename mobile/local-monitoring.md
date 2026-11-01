@@ -36,6 +36,12 @@ menghalangi ON. Tanah kering terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan
 1200 ≈ 67%. Air memakai rentang **826 (rendah) sampai 1150 (penuh)**; indikator
 Full dimulai pada 50% rentang karena pin atas sudah terendam di sekitar 1000.
 Semua input ADC memakai median 5 sampel.
+
+Halaman **Perangkat** menyediakan kendali manual pompa/lampu lewat socket lokal
+yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; pompa OFF
+dan lampu manual bertahan sampai AUTO. Perintah memakai baris `CTRL` dan
+mendapat balasan `ack`. Jaringan tetap WPA2 lokal tanpa TLS; jangan bagikan
+password AP. Scheduler app-side belum diaktifkan pada versi ini.
 Interlock air, watchdog, batas waktu, jeda pompa, dan jeda lampu tetap berlaku.
 Nilai rata-rata memakai lima konversi berturutan per siklus untuk setiap input
 ADC, bukan rata-rata lima siklus. DHT dan input digital MQ tidak dirata-ratakan.

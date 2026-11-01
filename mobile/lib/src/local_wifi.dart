@@ -51,6 +51,23 @@ class LocalWifiController {
   int? get mqGasIndex => _mqGas.index;
   String get mqGasStatus => _mqGas.status;
   int? get mqGasBaselineMv => _mqGas.baselineMv;
+  int? lastCommandId;
+  bool? lastCommandOk;
+  String? lastCommandError;
+  int? lastPumpRemainingSeconds;
+
+  Future<bool> sendControlCommand(String line) async {
+    final socket = _socket;
+    if (socket == null || _disposed) return false;
+    try {
+      socket.write('$line\n');
+      await socket.flush();
+      return true;
+    } catch (_) {
+      _fail(_generation, 'Perintah gagal dikirim; koneksi terputus.');
+      return false;
+    }
+  }
 
   void notifyListeners() {
     if (!_disposed) _changes.add(null);
@@ -120,6 +137,18 @@ class LocalWifiController {
     try {
       final line = utf8.decode(bytes).trim();
       final json = jsonDecode(line);
+      if (json is Map<String, dynamic> && json['type'] == 'ack') {
+        lastCommandId = json['id'] is int ? json['id'] as int : null;
+        lastCommandOk = json['ok'] == true;
+        lastCommandError = json['error'] is String
+            ? json['error'] as String
+            : null;
+        lastPumpRemainingSeconds = json['pump_remaining_s'] is int
+            ? json['pump_remaining_s'] as int
+            : null;
+        notifyListeners();
+        return true;
+      }
       if (json is! Map<String, dynamic> ||
           json['type'] != 'sample' ||
           json['schema'] != 'serial_observation_2' ||

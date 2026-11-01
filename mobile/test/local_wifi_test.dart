@@ -240,6 +240,31 @@ void main() {
     expect(controller.mqGasStatus, 'unavailable');
   });
 
+  test('control commands are sent and acknowledgements are parsed', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final incoming = server.first;
+    final controller = LocalWifiController(
+      address: '127.0.0.1',
+      port: server.port,
+    );
+    final connecting = controller.connect();
+    final peer = await incoming;
+    addTearDown(() async {
+      peer.destroy();
+      controller.dispose();
+      await server.close();
+    });
+    await connecting;
+    peer.write(
+      '{"type":"ack","id":7,"ok":true,"pump_manual":true,'
+      '"pump_remaining_s":5,"light_manual":false}\n',
+    );
+    await waitFor(controller, () => controller.lastCommandOk == true);
+    expect(controller.lastCommandId, 7);
+    expect(controller.lastPumpRemainingSeconds, 5);
+    expect(await controller.sendControlCommand('CTRL pump=auto id=8'), isTrue);
+  });
+
   test('a couple of malformed frames do not drop the live stream', () async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final incoming = server.first;

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'dart:async';
+
 import 'local_wifi.dart';
 import 'moss_app.dart';
 import 'plant_state.dart';
@@ -11,10 +13,14 @@ class DevicesPage extends StatelessWidget {
     required this.state,
     this.localSelected = false,
     this.localStatus = LocalWifiStatus.disconnected,
+    this.onCommand,
+    this.controlId,
   });
   final PlantState state;
   final bool localSelected;
   final LocalWifiStatus localStatus;
+  final Future<bool> Function(String line)? onCommand;
+  final int Function()? controlId;
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +103,10 @@ class DevicesPage extends StatelessWidget {
             ],
           ),
         ),
+        if (onCommand != null && controlId != null) ...[
+          const SizedBox(height: 20),
+          _ManualControls(onCommand: onCommand!, controlId: controlId!),
+        ],
         const SizedBox(height: 24),
         const Text(
           'Sensor',
@@ -279,6 +289,140 @@ class DevicesPage extends StatelessWidget {
     'sample_stale' => 'data sensor terlambat',
     _ => 'belum diketahui',
   };
+}
+
+class _ManualControls extends StatefulWidget {
+  const _ManualControls({required this.onCommand, required this.controlId});
+  final Future<bool> Function(String line) onCommand;
+  final int Function() controlId;
+
+  @override
+  State<_ManualControls> createState() => _ManualControlsState();
+}
+
+class _ManualControlsState extends State<_ManualControls> {
+  double _duration = 5;
+  bool _busy = false;
+  String _message = 'Pilih perintah; status relay fisik tidak diukur.';
+
+  Future<void> _send(String line) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _message = 'Mengirim…';
+    });
+    final ok = await widget.onCommand(line);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _message = ok
+          ? 'Perintah terkirim. Pompa ON maksimal ${_duration.round()} detik.'
+          : 'Perintah gagal; sambungkan Wi-Fi Moss.';
+    });
+  }
+
+  String _id() => widget.controlId().toString();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: context.mossColors.surfaceContainerLowest,
+      borderRadius: BorderRadius.circular(17),
+      border: Border.all(color: context.mossColors.outlineVariant),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Kendali manual',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Override otomatis. Pompa ON dibatasi 30 detik, lalu kembali otomatis.',
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.4,
+            color: context.mossColors.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text('Durasi pompa: ${_duration.round()} detik'),
+        Slider(
+          value: _duration,
+          min: 1,
+          max: 30,
+          divisions: 29,
+          label: '${_duration.round()} s',
+          onChanged: _busy
+              ? null
+              : (value) => setState(() => _duration = value),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(
+                      _send(
+                        'CTRL pump=on dur=${_duration.round()} id=${_id()}',
+                      ),
+                    ),
+              child: const Text('Pompa ON'),
+            ),
+            OutlinedButton(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(_send('CTRL pump=off id=${_id()}')),
+              child: const Text('Pompa OFF'),
+            ),
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(_send('CTRL pump=auto id=${_id()}')),
+              child: const Text('Pompa AUTO'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.tonal(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(_send('CTRL light=on id=${_id()}')),
+              child: const Text('Lampu ON'),
+            ),
+            OutlinedButton(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(_send('CTRL light=off id=${_id()}')),
+              child: const Text('Lampu OFF'),
+            ),
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(_send('CTRL light=auto id=${_id()}')),
+              child: const Text('Lampu AUTO'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _message,
+          style: TextStyle(
+            fontSize: 11,
+            color: context.mossColors.onSurfaceVariant,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _SensorRow extends StatelessWidget {

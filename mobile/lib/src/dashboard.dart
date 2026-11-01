@@ -128,6 +128,15 @@ class _DashboardState extends State<Dashboard> {
     setState(() => _useLocalWifi = false);
   }
 
+  int _nextControlId = 1;
+
+  int _controlId() => _nextControlId++;
+
+  Future<bool> _sendControl(String line) {
+    if (!_useLocalWifi) return Future<bool>.value(false);
+    return _localWifi.sendControlCommand(line);
+  }
+
   Future<void> _refresh() async {
     if (_useLocalWifi) {
       await _localWifi.connect();
@@ -297,6 +306,8 @@ class _DashboardState extends State<Dashboard> {
             state: state,
             localSelected: _useLocalWifi,
             localStatus: _localWifi.status,
+            onCommand: _useLocalWifi ? _sendControl : null,
+            controlId: _controlId,
           ),
           _ => _SettingsPage(
             cloudSettings: widget.cloudSettings,
