@@ -15,8 +15,13 @@
 #include <math.h>
 #include <string.h>
 
+#include "adc-average.h"
+#include "control-command.h"
 #include "extra-sensors.h"
 #include "local-wifi.h"
+#if __has_include("local-wifi-secret.local.h")
+#include "local-wifi-secret.local.h"
+#endif
 #include "planter-config.h"
 #include "relay-safety.h"
 #include "sensor-telemetry.h"
@@ -29,9 +34,11 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 bool hasSample = false;
 uint32_t lastSampleMs = 0;
 bool watchdogReady = false;
+bool mqAdcReady = false;
 planter::RelayController relayController;
 planter::ObservationLabels observationLabels;
 planter::LabelLineReader labelLineReader;
+planter::ControlLineReader controlLineReader;
 esp_adc_cal_characteristics_t mqAdcCharacteristics;
 planter::AdcCalibrationMethod mqAdcCalibration = planter::AdcCalibrationMethod::unavailable;
 const IPAddress localAddress(192, 168, 4, 1);
@@ -40,6 +47,11 @@ WiFiClient localClient;
 bool localWifiReady = false;
 char localWifiName[17] = {};
 char localWifiPassword[planter::kLocalWifiPasswordLength + 1] = {};
+
+void applyControlLine(const char* line);
+void sendControlAck(const planter::ControlCommand& command, bool ok,
+                    const char* error);
+void syncRelayCommands();
 
 struct HardwareRandom {
   uint32_t next() { return esp_random(); }
@@ -50,12 +62,23 @@ void startLocalWifi() {
   // a router connection; no router password is requested, stored or printed.
   WiFi.persistent(false);
   if (!WiFi.mode(WIFI_AP)) return;
+#ifdef MOSS_LOCAL_WIFI_PASSWORD
+  // Fixed local-only WPA2 password from an ignored header. The phone stores it
+  // once and can reconnect automatically after every ESP32 reboot.
+  const size_t fixedLength = strlen(MOSS_LOCAL_WIFI_PASSWORD);
+  if (fixedLength < 8 || fixedLength >= sizeof(localWifiPassword)) {
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+  memcpy(localWifiPassword, MOSS_LOCAL_WIFI_PASSWORD, fixedLength + 1);
+#else
   HardwareRandom random;
   if (!planter::makeLocalWifiPassword(localWifiPassword,
                                       sizeof(localWifiPassword), random)) {
     WiFi.mode(WIFI_OFF);
     return;
   }
+#endif
   snprintf(localWifiName, sizeof(localWifiName), "Moss-%04X",
            static_cast<unsigned>(ESP.getEfuseMac() & 0xffffU));
   if (!WiFi.softAPConfig(localAddress, localAddress, IPAddress(255, 255, 255, 0)) ||
@@ -70,9 +93,20 @@ void startLocalWifi() {
 
 void pollLocalWifi() {
   if (!localWifiReady) return;
-  if (localClient && localClient.available() > 0) {
-    // Telemetry is strictly read-only; no incoming command is accepted.
-    localClient.stop();
+  if (localClient) {
+    // Read a bounded number of command bytes per loop so serial/telemetry and
+    // the watchdog are never starved. The command reader is line-bounded.
+    for (unsigned count = 0; count < 64 && localClient.available() > 0; ++count) {
+      const int value = localClient.read();
+      if (value < 0) break;
+      const planter::ControlLineReader::Result result =
+          controlLineReader.push(static_cast<char>(value));
+      if (result == planter::ControlLineReader::Result::ready) {
+        applyControlLine(controlLineReader.line());
+      } else if (result == planter::ControlLineReader::Result::rejected) {
+        sendControlAck(planter::ControlCommand{}, false, "\"line_too_long\"");
+      }
+    }
   }
   if (!localClient) {
     localClient.stop();
@@ -81,6 +115,66 @@ void pollLocalWifi() {
     WiFiClient extra = localServer.available();
     extra.stop();
   }
+}
+
+void syncRelayCommands();
+
+void sendLocalLine(const char* line) {
+  if (!localWifiReady || !localClient || line == nullptr) return;
+  char buffer[256];
+  const size_t length = strlen(line);
+  if (length + 1 >= sizeof(buffer)) return;
+  memcpy(buffer, line, length);
+  buffer[length] = '\n';
+  const int written = send(localClient.fd(), buffer, length + 1, MSG_DONTWAIT);
+  if (written != static_cast<int>(length + 1)) localClient.stop();
+}
+
+void sendControlAck(const planter::ControlCommand& command, bool ok,
+                    const char* error) {
+  char ack[256];
+  const planter::ControlStatus status = relayController.status();
+  const uint32_t nowMs = millis();
+  const uint32_t remainingS =
+      (relayController.pumpManualRemainingMs(nowMs) + 999) / 1000;
+  snprintf(ack, sizeof(ack),
+           "{\"type\":\"ack\",\"id\":%lu,\"ok\":%s,\"error\":%s,"
+           "\"pump_manual\":%s,\"pump_on\":%s,\"pump_remaining_s\":%lu,"
+           "\"light_manual\":%s,\"light_on\":%s}",
+           command.id, ok ? "true" : "false",
+           error == nullptr ? "null" : error,
+           relayController.pumpManual() ? "true" : "false",
+           status.pumpOn ? "true" : "false",
+           static_cast<unsigned long>(remainingS),
+           relayController.lightManual() ? "true" : "false",
+           status.lightOn ? "true" : "false");
+  sendLocalLine(ack);
+}
+
+void applyControlLine(const char* line) {
+  const planter::ControlCommand command = planter::parseControlLine(line);
+  if (!command.valid) {
+    sendControlAck(command, false, "\"invalid\"");
+    return;
+  }
+  const uint32_t nowMs = millis();
+  if (command.pumpSet) {
+    if (command.pumpAuto) {
+      relayController.setPumpAuto();
+    } else {
+      relayController.setPumpManual(nowMs, command.pumpOn,
+                                    command.durationSeconds * 1000UL);
+    }
+  }
+  if (command.lightSet) {
+    if (command.lightAuto) {
+      relayController.setLightAuto();
+    } else {
+      relayController.setLightManual(command.lightOn);
+    }
+  }
+  syncRelayCommands();
+  sendControlAck(command, true, "null");
 }
 
 void sendLocalSample(char* output, size_t capacity) {
@@ -102,12 +196,16 @@ struct ArduinoGpio {
   void enableOutput(int pin) { pinMode(pin, OUTPUT); }
 };
 
+int medianAnalogRead(int pin) {
+  return planter::medianAdc([pin]() { return analogRead(pin); });
+}
+
 struct ArduinoSoilGpio {
   void write(int pin, bool high) { digitalWrite(pin, high ? HIGH : LOW); }
   void enableOutput(int pin) { pinMode(pin, OUTPUT); }
   void enableInput(int pin) { pinMode(pin, INPUT); }
   void delayMs(uint32_t milliseconds) { delay(milliseconds); }
-  int readAnalog(int pin) { return analogRead(pin); }
+  int readAnalog(int pin) { return medianAnalogRead(pin); }
 };
 
 void syncRelayCommands() {
@@ -151,17 +249,12 @@ void readObservationCommands() {
   }
 }
 
-// Always attempt the MQ ADC2 read. Unlike analogRead(), the IDF call exposes
-// failure instead of silently turning an ADC2/Wi-Fi conflict into a false zero.
-// GPIO27 is ADC2 channel 7 on the classic ESP32.
+// User-reported SVP/GPIO36 is ADC1 channel 0. ADC1 remains usable while Wi-Fi
+// runs; neither an ADC value nor firmware can verify safe module voltages.
 int readMqRaw() {
-  static_assert(extra_sensors::kMq135Pin == 27, "Update ADC2 channel for MQ pin");
-  int raw = -1;
-  if (!adcAttachPin(extra_sensors::kMq135Pin) ||
-      adc2_get_raw(ADC2_CHANNEL_7, ADC_WIDTH_BIT_12, &raw) != ESP_OK) {
-    return -1;
-  }
-  return raw;
+  static_assert(extra_sensors::kMq135Pin == 36, "Update ADC1 channel for MQ pin");
+  if (!mqAdcReady) return -1;
+  return planter::medianAdc([]() { return adc1_get_raw(ADC1_CHANNEL_0); });
 }
 
 void lcdLine(uint8_t row, const char* text) {
@@ -202,8 +295,7 @@ void updateLcd(const planter::SensorSnapshot& sample,
     }
   } else if (page == 2) {
     const int water = planter::observedWaterRelativePercent(sample);
-    if (water >= 0) snprintf(first, sizeof(first), "Water:~%d%%", water);
-    else snprintf(first, sizeof(first), "Water:--");
+    planter::formatWaterLcd(first, sizeof(first), water);
     if (sample.mqEnabled && sample.mqAdcReadable &&
         planter::validAdcRaw(sample.mqAdcRaw)) {
       const int mqAdcPercent = planter::relativePercent(sample.mqAdcRaw, 0, 4095);
@@ -216,8 +308,13 @@ void updateLcd(const planter::SensorSnapshot& sample,
       snprintf(second, sizeof(second), "MQ:--");
     }
   } else if (page == 3) {
-    // These are requested commands, not measured physical contact states.
-    snprintf(first, sizeof(first), "P:%s diminta", control.pumpOn ? "ON" : "OFF");
+    // "cmd" is the requested output, not a measured relay/contact state.
+    // The soil band is diagnostic only and never bypasses the pump guards.
+    const planter::PumpSoilBand soilBand = sample.soilEnabled
+        ? planter::pumpSoilBand(sample.soilAdcRaw)
+        : planter::PumpSoilBand::unavailable;
+    snprintf(first, sizeof(first), "P:%s cmd %s", control.pumpOn ? "ON" : "OFF",
+             planter::pumpSoilBandLcd(soilBand));
     snprintf(second, sizeof(second), "L:%s diminta", control.lightOn ? "ON" : "OFF");
   } else if (localWifiReady) {
     // The password is shown only on the physical LCD, not serial or telemetry.
@@ -243,10 +340,10 @@ void printSample(uint32_t nowMs) {
       planter::kDhtEnabled ? climateSensor.readTemperature() : NAN,
       planter::kDhtEnabled ? climateSensor.readHumidity() : NAN,
       readSoilRaw(),
-      analogRead(planter::kLightPin),
-      analogRead(planter::kUvPin),
+      medianAnalogRead(planter::kLightPin),
+      medianAnalogRead(planter::kUvPin),
       planter::kDhtEnabled,
-      analogRead(extra_sensors::kWaterLevelPin),
+      medianAnalogRead(extra_sensors::kWaterLevelPin),
       true,
       planter::kSoilAdcReadEnabled,
       planter::kDhtModelVerified,
@@ -263,18 +360,18 @@ void printSample(uint32_t nowMs) {
   // A rail can be a real extreme or a disconnected signal. For actuator
   // control, reject the ambiguity rather than interpreting it as darkness or
   // dryness. The unmodified raw values remain visible in telemetry.
-  const bool soilUsable = planter::controlAnalogUsable(sample.soilAdcRaw);
-  const bool lightUsable = planter::controlAnalogUsable(sample.lightAdcRaw);
+  const bool soilUsable = planter::soilAnalogUsable(sample.soilAdcRaw);
+  // LDR rails are valid bright/dark extremes; a failed read is still -1.
+  const bool lightUsable = planter::validAdcRaw(sample.lightAdcRaw);
   const bool waterUsable = planter::controlWaterAdcUsable(sample.waterAdcRaw);
   const planter::ControlInput input = {
-      soilUsable ? preview.soilPercent : -1,
+      soilUsable ? sample.soilAdcRaw : -1,
       lightUsable ? preview.lightPercent : -1,
       waterUsable ? preview.waterPercent : -1,
-      planter::kPumpSoilScaleConfirmed,
+      planter::kPumpSoilScaleConfirmed || planter::kPumpAllowEstimatedSoil,
       planter::kWaterRelativeScaleEnabled,
       watchdogReady,
       planter::kLightAutomationEnabled,
-      -1,  // UV index is not calibrated; raw UV ADC is never used as an index.
   };
   relayController.accept(sample.uptimeMs, input);
   syncRelayCommands();
@@ -301,7 +398,7 @@ void setup() {
   Serial.begin(115200);
   const esp_err_t watchdogInit =
       esp_task_wdt_init(planter::kWatchdogTimeoutSeconds, true);
-  watchdogReady = watchdogInit == ESP_OK &&
+  watchdogReady = (watchdogInit == ESP_OK || watchdogInit == ESP_ERR_INVALID_STATE) &&
                   (esp_task_wdt_status(nullptr) == ESP_OK ||
                    esp_task_wdt_add(nullptr) == ESP_OK);
   if (!watchdogReady) {
@@ -315,23 +412,26 @@ void setup() {
   lcdLine(1, "Relay cmd: OFF");
   if (planter::kDhtEnabled) climateSensor.begin();
   analogReadResolution(12);
-  // ADC characterization estimates GPIO27 voltage from the same raw sample.
+  // ADC characterization estimates GPIO36 voltage from the averaged sample.
   // It does not establish the module's supply, divider ratio, or electrical safety.
-  analogSetPinAttenuation(extra_sensors::kMq135Pin, ADC_11db);
-  const esp_adc_cal_value_t mqCal = esp_adc_cal_characterize(
-      ADC_UNIT_2, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &mqAdcCharacteristics);
-  switch (mqCal) {
-    case ESP_ADC_CAL_VAL_EFUSE_TP:
-      mqAdcCalibration = planter::AdcCalibrationMethod::efuse_two_point;
-      break;
-    case ESP_ADC_CAL_VAL_EFUSE_VREF:
-      mqAdcCalibration = planter::AdcCalibrationMethod::efuse_vref;
-      break;
-    case ESP_ADC_CAL_VAL_DEFAULT_VREF:
-      mqAdcCalibration = planter::AdcCalibrationMethod::default_vref;
-      break;
-    default:
-      mqAdcCalibration = planter::AdcCalibrationMethod::unavailable;
+  mqAdcReady = adc1_config_width(ADC_WIDTH_BIT_12) == ESP_OK &&
+               adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_12) == ESP_OK;
+  if (mqAdcReady) {
+    const esp_adc_cal_value_t mqCal = esp_adc_cal_characterize(
+        ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &mqAdcCharacteristics);
+    switch (mqCal) {
+      case ESP_ADC_CAL_VAL_EFUSE_TP:
+        mqAdcCalibration = planter::AdcCalibrationMethod::efuse_two_point;
+        break;
+      case ESP_ADC_CAL_VAL_EFUSE_VREF:
+        mqAdcCalibration = planter::AdcCalibrationMethod::efuse_vref;
+        break;
+      case ESP_ADC_CAL_VAL_DEFAULT_VREF:
+        mqAdcCalibration = planter::AdcCalibrationMethod::default_vref;
+        break;
+      default:
+        mqAdcCalibration = planter::AdcCalibrationMethod::unavailable;
+    }
   }
   pinMode(extra_sensors::kWaterLevelPin, INPUT);
   pinMode(extra_sensors::kMq135DigitalPin, INPUT);

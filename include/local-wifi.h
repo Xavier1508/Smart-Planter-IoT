@@ -5,10 +5,10 @@
 
 namespace planter {
 
-// One boot-only WPA2 password, displayed on the local LCD and never logged.
-// The caller supplies the ESP32 hardware-random source after Wi-Fi starts.
-// Ten random base-32 symbols retain 50 bits of boot-specific entropy while
-// fitting comfortably on the 16-character LCD.
+// Optional fixed WPA2 password from an ignored local header, or a boot-random
+// fallback. The password is displayed on the LCD and never logged. Ten random
+// base-32 symbols retain 50 bits of boot-specific entropy while fitting the
+// 16-character LCD.
 constexpr size_t kLocalWifiPasswordLength = 10;
 constexpr char kLocalWifiPasswordAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 static_assert(sizeof(kLocalWifiPasswordAlphabet) == 33, "Expected 32 symbols");

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "adc-average.h"
 #include "planter-config.h"
 #include "observation-label.h"
 #include "relay-safety.h"
@@ -94,21 +95,65 @@ inline int relativePercent(int raw, int zeroAdc, int fullAdc) {
   return value < 0 ? 0 : (value > 100 ? 100 : value);
 }
 
-// Display-only interpolation between two operator-reported observation means.
-// Zero denotes the reported low level, not an empty tank; neither endpoint is
-// verified. This value is deliberately separate from pump control.
+// Rounded variant for the user-facing soil percentage. With local references
+// 308..1800, the 1200 ADC pump edge displays as 60% instead of truncating to 59.
+inline int relativePercentRounded(int raw, int zeroAdc, int fullAdc) {
+  if (!validAdcRaw(raw) || !validAdcRaw(zeroAdc) || !validAdcRaw(fullAdc) ||
+      zeroAdc == fullAdc) {
+    return -1;
+  }
+  const int span = fullAdc - zeroAdc;
+  const int numerator = (raw - zeroAdc) * 100;
+  const int value = numerator >= 0
+                        ? (numerator + span / 2) / span
+                        : (numerator - span / 2) / span;
+  return value < 0 ? 0 : (value > 100 ? 100 : value);
+}
+
+// Display interpolation using the same provisional endpoints as water control.
+// Zero denotes a low reference, not an empty tank; neither endpoint is verified.
 inline int observedWaterRelativePercent(const SensorSnapshot& sample) {
   if (!sample.waterEnabled || !controlWaterAdcUsable(sample.waterAdcRaw)) return -1;
   return relativePercent(sample.waterAdcRaw, kWaterObservedLowMeanAdc,
                          kWaterObservedNearFullMeanAdc);
 }
 
-// Reported dry and immersed readings define a tentative display scale only.
+// Zero on this scale means at or below a reported low reference, not that the
+// tank is empty. Keep the number for the safety guard, but do not display it
+// as an exact percentage when the true volume below that reference is unknown.
+inline int waterDisplayRelativePercent(int relativePercent) {
+  return relativePercent > 0 && relativePercent <= 100 ? relativePercent : -1;
+}
+
+inline const char* waterControlBandName(int relativePercent) {
+  if (!controlPercentValid(relativePercent)) return "unavailable";
+  return relativePercent < kWaterLowBelowPercent ? "below_threshold"
+                                                   : "at_or_above_threshold";
+}
+
+inline void formatWaterLcd(char* output, size_t capacity, int relativePercent) {
+  if (output == nullptr || capacity == 0) return;
+  if (!controlPercentValid(relativePercent)) {
+    std::snprintf(output, capacity, "Air:--");
+  } else if (relativePercent < kWaterLowBelowPercent) {
+    std::snprintf(output, capacity, "Air:RENDAH ref");
+  } else {
+    std::snprintf(output, capacity, "Air:~%d%% rel", relativePercent);
+  }
+}
+
+// A tentative relative scale for display, not the pump's raw-ADC rule.
 // A rail is kept as raw ADC but is too ambiguous even for this estimate.
 inline int observedSoilRelativePercent(const SensorSnapshot& sample) {
-  if (!sample.soilEnabled || !controlAnalogUsable(sample.soilAdcRaw)) return -1;
-  return relativePercent(sample.soilAdcRaw, kSoilRelativeZeroAdc,
-                         kSoilRelativeFullAdc);
+  if (!sample.soilEnabled || !soilAnalogUsable(sample.soilAdcRaw)) return -1;
+  return relativePercentRounded(sample.soilAdcRaw, kSoilRelativeZeroAdc,
+                                kSoilRelativeFullAdc);
+}
+
+inline int soilPercentForRaw(int raw) {
+  if (!soilAnalogUsable(raw)) return -1;
+  return relativePercentRounded(raw, kSoilRelativeZeroAdc,
+                                kSoilRelativeFullAdc);
 }
 
 // Tri-state results: -1 means unavailable, 0 means false, and 1 means true.
@@ -138,12 +183,22 @@ inline RulePreview previewRules(const SensorSnapshot& sample,
   const int soil = observedSoilRelativePercent(sample);
   const int light = relativePercent(sample.lightAdcRaw, kLightRelativeZeroAdc,
                                     kLightRelativeFullAdc);
-  const int water = sample.waterEnabled && waterScaleEnabled
+  const int water = sample.waterEnabled && waterScaleEnabled &&
+                            controlWaterAdcUsable(sample.waterAdcRaw)
                         ? relativePercent(sample.waterAdcRaw, waterEmptyAdc,
                                           waterFullAdc)
                         : -1;
-  return {soil, light, water, belowThresholdPreview(soil, kPumpOnBelowPercent),
-          belowThresholdPreview(light, kLegacyLightPreviewBelowPercent),
+  const PumpSoilBand soilBand = sample.soilEnabled
+                                    ? pumpSoilBand(sample.soilAdcRaw)
+                                    : PumpSoilBand::unavailable;
+  const LightDecision lightBand = validAdcRaw(sample.lightAdcRaw)
+                                      ? ldrLightDecision(light)
+                                      : LightDecision::unavailable;
+  const int pumpOn = soilBand == PumpSoilBand::unavailable
+                         ? -1 : (soilBand == PumpSoilBand::dry ? 1 : 0);
+  const int lightOn = lightBand == LightDecision::on ? 1
+                      : lightBand == LightDecision::off ? 0 : -1;
+  return {soil, light, water, pumpOn, lightOn,
           belowThresholdPreview(water, kWaterLowBelowPercent)};
 }
 
@@ -212,8 +267,11 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
   char mqRaw[16];
   char mqDigital[8];
   char mqPinMv[16];
-  char mq135[480];
+  char mqPercent[8];
+  char pumpTarget[8];
+  char mq135[520];
   char labelJson[200];
+  char uvProxy[16];
   formatClimateValue(temperature, sizeof(temperature), sample.temperatureC,
                      temperatureValid);
   formatClimateValue(humidity, sizeof(humidity), sample.humidityPercent,
@@ -221,20 +279,27 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
   formatAdcValue(soil, sizeof(soil), sample.soilEnabled ? sample.soilAdcRaw : -1);
   formatAdcValue(light, sizeof(light), sample.lightAdcRaw);
   formatAdcValue(uv, sizeof(uv), sample.uvAdcRaw);
+  formatAdcValue(uvProxy, sizeof(uvProxy), uvAdcProxyTenths(sample.uvAdcRaw));
   const RulePreview preview = previewRules(sample);
+  const PumpSoilBand soilBand = sample.soilEnabled
+                                    ? pumpSoilBand(sample.soilAdcRaw)
+                                    : PumpSoilBand::unavailable;
   formatAdcValue(soilRelative, sizeof(soilRelative), preview.soilPercent);
+  formatAdcValue(pumpTarget, sizeof(pumpTarget),
+                 soilPercentForRaw(kPumpOnBelowRawAdc));
   formatAdcValue(lightRelative, sizeof(lightRelative), preview.lightPercent);
   formatAdcValue(waterRaw, sizeof(waterRaw), sample.waterAdcRaw);
-  formatAdcValue(waterRelative, sizeof(waterRelative), preview.waterPercent);
+  formatAdcValue(waterRelative, sizeof(waterRelative),
+                 waterDisplayRelativePercent(preview.waterPercent));
   formatAdcValue(waterObservedRelative, sizeof(waterObservedRelative),
-                 observedWaterRelativePercent(sample));
+                 waterDisplayRelativePercent(observedWaterRelativePercent(sample)));
   if (sample.waterEnabled) {
     std::snprintf(waterLevel, sizeof(waterLevel),
                   "{\"adc_raw\":%s,\"relative_percent\":%s,\"low\":%s,"
                   "\"status\":\"%s\",\"raw_reference\":{\"band\":\"%s\","
                   "\"low_at_or_below\":%d,\"near_below\":%d,"
                   "\"quality\":\"historical_conflicting\"},"
-                  "\"signal_quality\":\"%s\","
+                  "\"signal_quality\":\"%s\",\"control_band\":\"%s\","
                   "\"observation_scale\":{\"relative_percent\":%s,"
                   "\"low_mean_adc\":%d,\"near_full_mean_adc\":%d,"
                   "\"basis\":\"%s\","
@@ -244,7 +309,8 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
                   validAdcRaw(sample.waterAdcRaw) ? "unverified" : "unavailable",
                   waterRawReferenceBand(sample.waterAdcRaw),
                   kWaterLowRawReferenceAdc, kWaterNearRawReferenceAdc,
-                  adcSignalQuality(sample.waterAdcRaw), waterObservedRelative,
+                  adcSignalQuality(sample.waterAdcRaw),
+                  waterControlBandName(preview.waterPercent), waterObservedRelative,
                   kWaterObservedLowMeanAdc, kWaterObservedNearFullMeanAdc,
                   kDisplayUsesOperatorReferences ? "operator_reported_window_means"
                                                  : "generic_display_references");
@@ -259,10 +325,11 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
     } else {
       std::snprintf(mqDigital, sizeof(mqDigital), "null");
     }
-    const char* adcStatus =
-        !sample.mqAdcReadable
-            ? "adc_read_failed"
-             : (validAdcRaw(sample.mqAdcRaw) ? "unverified" : "unavailable");
+    // Old mobile versions associate adc_read_failed with ADC2/Wi-Fi. This
+    // ADC1 firmware uses unavailable there and keeps the failure detail in
+    // signal_quality, avoiding a false ADC2 explanation on the old app.
+    const char* adcStatus = sample.mqAdcReadable && validAdcRaw(sample.mqAdcRaw)
+                                ? "unverified" : "unavailable";
     const bool pinMvAvailable = sample.mqAdcReadable &&
                                 controlAnalogUsable(sample.mqAdcRaw) &&
                                 sample.mqAdcPinMillivolts >= 0 &&
@@ -273,14 +340,20 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
     } else {
       std::snprintf(mqPinMv, sizeof(mqPinMv), "null");
     }
+    formatAdcValue(mqPercent, sizeof(mqPercent),
+                   sample.mqAdcReadable && validAdcRaw(sample.mqAdcRaw)
+                       ? (sample.mqAdcRaw * 100 + 2047) / 4095
+                       : -1);
     std::snprintf(mq135, sizeof(mq135),
-                  "{\"adc_raw\":%s,\"digital_raw\":%s,\"adc_status\":\"%s\","
-                  "\"status\":\"unverified\",\"signal_quality\":\"%s\","
+                  "{\"adc_raw\":%s,\"adc_percent\":%s,\"digital_raw\":%s,"
+                  "\"adc_status\":\"%s\","
+                  "\"status\":\"unverified\",\"signal_quality\":\"%s\",\"adc_unit\":\"ADC1\","
                   "\"adc_pin_mv_estimate\":%s,\"adc_calibration_source\":\"%s\","
                   "\"calibration\":\"not_calibrated\",\"warmup\":\"unknown\","
                   "\"environment_compensation\":\"not_applied\","
                   "\"co2_ppm\":null,\"air_quality\":null}",
-                  mqRaw, mqDigital, adcStatus, mqSignalQuality(sample), mqPinMv,
+                  mqRaw, mqPercent, mqDigital, adcStatus,
+                  mqSignalQuality(sample), mqPinMv,
                   adcCalibrationName(sample.mqAdcCalibration));
   } else {
     std::snprintf(mq135, sizeof(mq135), "null");
@@ -305,7 +378,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
     std::snprintf(controlPreview, sizeof(controlPreview), "null");
   } else {
     std::snprintf(controlPreview, sizeof(controlPreview),
-                  "{\"mode\":\"diagnostic_only\",\"basis\":\"relative_unverified\","
+                   "{\"mode\":\"diagnostic_only\",\"basis\":\"raw_soil_relative_others_unverified\","
                   "\"pump_on\":%s,\"growlight_on\":%s,\"water_low\":%s}",
                   jsonPreviewBoolean(preview.pumpOn),
                   jsonPreviewBoolean(preview.lightOn),
@@ -319,23 +392,32 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
       "\"recorded_at_utc\":null,"
       "\"dht\":{\"model\":\"DHT11_assumed\",\"temperature_c\":%s,"
       "\"humidity_percent\":%s,\"status\":\"%s\"},"
-      "\"adc\":{\"soil_raw\":%s,\"soil_status\":\"%s\","
+       "\"adc_sampling\":{\"method\":\"median_5\",\"samples_per_cycle\":%u,"
+       "\"mixed_rail\":\"unavailable\",\"failed_read\":\"unavailable\"},"
+       "\"adc\":{\"soil_raw\":%s,\"soil_status\":\"%s\","
       "\"light_raw\":%s,\"uv_raw\":%s,"
       "\"soil_relative_percent\":%s,\"light_relative_percent\":%s,"
       "\"status\":\"unverified\",\"soil_signal_quality\":\"%s\","
-      "\"soil_supply_mode\":\"%s\","
+      "\"soil_supply_mode\":\"%s\",\"soil_zero_is_dry\":%s,"
        "\"light_signal_quality\":\"%s\",\"uv_signal_quality\":\"%s\","
        "\"soil_calibration\":\"%s\","
        "\"soil_scale_basis\":\"%s\","
        "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d,"
-       "\"light_calibration\":\"historical_unverified\","
+       "\"light_calibration\":\"relative_unverified\","
        "\"uv_calibration\":\"not_available\"},"
        "\"water_level\":%s,\"mq135\":%s,"
        "\"observation_label\":%s,"
-       "\"lighting_rule\":{\"candidate\":\"%s\",\"uv_index\":null,"
+       "\"lighting_rule\":{\"mode\":\"ldr_single_threshold\","
+       "\"candidate\":\"%s\",\"uv_index\":null,"
+       "\"uv_adc_proxy_tenths\":%s,\"uv_proxy_basis\":\"uncalibrated_adc_0_to_14\","
        "\"light_on_below_percent\":%d,\"light_off_at_or_above_percent\":%d,"
-       "\"uv_off_above_index\":7,\"status\":\"diagnostic_only_unverified\","
+        "\"uv_off_above_proxy\":null,\"uv_role\":\"monitoring_only\","
+       "\"status\":\"diagnostic_only_unverified\","
        "\"use_for_control\":false},"
+       "\"pump_soil_debug\":{\"band\":\"%s\",\"moisture_percent\":%s,"
+        "\"target_percent\":%s,\"dry_below_on\":%s,"
+        "\"wet_at_or_above_off\":%s,\"on_below_adc\":%d,"
+        "\"off_at_or_above_adc\":%d,\"basis\":\"averaged_adc_unverified\"},"
        "\"control_preview\":%s,"
       "\"relay_control\":\"%s\",\"pump_cmd\":%s,\"pump_reason\":\"%s\","
       "\"growlight_cmd\":%s,\"growlight_reason\":\"%s\","
@@ -343,19 +425,26 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
       "\"pump_state\":null,"
       "\"growlight_state\":null}",
       kFirmwareVersion, static_cast<unsigned long>(sample.uptimeMs), temperature, humidity,
-      climateStatus, soil, soilStatus, light, uv, soilRelative, lightRelative,
+       climateStatus, kAdcSamplesPerCycle, soil, soilStatus, light, uv, soilRelative, lightRelative,
       adcSignalQuality(sample.soilAdcRaw, sample.soilEnabled),
       kSoilPowerWiringVerified ? "gpio25_switched_operator_configured"
                                : "gpio25_input_supply_unverified",
+       kSoilZeroIsDry ? "true" : "false",
        adcSignalQuality(sample.lightAdcRaw), adcSignalQuality(sample.uvAdcRaw),
        kPumpSoilScaleConfirmed ? "operator_confirmed" : "not_confirmed",
        kDisplayUsesOperatorReferences ? "reported_dry_and_immersed_means"
                                      : "generic_display_references",
        kSoilRelativeZeroAdc, kSoilRelativeFullAdc,
        waterLevel, mq135, labelJson,
-       lightDecisionName(dualSensorLightDecision(
-           controlAnalogUsable(sample.lightAdcRaw) ? preview.lightPercent : -1, -1)),
-       kLightOnBelowPercent, kLightOffAtOrAbovePercent, controlPreview,
+        lightDecisionName(ldrLightDecision(
+            validAdcRaw(sample.lightAdcRaw) ? preview.lightPercent : -1)), uvProxy,
+        kLightOnBelowPercent, kLightOffAtOrAbovePercent,
+       pumpSoilBandName(soilBand), soilRelative, pumpTarget,
+       jsonPreviewBoolean(soilBand == PumpSoilBand::unavailable
+                              ? -1 : (soilBand == PumpSoilBand::dry ? 1 : 0)),
+       jsonPreviewBoolean(soilBand == PumpSoilBand::unavailable
+                              ? -1 : (soilBand == PumpSoilBand::wet ? 1 : 0)),
+        kPumpOnBelowRawAdc, kPumpOffAtOrAboveRawAdc, controlPreview,
       control ? "automatic_requested" : "inactive_requested",
       control ? jsonPreviewBoolean(control->pumpOn ? 1 : 0) : "null",
       control ? control->pumpReason : "not_available",

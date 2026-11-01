@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <string.h>
 
 #include "planter-config.h"
 
@@ -28,37 +29,62 @@ struct ControlStatus {
 };
 
 struct ControlInput {
-  int soilPercent;
+  int soilAdcRaw;
   int lightPercent;
   int waterPercent;
-  bool soilScaleConfirmed;
-  bool waterScaleConfirmed;
+  bool soilControlAllowed;
+  bool waterScaleEnabled;
   bool watchdogReady;
   bool lightAutomationEnabled;
-  // UV index in tenths, or -1 when a calibrated index is unavailable. Raw ADC
-  // and a percentage are not a UV index and must never be substituted here.
-  int uvIndexTenths;
 };
 
 inline bool controlPercentValid(int value) { return value >= 0 && value <= 100; }
 
+// A soil-only diagnostic using the same raw ADC threshold as RelayController.
+// It never overrides water, watchdog, timing, or other pump safety guards.
+enum class PumpSoilBand { dry, hold, wet, unavailable };
+
+// 4095 is always ambiguous. 0 is dry only when the device-specific calibration
+// says the probe really reads 0 in dry air; otherwise it stays unavailable.
+inline bool soilAnalogUsable(int raw) {
+  if (raw < 0 || raw >= 4095) return false;
+  if (raw == 0) return kSoilZeroIsDry;
+  return true;
+}
+
+inline PumpSoilBand pumpSoilBand(int soilAdcRaw) {
+  if (!soilAnalogUsable(soilAdcRaw)) return PumpSoilBand::unavailable;
+  if (soilAdcRaw < kPumpOnBelowRawAdc) return PumpSoilBand::dry;
+  if (soilAdcRaw >= kPumpOffAtOrAboveRawAdc) return PumpSoilBand::wet;
+  return PumpSoilBand::hold;
+}
+
+inline const char* pumpSoilBandName(PumpSoilBand band) {
+  switch (band) {
+    case PumpSoilBand::dry: return "dry";
+    case PumpSoilBand::hold: return "hold";
+    case PumpSoilBand::wet: return "wet";
+    default: return "unavailable";
+  }
+}
+
+inline const char* pumpSoilBandLcd(PumpSoilBand band) {
+  switch (band) {
+    case PumpSoilBand::dry: return "KERING";
+    case PumpSoilBand::hold: return "TAHAN";
+    case PumpSoilBand::wet: return "BASAH";
+    default: return "N/A";
+  }
+}
+
 enum class LightDecision { off, on, hold, unavailable };
 
-// Either sensor can indicate sufficient light. Turning ON requires both
-// readings; unknown input cannot be interpreted as darkness. The 65-70% band
-// and exactly UV index 7 retain the previous state rather than chatter.
-inline LightDecision dualSensorLightDecision(int lightPercent, int uvIndexTenths) {
-  const bool lightValid = controlPercentValid(lightPercent);
-  const bool uvValid = uvIndexTenths >= 0 && uvIndexTenths <= 250;
-  if ((lightValid && lightPercent >= kLightOffAtOrAbovePercent) ||
-      (uvValid && uvIndexTenths > kUvLightOffAboveTenths)) {
-    return LightDecision::off;
-  }
-  if (!lightValid || !uvValid) return LightDecision::unavailable;
-  if (lightPercent < kLightOnBelowPercent &&
-      uvIndexTenths < kUvLightOffAboveTenths) {
-    return LightDecision::on;
-  }
+// LDR only, one user-requested edge: below 65% requests ON and 65% or more
+// requests OFF. The minimum-hold timer still prevents rapid toggling.
+inline LightDecision ldrLightDecision(int lightPercent) {
+  if (!controlPercentValid(lightPercent)) return LightDecision::unavailable;
+  if (lightPercent >= kLightOffAtOrAbovePercent) return LightDecision::off;
+  if (lightPercent < kLightOnBelowPercent) return LightDecision::on;
   return LightDecision::hold;
 }
 
@@ -75,6 +101,11 @@ inline const char* lightDecisionName(LightDecision decision) {
 // telemetry, while forcing affected commands OFF until input is non-rail.
 inline bool controlAnalogUsable(int raw) { return raw > 0 && raw < 4095; }
 inline bool controlWaterAdcUsable(int raw) { return controlAnalogUsable(raw); }
+
+// Uncalibrated UV ADC proxy for monitoring only, never a lamp control input.
+inline int uvAdcProxyTenths(int raw) {
+  return raw >= 0 && raw < 4095 ? (raw * 140) / 4095 : -1;
+}
 
 inline bool controlIntervalElapsed(uint32_t nowMs, uint32_t thenMs,
                                    uint32_t intervalMs) {
@@ -95,16 +126,28 @@ class RelayController {
     lastSampleMs_ = nowMs;
     pumpStartedMs_ = nowMs;
     pumpStoppedMs_ = nowMs;
-    lightChangedMs_ = nowMs;
-    // Require a full cooldown after boot as well as after any pump run.
-    pumpCooldown_ = true;
+    // Initial activation can occur after boot grace; later changes still honor
+    // the normal hold/cooldown intervals and the pump runtime limit.
+    lightChangedMs_ = nowMs - kLightMinStateMs;
+    pumpCooldown_ = false;
+    pumpCooldownMs_ = kPumpCooldownMs;
+    dryConfirm_ = 0;
+    waterLowRunningConfirm_ = 0;
     pumpReason_ = "boot_grace";
     lightReason_ = "boot_grace";
   }
 
   void tick(uint32_t nowMs) {
     if (!initialized_) return;
-    if (pumpOn_ && controlIntervalElapsed(nowMs, pumpStartedMs_, kPumpMaxOnMs)) {
+    if (pumpManual_ && pumpManualOn_ &&
+        controlIntervalElapsed(nowMs, pumpManualSinceMs_,
+                               pumpManualDurationMs_)) {
+      pumpManual_ = false;
+      pumpOn_ = false;
+      pumpReason_ = "manual_expired";
+    }
+    if (pumpOn_ && !pumpManual_ &&
+        controlIntervalElapsed(nowMs, pumpStartedMs_, kPumpMaxOnMs)) {
       stopPump(nowMs, "runtime_limit");
     }
     if (hasSample_ && controlIntervalElapsed(nowMs, lastSampleMs_, kSampleStaleMs)) {
@@ -116,6 +159,51 @@ class RelayController {
   void inhibit(uint32_t nowMs, const char* reason) {
     stopPump(nowMs, reason);
     setLight(nowMs, false, reason);
+  }
+
+  // Manual commands are explicit user overrides. Pump ON is always bounded by
+  // the 30-second hardware runtime limit; pump OFF and lamp states persist
+  // until the user selects automatic again.
+  void setPumpManual(uint32_t nowMs, bool on, uint32_t durationMs) {
+    pumpManual_ = true;
+    pumpManualOn_ = on;
+    pumpManualSinceMs_ = nowMs;
+    pumpManualDurationMs_ =
+        on ? (durationMs < 1000 ? 1000 : (durationMs > kPumpManualMaxOnMs
+                                              ? kPumpManualMaxOnMs
+                                              : durationMs))
+           : 0;
+    pumpOn_ = on;
+    if (on) pumpStartedMs_ = nowMs;
+    pumpReason_ = on ? "manual_on" : "manual_off";
+  }
+
+  void setPumpAuto() {
+    pumpManual_ = false;
+    pumpReason_ = "manual_released";
+  }
+
+  void setLightManual(bool on) {
+    lightManual_ = true;
+    lightManualOn_ = on;
+    lightOn_ = on;
+    lightReason_ = on ? "manual_on" : "manual_off";
+  }
+
+  void setLightAuto() {
+    lightManual_ = false;
+    lightReason_ = "manual_released";
+  }
+
+  bool pumpManual() const { return pumpManual_; }
+  bool lightManual() const { return lightManual_; }
+  uint32_t pumpManualRemainingMs(uint32_t nowMs) const {
+    if (!pumpManual_ || !pumpManualOn_) return 0;
+    if (controlIntervalElapsed(nowMs, pumpManualSinceMs_, pumpManualDurationMs_)) {
+      return 0;
+    }
+    return pumpManualDurationMs_ -
+           static_cast<uint32_t>(nowMs - pumpManualSinceMs_);
   }
 
   void accept(uint32_t nowMs, const ControlInput& input) {
@@ -133,54 +221,85 @@ class RelayController {
       return;
     }
 
-    if (!input.waterScaleConfirmed || !controlPercentValid(input.waterPercent)) {
+    if (!input.waterScaleEnabled || !controlPercentValid(input.waterPercent)) {
       stopPump(nowMs, "water_unavailable");
-    } else if (input.waterPercent < kWaterLowBelowPercent) {
+    } else if (!pumpOn_ && input.waterPercent < kWaterLowBelowPercent) {
+      // The reservoir is checked while the pump is idle, where the reading is
+      // not disturbed by the pump's own load. One low sample blocks a start.
       stopPump(nowMs, "water_low");
-    } else if (!input.soilScaleConfirmed) {
+    } else if (!input.soilControlAllowed) {
       stopPump(nowMs, "soil_unverified");
-    } else if (!controlPercentValid(input.soilPercent)) {
+    } else if (!soilAnalogUsable(input.soilAdcRaw)) {
       stopPump(nowMs, "soil_unavailable");
     } else if (pumpOn_) {
-      if (input.soilPercent >= kPumpOffAtPercent) {
+      // A running pump disturbs the water-level sensor, so require the low
+      // reading to persist before treating it as an empty reservoir. Otherwise
+      // a healthy tank would stop the pump every few seconds.
+      if (input.waterPercent < kWaterLowBelowPercent) {
+        ++waterLowRunningConfirm_;
+      } else {
+        waterLowRunningConfirm_ = 0;
+      }
+      if (waterLowRunningConfirm_ >= kWaterLowRunningConfirmSamples) {
+        stopPump(nowMs, "water_low");
+      } else if (input.soilAdcRaw >= kPumpOffAtOrAboveRawAdc) {
         stopPump(nowMs, "soil_moist");
       } else {
         pumpReason_ = "watering";
       }
     } else {
+      waterLowRunningConfirm_ = 0;
       if (pumpCooldown_ &&
-          controlIntervalElapsed(nowMs, pumpStoppedMs_, kPumpCooldownMs)) {
+          controlIntervalElapsed(nowMs, pumpStoppedMs_, pumpCooldownMs_)) {
         pumpCooldown_ = false;
       }
-      if (input.soilPercent >= kPumpOnBelowPercent) {
+      if (input.soilAdcRaw >= kPumpOffAtOrAboveRawAdc) {
+        dryConfirm_ = 0;
         pumpReason_ = "soil_not_dry";
+      } else if (input.soilAdcRaw >= kPumpOnBelowRawAdc) {
+        dryConfirm_ = 0;
+        pumpReason_ = "dry_confirm";
       } else if (pumpCooldown_) {
         pumpReason_ = "cooldown";
       } else {
-        pumpOn_ = true;
-        pumpStartedMs_ = nowMs;
-        pumpReason_ = "soil_dry";
+        ++dryConfirm_;
+        if (dryConfirm_ < kPumpDryConfirmSamples) {
+          pumpReason_ = "dry_confirm";
+        } else {
+          pumpOn_ = true;
+          pumpStartedMs_ = nowMs;
+          dryConfirm_ = 0;
+          pumpReason_ = "soil_dry";
+        }
       }
     }
 
     if (!input.lightAutomationEnabled) {
       setLight(nowMs, false, "light_inhibited");
     } else {
-      const LightDecision decision =
-          dualSensorLightDecision(input.lightPercent, input.uvIndexTenths);
+      const LightDecision decision = ldrLightDecision(input.lightPercent);
       if (decision == LightDecision::off) {
-        setLight(nowMs, false, "light_sufficient");
+        setLight(nowMs, false, "ldr_sufficient");
       } else if (decision == LightDecision::unavailable) {
-        setLight(nowMs, false, "light_input_unavailable");
+        setLight(nowMs, false, "ldr_input_unavailable");
       } else if (decision == LightDecision::on && !lightOn_) {
         if (controlIntervalElapsed(nowMs, lightChangedMs_, kLightMinStateMs)) {
-          setLight(nowMs, true, "light_low");
+          setLight(nowMs, true, "ldr_low");
         } else {
           lightReason_ = "minimum_hold";
         }
       } else {
-        lightReason_ = decision == LightDecision::hold ? "hysteresis" : "light_low";
+        lightReason_ = decision == LightDecision::hold ? "hysteresis" : "ldr_low";
       }
+    }
+
+    if (pumpManual_) {
+      pumpOn_ = pumpManualOn_;
+      pumpReason_ = pumpManualOn_ ? "manual_on" : "manual_off";
+    }
+    if (lightManual_) {
+      lightOn_ = lightManualOn_;
+      lightReason_ = lightManualOn_ ? "manual_on" : "manual_off";
     }
   }
 
@@ -192,7 +311,12 @@ class RelayController {
       pumpOn_ = false;
       pumpStoppedMs_ = nowMs;
       pumpCooldown_ = true;
+      pumpCooldownMs_ = strcmp(reason, "runtime_limit") == 0
+                            ? kPumpRuntimeSoakMs
+                            : kPumpCooldownMs;
     }
+    dryConfirm_ = 0;
+    waterLowRunningConfirm_ = 0;
     pumpReason_ = reason;
   }
 
@@ -209,11 +333,20 @@ class RelayController {
   bool pumpOn_ = false;
   bool lightOn_ = false;
   bool pumpCooldown_ = true;
+  uint32_t pumpCooldownMs_ = kPumpCooldownMs;
+  int dryConfirm_ = 0;
+  int waterLowRunningConfirm_ = 0;
   uint32_t bootMs_ = 0;
   uint32_t lastSampleMs_ = 0;
   uint32_t pumpStartedMs_ = 0;
   uint32_t pumpStoppedMs_ = 0;
   uint32_t lightChangedMs_ = 0;
+  bool pumpManual_ = false;
+  bool pumpManualOn_ = false;
+  uint32_t pumpManualSinceMs_ = 0;
+  uint32_t pumpManualDurationMs_ = 0;
+  bool lightManual_ = false;
+  bool lightManualOn_ = false;
   const char* pumpReason_ = "not_initialized";
   const char* lightReason_ = "not_initialized";
 };

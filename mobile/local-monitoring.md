@@ -31,18 +31,24 @@ memakai **LDR saja** dengan satu ambang 65%; pada perangkat ini ADC yang
 UV hanya dipantau.
 
 Pompa memakai histeresis: ON di bawah **1000 ADC**, OFF pada **1200 ADC** ke
-atas. Setelah berhenti karena batas waktu 30 detik, pompa menunggu **5 menit**
-agar air meresap sebelum mencoba lagi. ADC 4095 atau data tidak tersedia
-menghalangi ON. Tanah kering terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan
-1200 ≈ 67%. Air memakai rentang **826 (rendah) sampai 1150 (penuh)**; indikator
-Full dimulai pada 50% rentang karena pin atas sudah terendam di sekitar 1000.
-Semua input ADC memakai median 5 sampel.
+atas. Sejak v23 pompa otomatis boleh menyala terus sampai sensor tanah mencapai
+1200, dengan batas keras **5 menit**. Jika batas itu tercapai, pompa dikunci
+**30 menit** agar tanah tidak tergenang; pompa manual tetap dibatasi 30 detik.
+Saat pompa menyala, bacaan sensor air ikut turun karena beban pompa, jadi air
+rendah harus bertahan **6 sampel (30 detik)** sebelum pompa yang sedang berjalan
+dihentikan. Saat pompa mati, satu sampel air rendah langsung memblokir start
+berikutnya. ADC 4095 atau data tidak tersedia menghalangi ON. Tanah kering
+terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan 1200 ≈ 67%. Air memakai rentang
+**826 (rendah) sampai 1150 (penuh)**; indikator Full dimulai pada 50% rentang
+karena pin atas sudah terendam di sekitar 1000. Semua input ADC memakai median
+5 sampel.
 
 Halaman **Perangkat** menyediakan kendali manual pompa/lampu lewat socket lokal
 yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; pompa OFF
 dan lampu manual bertahan sampai AUTO. Perintah memakai baris `CTRL` dan
 mendapat balasan `ack`. Jaringan tetap WPA2 lokal tanpa TLS; jangan bagikan
-password AP. Scheduler app-side belum diaktifkan pada versi ini.
+password AP. Scheduler app-side aktif selama aplikasi terbuka dan socket lokal
+terhubung; jadwal yang terlewat lebih dari 2 menit dilewati.
 Interlock air, watchdog, batas waktu, jeda pompa, dan jeda lampu tetap berlaku.
 Nilai rata-rata memakai lima konversi berturutan per siklus untuk setiap input
 ADC, bukan rata-rata lima siklus. DHT dan input digital MQ tidak dirata-ratakan.
