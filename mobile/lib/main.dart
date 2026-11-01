@@ -22,7 +22,7 @@ Future<void> main() async {
         publishableKey: config.publishableKey,
         debug: false,
         authOptions: const FlutterAuthClientOptions(
-          persistSession: false,
+          persistSession: true,
           detectSessionInUri: false,
         ),
       );

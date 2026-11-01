@@ -3,6 +3,11 @@
 Dashboard Flutter Moss menyiapkan pemantauan ESP32 melalui Wi-Fi lokal; koneksi
 dan tampilan pada ponsel fisik masih perlu diuji.
 
+> **Status v32:** dokumen ini memuat riwayat pengembangan. Bagian yang menyebut
+> aplikasi read-only, tidak mengirim perintah, riwayat kosong, atau cloud belum
+> menerima data sudah **tidak berlaku**. Jalur cloud-first, pairing, kontrol
+> relay, dan ekspor dataset dijelaskan di [readme utama](../readme.md).
+
 ## Wi-Fi lokal ESP32 (belum diuji menyeluruh pada perangkat fisik)
 
 Sumber aplikasi dan firmware disiapkan untuk pemantauan langsung tanpa cloud.

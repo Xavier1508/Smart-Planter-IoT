@@ -2,48 +2,154 @@
 
 Smart Planter IoT adalah proyek pengembangan pendamping tanaman dalam ruangan yang menggabungkan perangkat berbasis ESP32 dengan aplikasi Android. Proyek ini dirancang untuk membantu pengguna memahami kondisi tanaman dan, pada tahap selanjutnya, mengelola perangkat perawatan tanaman secara aman.
 
-Aplikasi Android menggunakan karakter bernama Moss sebagai antarmuka interaktif. Integrasi pemantauan perangkat keras melalui Wi-Fi lokal sedang dikembangkan dan belum diuji menyeluruh pada perangkat fisik.
+Aplikasi Android menggunakan karakter bernama Moss sebagai antarmuka interaktif. Jalur utama sekarang **cloud-first**: ESP32 mengirim batch sensor melalui HTTPS ke Supabase, aplikasi membaca data cloud secara realtime, dan perintah relay melewati tabel perintah yang aman. Wi-Fi lokal dan buffer LittleFS tetap tersedia sebagai fallback.
 
 ## Status proyek
 
-Proyek masih dalam tahap prototipe dan belum menjadi sistem pemantauan tanaman yang terhubung secara menyeluruh.
+Prototipe v32 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
 
-- Aplikasi Android sedang disiapkan untuk data langsung tanpa mode simulasi;
-  koneksi dan tampilan pada ponsel fisik masih perlu diuji.
-- Firmware ESP32 masih dalam pengembangan dan belum terintegrasi secara aman dengan aplikasi.
-- Fondasi akun dan data privat menggunakan Supabase telah disiapkan, tetapi integrasi dengan perangkat dan pengujian menyeluruh masih diperlukan.
+- Aplikasi Android `0.8.0+23` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
+- Firmware v32 memakai AP+STA, NTP, HTTPS ke Edge Function, buffer batch LittleFS, polling perintah, ACK, dan deduplikasi perintah.
+- Supabase sudah berisi migrasi skema, RLS, RPC perintah atomik, dan Edge Function `device-api`.
+- Firmware sudah dikompilasi; unggahan ke papan dan pengujian sensor/tanaman nyata belum dilakukan dalam sesi ini.
+- Endpoint ingest sudah diuji dengan satu baris uji melalui HTTPS; baris uji tersebut dihapus kembali sehingga dataset tidak tercemar.
+- Model ML tetap memakai 273 baris observasi nyata dari 30.273 baris pelatihan (sekitar 0,9%). Label diturunkan dari aturan, bukan anotasi manusia, dan kelas `heat`/`air` belum punya contoh nyata.
 - Firmware hanya memiliki satu environment PlatformIO, `nodemcu-32s`.
-  Startup versi 11 dan pembacaan serial telah terlihat pada log. Log tidak
-  membuktikan hash terpasang, keselamatan rangkaian, atau keadaan kontak fisik.
-- Sumber firmware versi 16 mencoba membaca tanah, air, MQ, DHT, cahaya, dan UV
-  serta menyiapkan Wi-Fi lokal. Pengguna melaporkan meng-upload versi 14 dan
-  menjalankan uji relay; log memperlihatkan sampel versi 14 tetapi tidak
-  membuktikan keadaan kontak. Versi 16 belum diuji pada perangkat fisik.
-  GPIO25 tetap input sementara pembacaan ADC tanah GPIO34 dicoba. Otomasi pompa
-  dan lampu diaktifkan untuk uji pengguna dengan skala perkiraan; keadaan fisik
-  beban belum terbukti dan input GPIO tidak mengisolasi kabel listrik.
-  Sambungan, keadaan kontak dan hasil sensor belum diverifikasi; jangan anggap
-  build atau logika GPIO sebagai bukti keamanan beban fisik.
-- Eksperimen XGBoost berbasis data sintetis sudah disiapkan di aplikasi Moss;
-  model yang divalidasi dengan data nyata dan notifikasi sensor nyata belum tersedia.
-- Android SDK command-line tools, platform dan dependensi build sudah dipasang
-  tanpa Android Studio. APK pratinjau serial lokal sudah dibuat pada salinan
-  terisolasi dengan kunci debug sementara, tanpa Firebase atau keystore pengguna.
+- Sumber firmware tetap memakai kalibrasi tanah/air perkiraan. Angka ADC bukan bukti kalibrasi, sensor terpasang, atau kontak relay fisik.
 
 ## Fitur aplikasi
 
 Prototipe Android menyediakan:
 
-- Halaman utama dengan karakter Moss dan pembacaan sensor lokal.
+- Halaman utama dengan karakter Moss dan pembacaan sensor dari cloud atau Wi-Fi lokal.
 - Karakter merespons sentuhan dan gerakan jari; suasana langit dapat mengikuti jam ponsel atau dipilih secara manual.
 - Pilihan tema terang, gelap, atau mengikuti sistem.
 - Tampilan kelembapan tanah, air, suhu, cahaya, UV, dan pembacaan MQ yang tersedia.
-- Halaman riwayat yang tetap kosong sampai penyimpanan riwayat diterapkan.
-- Halaman perangkat dengan status sensor dan perintah relay firmware yang dilaporkan.
-- Pengaturan tampilan, koneksi lokal, versi, serta cloud apabila dikonfigurasi.
+- Halaman riwayat dengan grafik dan ekspor CSV.
+- Halaman perangkat dengan status sensor dan kontrol relay manual/otomatis.
+- Pairing perangkat memakai ID perangkat dan kode claim yang tampil di LCD.
+- Ekspor dataset cloud lengkap ke penyimpanan privat aplikasi dan Downloads/Tunas.
+- Pengaturan tampilan, koneksi lokal, versi, serta cloud.
 
-Aplikasi tidak mengirim perintah pompa atau lampu. Ketika belum ada data sensor
-valid, aplikasi menampilkan kondisi menunggu, bukan angka yang dibuat-buat.
+Ketika belum ada data sensor valid, aplikasi menampilkan kondisi menunggu,
+bukan angka yang dibuat-buat. Perintah relay adalah permintaan, bukan bukti
+keadaan kontak fisik.
+
+## Arsitektur cloud v32
+
+```text
+DHT11 / soil / LDR / UV / water / MQ135
+                  |
+                  v
+      ESP32 v32: sampling 5 s, relay safety, LCD
+                  |
+       batch 6 sampel / 30 s + LittleFS fallback
+                  |
+                  | HTTPS POST (token per perangkat)
+                  v
+   Supabase Edge Function: device-api
+   register | ingest | commands | ack
+                  |
+                  v
+          Supabase Postgres (canonical)
+   planter_devices / planter_readings / actuator_commands
+          |                         |
+          | Realtime + REST         | RPC atomik
+          v                         v
+      Flutter app  <------ perintah pompa/lampu
+          |
+          +--> model health lokal memakai data cloud
+          +--> dataset CSV lengkap ke app + Downloads/Tunas
+```
+
+### Peran setiap komponen
+
+| Komponen | Peran |
+|---|---|
+| ESP32 | Sampling, aturan keselamatan relay, AP lokal, STA, NTP, buffer, HTTPS, polling perintah |
+| `device-api` | Autentikasi token perangkat, validasi batch, ingest, lease perintah, ACK |
+| Postgres | Sumber kebenaran data sensor, perintah, status ACK, dan timestamp server |
+| RLS | Pengguna hanya dapat membaca perangkat/pembacaan/perintah miliknya |
+| Realtime | Pembaruan dashboard tanpa polling manual |
+| Flutter | Dashboard, riwayat, kontrol, pairing, ekspor CSV |
+| LittleFS | Buffer batch saat internet putus, diputar ulang saat online |
+| AP lokal | Fallback pemeliharaan dan setup Wi-Fi lewat `http://192.168.4.1/` |
+
+### Endpoint HTTP perangkat
+
+Semua request perangkat memakai header `x-device-id` dan `x-device-token`.
+Token disimpan di server hanya sebagai hash SHA-256.
+
+| Aksi | Metode | Fungsi |
+|---|---|---|
+| `register` | POST | Memverifikasi identitas dan memperbarui `last_seen_at` |
+| `ingest` | POST | Menerima 1–24 sampel tervalidasi; idempoten per `device_id + boot_id + uptime_ms` |
+| `commands` | GET | Mengambil perintah pending/delivered yang belum kedaluwarsa |
+| `ack` | POST | Menyimpan hasil eksekusi perintah secara idempoten |
+
+### Endpoint HTTP lokal
+
+Dapat dibuka dari browser setelah terhubung ke AP `Moss-xxxx`:
+
+| Endpoint | Fungsi |
+|---|---|
+| `GET /` | Halaman setup Wi-Fi |
+| `GET /api/v1/telemetry` | Sampel JSON terbaru |
+| `GET /api/v1/health` | Firmware, uptime, status STA/cloud, buffer, heap |
+| `POST /api/v1/wifi` | Menyimpan SSID/password ke NVS lalu restart |
+
+### Alur data dan kegagalan
+
+1. Sampel dibuat tiap 5 detik dan dimasukkan ke antrean RAM.
+2. Setiap 6 sampel (sekitar 30 detik) batch ditulis ke LittleFS lalu diunggah.
+3. Jika HTTPS gagal, batch tetap di LittleFS dan dicoba ulang dengan backoff.
+4. Jika perangkat reboot, batch lama dipindai dan diputar ulang sebelum sampel baru.
+5. Server memberi `recorded_at` dari jam server; `captured_at` hanya diisi jika NTP valid.
+6. Unique index mencegah baris ganda saat batch diulang.
+7. Perintah cloud memiliki TTL 30 detik; perangkat menolak perintah yang hampir kedaluwarsa.
+8. Perangkat menyimpan ID perintah terakhir di NVS; pengiriman ulang tidak mengeksekusi relay dua kali.
+9. Manual pump ON tetap ditolak jika air rendah, sampel basi, atau watchdog tidak siap.
+10. Pompa tetap dibatasi 30 detik untuk manual, 5 menit untuk otomatis, lalu soak 30 menit.
+
+### Skema dataset final
+
+CSV penuh memakai satu header dan kolom:
+
+```text
+recorded_at_utc,captured_at_utc,time_quality,row_id,device_id,hardware_id,
+boot_id,uptime_ms,firmware_version,soil_adc,soil_percent,water_adc,
+water_percent,water_observation_percent,water_empty,water_low,light_adc,
+light_percent,temperature_c,humidity_percent,uv_adc,uv_index,mq_adc,
+mq_pin_mv,pump_cmd,pump_reason,pump_cooldown_s,pump_runtime_lockout,
+light_cmd,light_reason,ingest_source
+```
+
+Nilai yang tidak terbaca adalah kosong, bukan nol. Boolean ditulis `1`/`0`.
+Ekspor membaca seluruh halaman cloud, bukan hanya sesi aplikasi atau 240 baris
+grafik. Salinan internal ditulis atomik; salinan pengguna masuk
+`Downloads/Tunas/`.
+
+### Keamanan
+
+- APK hanya memakai publishable key; service-role key tidak pernah masuk APK atau firmware.
+- Setiap perangkat punya token 256-bit; server menyimpan hash, bukan token.
+- Pairing memakai kode claim acak yang hanya tampil di LCD dan di-hash di server.
+- `claim_device` memakai `UPDATE ... WHERE owner_id IS NULL` sehingga dua pengguna tidak bisa mengklaim bersamaan.
+- `request_actuator_command` memakai advisory lock per perangkat+aktuator dan idempotensi `client_request_id`.
+- RLS menolak pembacaan/pengubahan langsung oleh pengguna; perintah hanya lewat RPC tervalidasi.
+- HTTPS memakai root CA GTS R4; tidak ada mode `setInsecure`.
+- Sesi aplikasi tidak di-backup Android (`allowBackup=false`) dan token perangkat tidak masuk Git.
+- Payload dibatasi 64 KB, batch maksimal 24, nilai ADC/persentase/suhu divalidasi di server.
+
+### Setup perangkat
+
+1. Nyalakan ESP32 dan hubungkan ponsel ke AP `Moss-xxxx` (password di LCD).
+2. Buka `http://192.168.4.1/`, isi SSID/password Wi-Fi rumah, simpan.
+3. Perangkat restart, mengambil NTP, lalu mendaftar ke cloud.
+4. Kode claim tampil di LCD selama 12 detik pertama; ID perangkat tampil di halaman setup (`http://192.168.4.1/`) atau endpoint `/api/v1/health`. Catat keduanya. Jika terlewat, restart perangkat untuk menampilkan ulang.
+5. Di aplikasi: buat akun, masuk, lalu isi ID perangkat dan kode claim.
+6. Setelah pairing, dashboard memakai data cloud. Kontrol relay memakai perintah cloud.
+7. Untuk fallback lokal, pilih Wi-Fi lokal di Pengaturan dan sambungkan ponsel ke AP perangkat.
 
 ## Komponen sistem
 
@@ -1167,6 +1273,31 @@ Pastikan rangkaian dan tegangan GPIO aman sebelum menyalakan ESP32; baterai pomp
 - **Suhu/kelembapan udara:** pastikan model DHT yang digunakan dan bandingkan dengan termometer serta higrometer acuan pada kondisi yang sesuai. Hasil bacaan yang gagal tetap tidak tersedia, bukan nol.
 - **Water level:** versi 9 menambahkan perbandingan ADC mentah terhadap acuan pengguna 850/900; nilainya belum menjadi level atau persentase terkalibrasi. MQ135 belum menghasilkan konsentrasi tepercaya tanpa rangkaian dan kalibrasi yang sesuai.
 
+## Bukti pengujian v32 (2 November 2026)
+
+Pengujian yang benar-benar dijalankan:
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 54.400 B (16,6%), flash 875.825 B (66,8%) |
+| `flutter analyze --no-pub` | Tidak ada issue |
+| `flutter test --no-pub` | 152 lulus, 2 dilewati (fixture loopback tidak dikonfigurasi) |
+| `:app:compileProductionReleaseKotlin` | Sukses (signing release tidak tersedia lokal) |
+| Registrasi perangkat HTTPS | 200, device id dan server time diterima |
+| Token perangkat salah | 401 |
+| Polling perintah | 200, `commands: []` |
+| Ingest batch valid | 202, `accepted: 1` |
+| Kirim ulang batch sama | 202, `accepted: 0`, `duplicates: 1` |
+| JSON rusak / boot id salah | 400 |
+| Sampel tanpa pengukuran | 422 |
+| Anon PostgREST ke tiga tabel | 401 `42501` |
+| SQL claim → request → lease → ACK | Lulus di transaksi |
+| SQL dua perintah bersamaan | Perintah lama `superseded`, retry idempoten, ACK baru lulus |
+| Baris uji ingest | Dihapus; jumlah reading kembali 0 |
+| Perangkat setelah transaksi uji | Tetap `owner_id = null`, claim code dipulihkan |
+
+Yang **belum** diuji: flash v32 ke papan, koneksi STA ke router nyata, handshake TLS ke Supabase dari ESP32, buffer saat kabel internet dicabut, eksekusi relay cloud pada beban, dan dataset 1.000 baris dari tanaman nyata. Semua klaim di atas tidak boleh dibaca sebagai bukti pengujian fisik tersebut.
+
 ## Mencoba aplikasi
 
 Pratinjau aplikasi dapat dibuat dan dijalankan dengan Flutter serta Android SDK. APK pratinjau yang telah dibuat secara lokal ditujukan untuk Android 7 atau lebih baru dengan sistem ARM64 dan tidak disertakan dalam repositori. Kompatibilitasnya masih memerlukan pengujian lebih lanjut pada berbagai ponsel. Petunjuk persiapan, pengujian, konfigurasi cloud, dan batasan distribusi tersedia dalam [dokumentasi aplikasi Android](mobile/README.md).
@@ -1185,10 +1316,10 @@ Pemasangan pada ponsel tetap memerlukan persetujuan pengguna. Pratinjau lokal ya
 
 1. Menyempurnakan antarmuka, karakter Moss, dan pengalaman penggunaan pada ponsel Android.
 2. Menguji kinerja aplikasi dan tampilan tiga dimensi pada perangkat fisik.
-3. Memverifikasi akun, akses data privat, pembaruan data, dan distribusi beta.
+3. Menguji login, pairing, RLS, dan komando dua arah dengan akun serta ponsel nyata.
 4. Memeriksa keselamatan rangkaian, sambungan sensor, relay, serta kalibrasi perangkat.
-5. Merancang penyambungan perangkat dan pengiriman data yang aman dari ESP32 ke cloud.
-6. Mengembangkan riwayat sensor nyata, notifikasi, dan kendali perangkat setelah integrasi dan keselamatan teruji.
+5. Menjalankan perangkat minimal 83 menit untuk mengumpulkan 1.000 baris cloud dan memverifikasi ekspor CSV akhir.
+6. Menambahkan FCM/Edge Function untuk notifikasi saat aplikasi tertutup dan inferensi cloud opsional.
 7. Melatih dan mengevaluasi kandidat XGBoost setelah data nyata berlabel tersedia; integrasi ekspresi Moss dan prediksi harus diuji sebelum dipakai.
 
 ## Struktur repositori
@@ -1202,9 +1333,9 @@ Pemasangan pada ponsel tetap memerlukan persetujuan pengguna. Pratinjau lokal ya
 
 ## Privasi dan keamanan data
 
-Data perangkat dirancang agar hanya dapat diakses oleh pemilik yang berwenang. Integrasi cloud masih memerlukan pengujian lanjutan, dan sesi akun pada prototipe saat ini hanya disimpan dalam memori aplikasi.
+Data perangkat dirancang agar hanya dapat diakses oleh pemilik yang berwenang. Sesi akun disimpan di penyimpanan privat aplikasi; backup Android dinonaktifkan agar token sesi tidak ikut dicadangkan. Logout menghapus sesi aktif. Dataset cloud hanya dapat dibaca melalui RLS pemilik perangkat, dan ekspor CSV berisi data privat.
 
-Kata sandi, token, kunci privat, dan berkas konfigurasi rahasia tidak boleh disertakan dalam repositori atau aplikasi. Rancangan lama untuk backend dan dashboard web bukan bagian layanan yang tersedia dalam repositori ini.
+Kata sandi, token, kunci privat, dan berkas konfigurasi rahasia tidak boleh disertakan dalam repositori atau aplikasi. Token perangkat dan password Wi-Fi berada di `include/cloud-secret.local.h` yang diabaikan Git. Rancangan lama untuk backend dan dashboard web bukan bagian layanan yang tersedia dalam repositori ini.
 
 ## Lisensi
 

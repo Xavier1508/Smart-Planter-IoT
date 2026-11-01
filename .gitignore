@@ -24,3 +24,5 @@
 
 # Local fixed AP password; never commit.
 /include/local-wifi-secret.local.h
+# Per-device cloud token, claim code, and router credentials; never commit.
+/include/cloud-secret.local.h

@@ -318,6 +318,23 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    "saveDataset" -> {
+                        val csv = call.argument<String>("csv")
+                        if (deviceId == null || csv == null) {
+                            result.error("invalid", "Dataset payload is invalid.", null)
+                        } else {
+                            try {
+                                val path = HistoryStore.saveDataset(this, deviceId, csv)
+                                if (path == null) {
+                                    result.error("write_failed", "Dataset could not be saved.", null)
+                                } else {
+                                    result.success(path)
+                                }
+                            } catch (error: Exception) {
+                                result.error("write_failed", "Dataset could not be saved.", null)
+                            }
+                        }
+                    }
                     "clear" -> {
                         if (deviceId == null) {
                             result.error("invalid", "Device id is missing.", null)

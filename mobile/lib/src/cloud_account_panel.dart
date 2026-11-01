@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'cloud_controller.dart';
+import 'history_service.dart';
 import 'moss_app.dart';
 
 class CloudAccountPanel extends StatefulWidget {
@@ -15,6 +16,8 @@ class CloudAccountPanel extends StatefulWidget {
 class _CloudAccountPanelState extends State<CloudAccountPanel> {
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _hardwareId = TextEditingController();
+  final _claimCode = TextEditingController();
   bool _busy = false;
   String? _message;
 
@@ -95,10 +98,79 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
     }
   }
 
+  Future<void> _claimDevice() async {
+    final hardwareId = _hardwareId.text.trim();
+    final claimCode = _claimCode.text.trim();
+    if (hardwareId.isEmpty || claimCode.isEmpty) {
+      setState(() {
+        _message = 'Isi ID perangkat dan kode claim dari layar LCD.';
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await widget.controller.claimDevice(
+        hardwareId: hardwareId,
+        claimCode: claimCode,
+      );
+      if (mounted) {
+        _claimCode.clear();
+        setState(() => _message = 'Perangkat berhasil dipasangkan.');
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _message =
+              'Pairing gagal. Periksa ID perangkat, kode claim, dan masa '
+              'berlaku kode.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _downloadDataset() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final generation = widget.controller.sessionGeneration;
+    try {
+      final result = await widget.controller.exportDatasetCsv();
+      if (!mounted || generation != widget.controller.sessionGeneration) return;
+      if (result.rows == 0) {
+        setState(() => _message = 'Belum ada data sensor untuk diekspor.');
+        return;
+      }
+      final path = await HistoryService().saveDataset(
+        deviceId: result.hardwareId,
+        csv: result.csv,
+      );
+      if (!mounted || generation != widget.controller.sessionGeneration) return;
+      setState(() {
+        _message = path == null
+            ? '${result.rows} baris diunduh, tetapi file belum dapat disimpan.'
+            : '${result.rows} baris tersimpan utuh: $path';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message = 'Dataset cloud belum dapat diunduh.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   void dispose() {
     _email.dispose();
     _password.dispose();
+    _hardwareId.dispose();
+    _claimCode.dispose();
     super.dispose();
   }
 
@@ -135,30 +207,82 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
           ),
           if (widget.controller.signedIn) ...[
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                OutlinedButton(
-                  onPressed: _busy ? null : widget.controller.refreshDevice,
-                  child: const Text('Periksa perangkat'),
+            if (!widget.controller.hasDevice) ...[
+              TextField(
+                controller: _hardwareId,
+                enabled: !_busy,
+                autocorrect: false,
+                decoration: const InputDecoration(
+                  labelText: 'ID perangkat (moss-...)',
+                  hintText: 'Tampil di LCD atau header lokal',
                 ),
-                OutlinedButton(
-                  onPressed: _busy || !widget.controller.canExportCsv
-                      ? null
-                      : _copyTrainingCsv,
-                  child: const Text('Salin CSV ML'),
-                ),
-                TextButton(
-                  onPressed: _busy ? null : _signOut,
-                  child: const Text('Keluar'),
-                ),
-              ],
-            ),
-            const Text(
-              'CSV menyalin hingga 1.000 pembacaan terbaru ke papan klip. '
-              'Simpan dan bagikan sebagai data privat.',
-              style: TextStyle(fontSize: 11),
-            ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _claimCode,
+                enabled: !_busy,
+                autocorrect: false,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(labelText: 'Kode claim LCD'),
+              ),
+              const SizedBox(height: 8),
+              FilledButton(
+                onPressed: _busy ? null : _claimDevice,
+                child: const Text('Pasangkan perangkat'),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Kode claim hanya ditampilkan di layar fisik perangkat. '
+                'Database mengikat perangkat ke akun secara atomik.',
+                style: TextStyle(fontSize: 11),
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: _busy ? null : widget.controller.refreshDevice,
+                    child: const Text('Periksa perangkat'),
+                  ),
+                  TextButton(
+                    onPressed: _busy ? null : _signOut,
+                    child: const Text('Keluar'),
+                  ),
+                ],
+              ),
+            ] else ...[
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: _busy ? null : widget.controller.refreshDevice,
+                    child: const Text('Periksa perangkat'),
+                  ),
+                  FilledButton(
+                    onPressed: _busy || !widget.controller.canExportCsv
+                        ? null
+                        : _downloadDataset,
+                    child: const Text('Unduh dataset lengkap'),
+                  ),
+                  OutlinedButton(
+                    onPressed: _busy || !widget.controller.canExportCsv
+                        ? null
+                        : _copyTrainingCsv,
+                    child: const Text('Salin CSV ML'),
+                  ),
+                  TextButton(
+                    onPressed: _busy ? null : _signOut,
+                    child: const Text('Keluar'),
+                  ),
+                ],
+              ),
+              const Text(
+                'Dataset lengkap berisi semua baris cloud yang diizinkan RLS, '
+                'satu header, timestamp UTC, sensor mentah, nilai turunan, '
+                'perintah aktuator, dan alasan. Salinan utuh disimpan di '
+                'penyimpanan privat aplikasi dan Downloads/Tunas.',
+                style: TextStyle(fontSize: 11),
+              ),
+            ],
           ] else ...[
             const SizedBox(height: 12),
             TextField(
@@ -193,7 +317,8 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
               ],
             ),
             Text(
-              'Sesi hanya tersimpan selama aplikasi terbuka.',
+              'Sesi disimpan di penyimpanan privat aplikasi agar dashboard '
+              'tetap online setelah aplikasi dibuka ulang.',
               style: TextStyle(
                 color: context.mossColors.onSurfaceVariant,
                 fontSize: 11,

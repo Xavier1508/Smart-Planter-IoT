@@ -4,6 +4,7 @@
     <application
         android:label="${appLabel}"
         android:name="${applicationName}"
+        android:allowBackup="false"
         android:icon="@mipmap/moss_launcher"
         android:roundIcon="@mipmap/moss_launcher">
         <activity

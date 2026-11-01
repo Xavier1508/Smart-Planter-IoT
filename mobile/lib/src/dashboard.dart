@@ -8,6 +8,7 @@ import 'appearance_panel.dart';
 import 'app_version_panel.dart';
 import 'character_look.dart';
 import 'character_picker.dart';
+import 'cloud_controller.dart';
 import 'devices_page.dart';
 import 'history_service.dart';
 import 'journal_page.dart';
@@ -35,6 +36,7 @@ class Dashboard extends StatefulWidget {
     required this.atmosphere,
     this.telemetry,
     this.initialSerialJson = '',
+    this.cloud,
     this.cloudSettings,
     this.localWifi,
     this.autoConnectLocal = true,
@@ -51,6 +53,7 @@ class Dashboard extends StatefulWidget {
   final MossAtmosphere atmosphere;
   final Stream<PlantTelemetry>? telemetry;
   final String initialSerialJson;
+  final CloudController? cloud;
   final Widget? cloudSettings;
   final LocalWifiController? localWifi;
   final bool autoConnectLocal;
@@ -79,6 +82,8 @@ class _DashboardState extends State<Dashboard> {
   Timer? _expiry;
   late LocalWifiController _localWifi;
   late bool _ownsLocalWifi;
+  String get _historyDeviceId =>
+      widget.cloud?.hardwareId ?? _profiles.active.id;
   StreamSubscription<void>? _localWifiChanges;
   bool _useLocalWifi = false;
   final ScheduleStore _scheduleStore = const ScheduleStore();
@@ -91,6 +96,9 @@ class _DashboardState extends State<Dashboard> {
   PlantHealthModel? _emotionModel;
   List<HistoryPoint> _history = [];
   int? _lastHistoryUptime;
+  int? _lastHistorySequence;
+  VoidCallback? _cloudListener;
+  String? _historyLoadedFor;
   final HistoryService _historyService = const HistoryService();
   final NotificationService _notifications = const NotificationService();
   LocalWifiStatus _lastNoticeStatus = LocalWifiStatus.disconnected;
@@ -103,6 +111,7 @@ class _DashboardState extends State<Dashboard> {
   void initState() {
     super.initState();
     _attachLocalWifi(widget.localWifi);
+    _attachCloud();
     _listenToTelemetry();
     _loadSchedules();
     _loadProfiles();
@@ -127,7 +136,7 @@ class _DashboardState extends State<Dashboard> {
       } catch (_) {
         _sourceNotice = 'Snapshot serial tidak valid; menunggu sumber data.';
       }
-    } else if (widget.autoConnectLocal) {
+    } else if (widget.autoConnectLocal && widget.cloud == null) {
       _useLocalWifi = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _useLocalWifi) unawaited(_localWifi.connect());
@@ -135,10 +144,58 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
+  void _attachCloud() {
+    final cloud = widget.cloud;
+    if (cloud == null) return;
+    _cloudListener = () {
+      if (!mounted || !cloud.hasDevice) return;
+      final id = cloud.deviceId;
+      if (id == null || id == _historyLoadedFor) return;
+      _historyLoadedFor = id;
+      unawaited(_loadCloudHistory());
+    };
+    cloud.addListener(_cloudListener!);
+    _cloudListener!();
+  }
+
+  Future<void> _loadCloudHistory() async {
+    final cloud = widget.cloud;
+    if (cloud == null || !cloud.hasDevice) return;
+    try {
+      final readings = await cloud.recentReadings();
+      if (!mounted || readings.isEmpty) return;
+      final points = readings
+          .map(
+            (reading) => HistoryPoint(
+              reading.recordedAt,
+              PlantState.fromTelemetry(reading),
+            ),
+          )
+          .toList(growable: false);
+      final merged = <int, HistoryPoint>{
+        for (final point in _history) point.at.microsecondsSinceEpoch: point,
+        for (final point in points) point.at.microsecondsSinceEpoch: point,
+      }.values.toList()..sort((a, b) => a.at.compareTo(b.at));
+      final tail = merged.length > 240
+          ? merged.sublist(merged.length - 240)
+          : merged;
+      setState(() => _history = tail);
+    } catch (_) {
+      // Realtime readings still arrive; a failed history read is not fatal.
+    }
+  }
+
   @override
   void didUpdateWidget(covariant Dashboard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.telemetry != widget.telemetry) _listenToTelemetry();
+    if (oldWidget.cloud != widget.cloud) {
+      final previous = _cloudListener;
+      if (previous != null) oldWidget.cloud?.removeListener(previous);
+      _cloudListener = null;
+      _historyLoadedFor = null;
+      _attachCloud();
+    }
     if (oldWidget.localWifi != widget.localWifi) {
       final previous = _localWifiChanges;
       if (previous != null) unawaited(previous.cancel());
@@ -176,9 +233,8 @@ class _DashboardState extends State<Dashboard> {
   }
 
   Future<void> _loadHistory() async {
-    final device = _profiles.active;
     final rows = await _historyService.readTail(
-      deviceId: device.id,
+      deviceId: _historyDeviceId,
       limit: 240,
     );
     if (!mounted) return;
@@ -271,11 +327,11 @@ class _DashboardState extends State<Dashboard> {
       _maybeShowInsight(now, emotion);
       unawaited(
         _historyService.append(
-          deviceId: _profiles.active.id,
+          deviceId: _historyDeviceId,
           header: HistoryCsv.header,
           line: HistoryCsv.line(
             now: now,
-            deviceId: _profiles.active.id,
+            deviceId: _historyDeviceId,
             firmwareVersion: sample.firmwareVersion,
             uptimeMs: sample.uptimeMs,
             state: state,
@@ -475,7 +531,46 @@ class _DashboardState extends State<Dashboard> {
   }
 
   Future<void> _exportHistory() async {
-    final path = await _historyService.export(deviceId: _profiles.active.id);
+    final cloud = widget.cloud;
+    if (cloud != null && !_useLocalWifi && cloud.hasDevice) {
+      try {
+        final result = await cloud.exportDatasetCsv();
+        if (!mounted) return;
+        if (result.rows == 0) {
+          showTopNotice(
+            context,
+            title: 'Dataset kosong',
+            message: 'Belum ada pembacaan cloud untuk diekspor.',
+            icon: Icons.error_outline_rounded,
+          );
+          return;
+        }
+        final path = await HistoryService().saveDataset(
+          deviceId: result.hardwareId,
+          csv: result.csv,
+        );
+        if (!mounted) return;
+        showTopNotice(
+          context,
+          title: 'Dataset lengkap tersimpan',
+          message: path == null
+              ? '${result.rows} baris diunduh; file belum dapat disimpan.'
+              : '${result.rows} baris tersimpan utuh: $path',
+          icon: Icons.file_download_done_rounded,
+        );
+      } catch (_) {
+        if (mounted) {
+          showTopNotice(
+            context,
+            title: 'Export cloud gagal',
+            message: 'Periksa koneksi lalu coba lagi.',
+            icon: Icons.error_outline_rounded,
+          );
+        }
+      }
+      return;
+    }
+    final path = await _historyService.export(deviceId: _historyDeviceId);
     if (!mounted) return;
     if (path == null || path.isEmpty) {
       showTopNotice(
@@ -512,12 +607,20 @@ class _DashboardState extends State<Dashboard> {
   int _controlId() => _nextControlId++;
 
   Future<bool> _sendControl(String line) {
+    final cloud = widget.cloud;
+    if (!_useLocalWifi && cloud != null) {
+      return cloud.sendControlLine(line);
+    }
     if (!_useLocalWifi) return Future<bool>.value(false);
     return _localWifi.sendControlCommand(line);
   }
 
   Future<void> _refresh() async {
-    if (_useLocalWifi) {
+    final cloud = widget.cloud;
+    if (!_useLocalWifi && cloud != null) {
+      await cloud.refreshDevice();
+      await _loadCloudHistory();
+    } else if (_useLocalWifi) {
       await _localWifi.connect();
     } else if (widget.telemetry == null && _serialSnapshot == null) {
       _listenToTelemetry();
@@ -532,6 +635,7 @@ class _DashboardState extends State<Dashboard> {
     _expiry?.cancel();
     _lastRecordedAt = null;
     _lastSequence = null;
+    _lastHistorySequence = null;
     _liveState = const PlantState.waiting();
     final source = widget.telemetry;
     _sourceNotice = source == null
@@ -585,7 +689,30 @@ class _DashboardState extends State<Dashboard> {
       _liveState = next;
       _sourceNotice = 'Pembacaan sensor terbaru.';
     });
-    final remaining = reading.recordedAt.add(_readingMaxAge).difference(now);
+    if (_lastHistorySequence != reading.sequence) {
+      _lastHistorySequence = reading.sequence;
+      _history.add(HistoryPoint(reading.recordedAt.toLocal(), next));
+      if (_history.length > 240) _history.removeAt(0);
+      final emotion = PlantEmotionEngine(_emotionModel)
+          .evaluate(next, recent: _recentStates());
+      _maybeNotifyLowWater(next, now);
+      _maybeShowInsight(now, emotion);
+      unawaited(
+        _historyService.append(
+          deviceId: widget.cloud?.hardwareId ?? _profiles.active.id,
+          header: HistoryCsv.header,
+          line: HistoryCsv.line(
+            now: reading.recordedAt,
+            deviceId: widget.cloud?.hardwareId ?? _profiles.active.id,
+            firmwareVersion: null,
+            uptimeMs: null,
+            state: next,
+            emotion: emotion,
+          ),
+        ),
+      );
+    }
+    final remaining = reading.measuredAt.add(_readingMaxAge).difference(now);
     _expiry = Timer(remaining, () {
       if (!mounted) return;
       setState(() {
@@ -675,7 +802,7 @@ class _DashboardState extends State<Dashboard> {
       final command = running.entry.target == 'pump'
           ? 'CTRL pump=off id=$id'
           : 'CTRL light=off id=$id';
-      final sent = await _localWifi.sendControlCommand(command);
+      final sent = await _sendControl(command);
       if (!sent || !mounted) return;
       setState(() {
         _runningSchedules = _runningSchedules
@@ -714,15 +841,16 @@ class _DashboardState extends State<Dashboard> {
       await _deleteSchedule(entry.id);
       return;
     }
-    if (!_useLocalWifi ||
-        _localWifi.status != LocalWifiStatus.live ||
+    if (!_useLocalWifi) {
+      if (widget.cloud?.hasDevice != true) return;
+    } else if (_localWifi.status != LocalWifiStatus.live ||
         _localWifi.snapshot == null) {
       return;
     }
 
     _scheduleBusy = true;
     try {
-      final sent = await _localWifi.sendControlCommand(entry.command);
+      final sent = await _sendControl(entry.command);
       if (!sent) return;
       await _deleteSchedule(entry.id);
       if (entry.on && entry.durationSeconds > 0) {
@@ -747,6 +875,8 @@ class _DashboardState extends State<Dashboard> {
     _scheduleTimer?.cancel();
     final localChanges = _localWifiChanges;
     if (localChanges != null) unawaited(localChanges.cancel());
+    final cloudListener = _cloudListener;
+    if (cloudListener != null) widget.cloud?.removeListener(cloudListener);
     if (_ownsLocalWifi) _localWifi.dispose();
     final subscription = _subscription;
     if (subscription != null) unawaited(subscription.cancel());
@@ -793,6 +923,8 @@ class _DashboardState extends State<Dashboard> {
                 ? 'Data serial tersimpan; waktu ukur tidak diketahui. Bukan live.'
                 : _useLocalWifi
                 ? _localWifi.message
+                : widget.cloud != null
+                ? (state.isLive ? _sourceNotice : widget.cloud!.status)
                 : _sourceNotice,
             localSelected: _useLocalWifi,
             localStatus: _localWifi.status,
@@ -815,7 +947,9 @@ class _DashboardState extends State<Dashboard> {
             state: state,
             localSelected: _useLocalWifi,
             localStatus: _localWifi.status,
-            onCommand: _useLocalWifi ? _sendControl : null,
+            onCommand: (_useLocalWifi || widget.cloud?.hasDevice == true)
+                ? _sendControl
+                : null,
             controlId: _controlId,
             schedules: _schedules,
             runningSchedules: _runningSchedules,

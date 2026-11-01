@@ -29,6 +29,9 @@ object HistoryStore {
     private fun stamp(date: Date = Date()): String =
         SimpleDateFormat("yyyyMMdd", Locale.US).format(date)
 
+    private fun stampTime(date: Date = Date()): String =
+        SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(date)
+
     private fun directory(context: Context): File =
         File(context.filesDir, HISTORY_DIR).apply { mkdirs() }
 
@@ -105,6 +108,64 @@ object HistoryStore {
         targetDirectory.mkdirs()
         val target = File(targetDirectory, name)
         target.outputStream().use { output -> writeMerged(files, output) }
+        return target.absolutePath
+    }
+
+    fun saveDataset(context: Context, deviceId: String, csv: String): String? {
+        if (!csv.startsWith("recorded_at_utc,") ||
+            csv.length > 64 * 1024 * 1024 ||
+            !csv.endsWith("\n")
+        ) {
+            return null
+        }
+        val safe = safeDeviceId(deviceId)
+        val canonicalDirectory = File(context.filesDir, "datasets").apply { mkdirs() }
+        val canonical = File(canonicalDirectory, "tunas-$safe-full.csv")
+        val temporary = File(canonicalDirectory, "tunas-$safe-full.csv.tmp")
+        temporary.writeText(csv, Charsets.UTF_8)
+        if (canonical.exists() && !canonical.delete()) {
+            temporary.delete()
+            return null
+        }
+        if (!temporary.renameTo(canonical)) {
+            temporary.delete()
+            return null
+        }
+
+        val name = "tunas-$safe-full-${stampTime()}.csv"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+                put(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    "${Environment.DIRECTORY_DOWNLOADS}/Tunas",
+                )
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return canonical.absolutePath
+            try {
+                val output = resolver.openOutputStream(uri)
+                    ?: throw IllegalStateException("download stream unavailable")
+                output.use { stream ->
+                    stream.write(csv.toByteArray(Charsets.UTF_8))
+                }
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                return "Downloads/Tunas/$name"
+            } catch (error: Exception) {
+                resolver.delete(uri, null, null)
+                return canonical.absolutePath
+            }
+        }
+        val targetDirectory = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: return canonical.absolutePath
+        targetDirectory.mkdirs()
+        val target = File(targetDirectory, name)
+        target.writeText(csv, Charsets.UTF_8)
         return target.absolutePath
     }
 

@@ -56,6 +56,24 @@ class HistoryService {
     }
   }
 
+  /// Saves one complete cloud dataset atomically: an internal canonical copy
+  /// for the app and a user-visible copy under Downloads/Tunas.
+  Future<String?> saveDataset({
+    required String deviceId,
+    required String csv,
+  }) async {
+    try {
+      return await _channel.invokeMethod<String>('saveDataset', {
+        'deviceId': deviceId,
+        'csv': csv,
+      });
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   Future<bool> clear({required String deviceId}) async {
     try {
       await _channel.invokeMethod<void>('clear', {'deviceId': deviceId});

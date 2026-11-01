@@ -3,9 +3,11 @@
 // Requested commands cannot guarantee relay contacts or boot-time levels.
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <DHT.h>
 #include <LiquidCrystal_I2C.h>
 #include <Preferences.h>
+#include <WebServer.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <driver/adc.h>
@@ -17,6 +19,8 @@
 #include <string.h>
 
 #include "adc-average.h"
+#include "cloud-config.h"
+#include "cloud-link.h"
 #include "control-command.h"
 #include "extra-sensors.h"
 #include "local-wifi.h"
@@ -47,25 +51,52 @@ esp_adc_cal_characteristics_t mqAdcCharacteristics;
 planter::AdcCalibrationMethod mqAdcCalibration = planter::AdcCalibrationMethod::unavailable;
 const IPAddress localAddress(192, 168, 4, 1);
 WiFiServer localServer(localAddress, planter::kLocalTelemetryPort, 1);
+WebServer localHttpServer(80);
 WiFiClient localClient;
 bool localWifiReady = false;
+char latestTelemetry[3072] = {};
+bool latestTelemetryValid = false;
 char localWifiName[17] = {};
 char localWifiPassword[planter::kLocalWifiPasswordLength + 1] = {};
+char wifiSsid[33] = {};
+char wifiPassword[65] = {};
+uint32_t restartAtMs = 0;
+planter::CloudLink cloudLink;
 
 void applyControlLine(const char* line);
+void applyCloudCommand(const planter::CloudCommand& command);
 void sendControlAck(const planter::ControlCommand& command, bool ok,
                     const char* error);
 void syncRelayCommands(bool immediate = false);
+const char* pumpStartBlockReason();
 
 struct HardwareRandom {
   uint32_t next() { return esp_random(); }
 };
 
+void loadWifiCredentials() {
+  Preferences preferences;
+  String ssid = MOSS_WIFI_SSID;
+  String password = MOSS_WIFI_PASSWORD;
+  if (preferences.begin("moss_wifi", true)) {
+    const String storedSsid = preferences.getString("ssid", "");
+    const String storedPassword = preferences.getString("pass", "");
+    preferences.end();
+    if (storedSsid.length() > 0) {
+      ssid = storedSsid;
+      password = storedPassword;
+    }
+  }
+  snprintf(wifiSsid, sizeof(wifiSsid), "%s", ssid.c_str());
+  snprintf(wifiPassword, sizeof(wifiPassword), "%s", password.c_str());
+}
+
 void startLocalWifi() {
-  // All Wi-Fi configuration stays in RAM. This is an isolated AP rather than
-  // a router connection; no router password is requested, stored or printed.
+  // All Wi-Fi configuration stays in RAM. The device keeps its isolated AP as
+  // a fallback while optionally joining a router for cloud HTTPS.
   WiFi.persistent(false);
-  if (!WiFi.mode(WIFI_AP)) {
+  const bool stationRequested = MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0;
+  if (!WiFi.mode(stationRequested ? WIFI_AP_STA : WIFI_AP)) {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_mode_failed\"}");
     return;
   }
@@ -111,6 +142,121 @@ void startLocalWifi() {
   } else {
     Serial.printf("{\"type\":\"wifi\",\"status\":\"ap_ready\",\"ssid\":\"%s\"}\n",
                   localWifiName);
+    localHttpServer.on("/", HTTP_GET, []() {
+      localHttpServer.send(200, "text/html; charset=utf-8", R"HTML(<!doctype html>
+<html lang="id"><meta name="viewport" content="width=device-width">
+<title>Tunas Cloud Setup</title>
+<style>body{font-family:system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem}label{display:block;margin:1rem 0 .3rem}input{width:100%;padding:.7rem;box-sizing:border-box}button{margin-top:1rem;padding:.8rem 1.2rem}#s{margin-top:1rem}</style>
+<h1>Tunas Cloud Setup</h1>
+<p id="id">ID perangkat: memuat...</p>
+<p>Hubungkan ponsel ke Wi-Fi <b>Moss-xxxx</b> (kata sandi di LCD), lalu isi Wi-Fi rumah yang memiliki internet.</p>
+<label>SSID</label><input id="ssid" autocomplete="off" maxlength="32">
+<label>Kata sandi Wi-Fi</label><input id="pass" type="password" maxlength="63">
+<button onclick="save()">Simpan dan restart</button><p id="s"></p>
+<script>
+fetch('/api/v1/health').then(r=>r.json()).then(j=>{document.getElementById('id').textContent='ID perangkat: '+j.hardware_id;}).catch(()=>{document.getElementById('id').textContent='ID perangkat tidak tersedia.';});
+async function save(){
+ const s=document.getElementById('ssid').value.trim();
+ const p=document.getElementById('pass').value;
+ const out=document.getElementById('s');
+ if(!s){out.textContent='SSID wajib diisi.';return;}
+ out.textContent='Menyimpan...';
+ try{
+  const r=await fetch('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:s,password:p})});
+  const j=await r.json();
+  out.textContent=r.ok?'Tersimpan. Perangkat restart dan mencoba cloud...':'Gagal: '+j.error;
+ }catch(e){out.textContent='Gagal menghubungi perangkat.';}
+}
+</script></html>)HTML");
+    });
+    localHttpServer.on("/api/v1/telemetry", HTTP_GET, []() {
+      if (!latestTelemetryValid) {
+        localHttpServer.send(503, "application/json",
+                             "{\"error\":\"no_sample_yet\"}");
+        return;
+      }
+      localHttpServer.send(200, "application/json", latestTelemetry);
+    });
+    localHttpServer.on("/api/v1/health", HTTP_GET, []() {
+      char body[420];
+      snprintf(body, sizeof(body),
+               "{\"firmware_version\":%u,\"uptime_ms\":%lu,"
+               "\"hardware_id\":\"%s\","
+               "\"local_ap\":%s,\"sta_connected\":%s,\"cloud_enabled\":%s,"
+               "\"cloud_online\":%s,\"buffered_batches\":%lu,"
+               "\"dropped_samples\":%lu,\"free_heap\":%lu}",
+               planter::kFirmwareVersion,
+               static_cast<unsigned long>(millis()),
+               MOSS_DEVICE_ID,
+               localWifiReady ? "true" : "false",
+               WiFi.status() == WL_CONNECTED ? "true" : "false",
+               cloudLink.enabled() ? "true" : "false",
+               cloudLink.cloudOnline() ? "true" : "false",
+               static_cast<unsigned long>(cloudLink.bufferedBatches()),
+               static_cast<unsigned long>(cloudLink.droppedSamples()),
+               static_cast<unsigned long>(ESP.getFreeHeap()));
+      localHttpServer.send(200, "application/json", body);
+    });
+    localHttpServer.on("/api/v1/wifi", HTTP_POST, []() {
+      const String payload = localHttpServer.arg("plain");
+      if (payload.length() == 0 || payload.length() > 512) {
+        localHttpServer.send(413, "application/json",
+                             "{\"error\":\"payload_size\"}");
+        return;
+      }
+      JsonDocument document;
+      if (deserializeJson(document, payload)) {
+        localHttpServer.send(400, "application/json",
+                             "{\"error\":\"invalid_json\"}");
+        return;
+      }
+      const String ssid = document["ssid"] | "";
+      const String password = document["password"] | "";
+      if (ssid.length() < 1 || ssid.length() > 32 ||
+          password.length() > 63 ||
+          (password.length() > 0 && password.length() < 8)) {
+        localHttpServer.send(422, "application/json",
+                             "{\"error\":\"invalid_credentials\"}");
+        return;
+      }
+      Preferences preferences;
+      if (!preferences.begin("moss_wifi", false)) {
+        localHttpServer.send(500, "application/json",
+                             "{\"error\":\"nvs_unavailable\"}");
+        return;
+      }
+      const bool saved = preferences.putString("ssid", ssid) > 0 &&
+                         preferences.putString("pass", password) >= 0;
+      preferences.end();
+      if (!saved) {
+        localHttpServer.send(500, "application/json",
+                             "{\"error\":\"save_failed\"}");
+        return;
+      }
+      localHttpServer.send(
+          202, "application/json",
+          "{\"status\":\"saved\",\"restart_in_ms\":1500}");
+      restartAtMs = millis() + 1500;
+    });
+    localHttpServer.onNotFound([]() {
+      localHttpServer.send(404, "application/json",
+                           "{\"error\":\"not_found\"}");
+    });
+    localHttpServer.begin();
+    if (stationRequested) {
+      WiFi.begin(wifiSsid, wifiPassword);
+      const bool cloudReady = cloudLink.begin(
+          MOSS_SUPABASE_URL, MOSS_DEVICE_ID, MOSS_DEVICE_TOKEN, wifiSsid,
+          wifiPassword);
+      Serial.printf(
+          "{\"type\":\"cloud\",\"event\":\"begin\",\"enabled\":%s,"
+          "\"hardware_id\":\"%s\",\"status\":\"%s\"}\n",
+          cloudReady ? "true" : "false", cloudLink.hardwareId(),
+          cloudLink.statusText());
+    } else {
+      Serial.println("{\"type\":\"cloud\",\"event\":\"disabled\","
+                     "\"reason\":\"no_sta_credentials\"}");
+    }
   }
 }
 
@@ -182,12 +328,31 @@ void sendControlAck(const planter::ControlCommand& command, bool ok,
   sendLocalLine(ack);
 }
 
-void applyControlLine(const char* line) {
-  const planter::ControlCommand command = planter::parseControlLine(line);
-  if (!command.valid) {
-    sendControlAck(command, false, "\"invalid\"");
+// Manual ON is still a physical pump command. Empty water, a missing reading,
+// a stale sample, or an unavailable watchdog must reject it just like AUTO.
+const char* pumpStartBlockReason() {
+  if (!hasControlInput || !watchdogReady) return "sensor_unavailable";
+  if (millis() - lastSampleMs > planter::kSampleStaleMs) return "sample_stale";
+  if (lastControlInput.waterAdcRaw < 0) return "water_unavailable";
+  if (lastControlInput.waterAdcRaw < planter::kPumpWaterLowRawAdc) {
+    return "water_low";
+  }
+  return nullptr;
+}
+
+void applyControlCommand(const planter::ControlCommand& command, bool localAck) {
+  const char* block = command.pumpSet && !command.pumpAuto && command.pumpOn
+                          ? pumpStartBlockReason()
+                          : nullptr;
+  if (block != nullptr) {
+    if (localAck) {
+      char quoted[32];
+      snprintf(quoted, sizeof(quoted), "\"%s\"", block);
+      sendControlAck(command, false, quoted);
+    }
     return;
   }
+
   const uint32_t nowMs = millis();
   bool autoRequested = false;
   if (command.pumpSet) {
@@ -214,7 +379,48 @@ void applyControlLine(const char* line) {
     relayController.accept(nowMs, lastControlInput);
   }
   syncRelayCommands(true);
-  sendControlAck(command, true, "null");
+  if (localAck) sendControlAck(command, true, "null");
+}
+
+void applyControlLine(const char* line) {
+  const planter::ControlCommand command = planter::parseControlLine(line);
+  if (!command.valid) {
+    sendControlAck(command, false, "\"invalid\"");
+    return;
+  }
+  applyControlCommand(command, true);
+}
+
+void applyCloudCommand(const planter::CloudCommand& command) {
+  if (!command.valid) return;
+  if (command.expiresInMs < 1000) {
+    cloudLink.enqueueAck(command, false, "expired_before_execution");
+    return;
+  }
+  planter::ControlCommand local;
+  local.valid = true;
+  if (strcmp(command.actuator, "pump") == 0) {
+    local.pumpSet = true;
+    local.pumpAuto = strcmp(command.action, "auto") == 0;
+    local.pumpOn = strcmp(command.action, "on") == 0;
+  } else if (strcmp(command.actuator, "light") == 0) {
+    local.lightSet = true;
+    local.lightAuto = strcmp(command.action, "auto") == 0;
+    local.lightOn = strcmp(command.action, "on") == 0;
+  } else {
+    cloudLink.enqueueAck(command, false, "invalid_actuator");
+    return;
+  }
+  local.durationSeconds = command.durationSeconds;
+  const char* block = local.pumpSet && !local.pumpAuto && local.pumpOn
+                          ? pumpStartBlockReason()
+                          : nullptr;
+  if (block != nullptr) {
+    cloudLink.enqueueAck(command, false, block);
+    return;
+  }
+  applyControlCommand(local, false);
+  cloudLink.enqueueAck(command, true, nullptr);
 }
 
 void sendLocalSample(char* output, size_t capacity) {
@@ -410,6 +616,11 @@ void updateLcd(const planter::SensorSnapshot& sample,
       snprintf(second, sizeof(second), "L:%s cmd",
                control.lightOn ? "ON" : "OFF");
     }
+  } else if (MOSS_CLOUD_ENABLED && sample.uptimeMs < 12000 &&
+             MOSS_DEVICE_CLAIM_CODE[0] != '\0') {
+    // Physical claim window: the code is shown only on the LCD, never logged.
+    snprintf(first, sizeof(first), "Cloud Pairing");
+    snprintf(second, sizeof(second), "Claim:%.10s", MOSS_DEVICE_CLAIM_CODE);
   } else if (localWifiReady) {
     // The password is shown only on the physical LCD, not serial or telemetry.
     snprintf(first, sizeof(first), "%s", localWifiName);
@@ -479,12 +690,59 @@ void printSample(uint32_t nowMs) {
 
   // Avoid placing the entire network frame on the ESP32 loop task's stack.
   static char output[3072];
-  if (planter::formatTelemetry(sample, output, sizeof(output), &control,
+    if (planter::formatTelemetry(sample, output, sizeof(output), &control,
                                 observationLabels.current(sample.uptimeMs))) {
+    snprintf(latestTelemetry, sizeof(latestTelemetry), "%s", output);
+    latestTelemetryValid = true;
     Serial.println(output);
     sendLocalSample(output, sizeof(output));
   } else {
     Serial.println("{\"type\":\"error\",\"code\":\"encoding_failed\"}");
+  }
+  if (cloudLink.enabled()) {
+    planter::CloudSample cloud;
+    cloud.uptimeMs = sample.uptimeMs;
+    cloud.soilAdc =
+        planter::validAdcRaw(sample.soilAdcRaw) ? sample.soilAdcRaw : -1;
+    const int soilPercent = planter::observedSoilRelativePercent(sample);
+    cloud.soilPercent = soilPercent >= 0 ? soilPercent : -1;
+    cloud.waterAdc = waterUsable ? sample.waterAdcRaw : -1;
+    const int waterPercent = planter::observedWaterRelativePercent(sample);
+    cloud.waterPercent = waterPercent >= 0 ? waterPercent : -1;
+    cloud.waterObservationPercent = waterPercent;
+    cloud.lightAdc =
+        planter::validAdcRaw(sample.lightAdcRaw) ? sample.lightAdcRaw : -1;
+    cloud.lightPercent = preview.lightPercent >= 0 ? preview.lightPercent : -1;
+    cloud.uvAdc = planter::validAdcRaw(sample.uvAdcRaw) ? sample.uvAdcRaw : -1;
+    if (sample.mqAdcReadable && planter::validAdcRaw(sample.mqAdcRaw)) {
+      cloud.mqAdc = sample.mqAdcRaw;
+    }
+    if (sample.mqAdcPinMillivolts >= 0) {
+      cloud.mqPinMv = sample.mqAdcPinMillivolts;
+    }
+    if (planter::validTemperature(sample.temperatureC)) {
+      cloud.temperatureC = sample.temperatureC;
+      cloud.hasTemperature = true;
+    }
+    if (planter::validHumidity(sample.humidityPercent)) {
+      cloud.humidityPercent =
+          static_cast<int16_t>(roundf(sample.humidityPercent));
+    }
+    cloud.waterEmpty =
+        waterUsable && sample.waterAdcRaw <= planter::kWaterEmptyRawReferenceAdc;
+    cloud.waterLow = waterUsable && preview.waterLow == 1;
+    cloud.pumpOn = control.pumpOn;
+    cloud.pumpCooldownS = control.pumpCooldownRemainingS;
+    cloud.pumpRuntimeLockout = control.pumpRuntimeLockout;
+    cloud.lightOn = control.lightOn;
+    snprintf(cloud.pumpReason, sizeof(cloud.pumpReason), "%s",
+             control.pumpReason == nullptr ? "" : control.pumpReason);
+    snprintf(cloud.lightReason, sizeof(cloud.lightReason), "%s",
+             control.lightReason == nullptr ? "" : control.lightReason);
+    cloud.capturedAtValid =
+        planter::CloudLink::currentUtcIso(cloud.capturedAt,
+                                          sizeof(cloud.capturedAt));
+    cloudLink.enqueueSample(cloud);
   }
   updateLcd(sample, control);
 }
@@ -540,6 +798,7 @@ void setup() {
   pinMode(extra_sensors::kMq135DigitalPin, INPUT);
   ArduinoSoilGpio soilGpio;
   planter::configureSoilPower(soilGpio, planter::kSoilPowerWiringVerified);
+  loadWifiCredentials();
   startLocalWifi();
 
   Serial.printf(
@@ -550,7 +809,7 @@ void setup() {
       "\"pump_polarity\":\"active_low_assumed\","
       "\"light_polarity\":\"active_high_assumed\","
       "\"light_automation\":\"%s\",\"annotations\":\"operator_reported\","
-      "\"wifi\":\"%s\",\"cloud\":\"disabled\"}\n",
+      "\"wifi\":\"%s\",\"cloud\":\"%s\"}\n",
       planter::kFirmwareVersion,
       planter::kSoilPowerWiringVerified ? "gpio25_switched_verified_by_operator"
                                        : "gpio25_input_unverified",
@@ -559,10 +818,19 @@ void setup() {
       "enabled_unverified", "enabled_unverified",
       watchdogReady ? "subscribed_unverified" : "unavailable",
       planter::kLightAutomationEnabled ? "enabled" : "inhibited",
-      localWifiReady ? "local_ap_requested" : "local_ap_unavailable");
+      localWifiReady ? "local_ap_requested" : "local_ap_unavailable",
+      cloudLink.enabled() && strlen(wifiSsid) > 0
+          ? "https_configured"
+          : "disabled");
 }
 
 void loop() {
+  if (restartAtMs != 0 && millis() >= restartAtMs) {
+    relayController.inhibit(millis(), "wifi_setup_restart");
+    syncRelayCommands(true);
+    delay(100);
+    ESP.restart();
+  }
   const uint32_t nowMs = millis();
   if (watchdogReady && esp_task_wdt_reset() != ESP_OK) {
     watchdogReady = false;
@@ -571,6 +839,12 @@ void loop() {
   relayController.tick(nowMs);
   syncRelayCommands();
   pollLocalWifi();
+  if (localWifiReady) localHttpServer.handleClient();
+  cloudLink.poll();
+  planter::CloudCommand cloudCommand;
+  while (cloudLink.takeCommand(cloudCommand)) {
+    applyCloudCommand(cloudCommand);
+  }
   readObservationCommands();
   if (!hasSample ||
       planter::sampleDue(nowMs, lastSampleMs, planter::kSampleIntervalMs)) {

@@ -8,15 +8,37 @@ import 'dart:convert';
 class PlantTelemetry {
   const PlantTelemetry({
     required this.recordedAt,
+    this.capturedAt,
+    this.timeQuality,
     this.sequence,
     this.soilPercent,
     this.temperatureC,
     this.humidityPercent,
     this.lightPercent,
     this.uvIndex,
+    this.soilAdc,
+    this.waterAdc,
+    this.waterPercent,
+    this.waterObservationPercent,
+    this.waterEmpty,
+    this.waterLow,
+    this.lightAdc,
+    this.uvAdc,
+    this.mqAdc,
+    this.mqPinMv,
+    this.pumpCommand,
+    this.pumpReason,
+    this.pumpCooldownSeconds,
+    this.pumpRuntimeLockout,
+    this.lightCommand,
+    this.lightReason,
   });
 
   final DateTime recordedAt;
+
+  /// Device NTP time, present only when the firmware had a trustworthy clock.
+  final DateTime? capturedAt;
+  final String? timeQuality;
 
   /// Database row ID, used to break ties between equal server timestamps.
   final int? sequence;
@@ -28,10 +50,33 @@ class PlantTelemetry {
   /// Source-reported UV index estimate; calibration is not verified here.
   final double? uvIndex;
 
+  final int? soilAdc;
+  final int? waterAdc;
+  final int? waterPercent;
+  final int? waterObservationPercent;
+  final bool? waterEmpty;
+  final bool? waterLow;
+  final int? lightAdc;
+  final int? uvAdc;
+  final int? mqAdc;
+  final int? mqPinMv;
+
+  /// Requested relay commands, not measured contact states.
+  final bool? pumpCommand;
+  final String? pumpReason;
+  final int? pumpCooldownSeconds;
+  final bool? pumpRuntimeLockout;
+  final bool? lightCommand;
+  final String? lightReason;
+
+  /// Time the sensor values were actually captured when NTP was available.
+  /// Server ingestion time remains [recordedAt] and is never overwritten.
+  DateTime get measuredAt => capturedAt ?? recordedAt;
+
   /// Reject old readings and timestamps too far in the future. Allow a small
   /// amount of clock skew between the phone and the server.
   bool isFreshAt(DateTime now, {Duration maxAge = const Duration(minutes: 2)}) {
-    final age = now.difference(recordedAt);
+    final age = now.difference(measuredAt);
     return age <= maxAge && age >= -const Duration(seconds: 30);
   }
 }

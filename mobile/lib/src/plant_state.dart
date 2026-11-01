@@ -70,10 +70,27 @@ class PlantState {
     return PlantState(
       isLive: true,
       soilPercent: percent(reading.soilPercent),
+      waterPercent: percent(reading.waterPercent),
+      waterObservationPercent: percent(reading.waterObservationPercent),
+      waterLow: reading.waterLow,
+      waterEmpty: reading.waterEmpty,
+      waterClassificationInputsValid: reading.waterAdc != null,
       temperatureC: validTemperature ? temperature : null,
       humidityPercent: percent(reading.humidityPercent),
       lightPercent: percent(reading.lightPercent),
       uvIndex: validUv ? uv : null,
+      soilAdc: reading.soilAdc,
+      waterAdc: reading.waterAdc,
+      lightAdc: reading.lightAdc,
+      uvAdc: reading.uvAdc,
+      mqAdc: reading.mqAdc,
+      mqPinMillivolts: reading.mqPinMv,
+      pumpCommand: reading.pumpCommand,
+      pumpReason: reading.pumpReason,
+      pumpCooldownSeconds: reading.pumpCooldownSeconds,
+      pumpRuntimeLockout: reading.pumpRuntimeLockout,
+      lightCommand: reading.lightCommand,
+      lightReason: reading.lightReason,
     );
   }
 

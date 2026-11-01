@@ -178,6 +178,7 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
       atmosphere: _atmosphere,
       telemetry: widget.cloud?.telemetry ?? widget.telemetry,
       initialSerialJson: widget.initialSerialJson,
+      cloud: widget.cloud,
       cloudSettings: cloudSettings,
       localWifi: widget.localWifi,
       autoConnectLocal: widget.autoConnectLocal,
