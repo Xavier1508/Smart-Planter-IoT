@@ -336,7 +336,7 @@ unggah varian itu ke Google Play. SDK App Distribution Android masih berstatus
 beta. Update APK tetap memerlukan persetujuan pemasangan dari pengguna.
 
 Perubahan Wi-Fi lokal, kartu MQ135, dan XGBoost berada pada aplikasi yang sama,
-bukan aplikasi pratinjau baru. Sumber saat ini memakai `0.3.11+16`. Halaman
+bukan aplikasi pratinjau baru. Sumber saat ini memakai `0.3.12+17`. Halaman
 Perangkat menampilkan status koneksi dinamis (belum terhubung / sudah terhubung
 tetapi belum ada data / sudah terhubung), dan halaman Hari Ini mendukung tarik
 untuk menyegarkan. Pengguna melaporkan build 8

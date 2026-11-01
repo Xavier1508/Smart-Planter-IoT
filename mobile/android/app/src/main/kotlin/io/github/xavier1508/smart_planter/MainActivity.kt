@@ -37,6 +37,23 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        val schedule = getSharedPreferences("moss_schedule", MODE_PRIVATE)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/schedule")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "read" -> result.success(schedule.getString("json", "[]"))
+                    "write" -> {
+                        val json = call.argument<String>("json")
+                        if (json == null || json.length > 32768) {
+                            result.error("invalid", "Schedule is invalid.", null)
+                        } else {
+                            schedule.edit().putString("json", json).apply()
+                            result.success(null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/build_info")
             .setMethodCallHandler { call, result ->
                 if (call.method != "read") {

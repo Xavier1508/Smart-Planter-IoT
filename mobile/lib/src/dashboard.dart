@@ -15,6 +15,7 @@ import 'moss_gaze.dart';
 import 'moss_sky.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
+import 'schedule.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({
@@ -70,12 +71,21 @@ class _DashboardState extends State<Dashboard> {
   late bool _ownsLocalWifi;
   StreamSubscription<void>? _localWifiChanges;
   bool _useLocalWifi = false;
+  final ScheduleStore _scheduleStore = const ScheduleStore();
+  List<ScheduleEntry> _schedules = const [];
+  Timer? _scheduleTimer;
+  bool _scheduleBusy = false;
 
   @override
   void initState() {
     super.initState();
     _attachLocalWifi(widget.localWifi);
     _listenToTelemetry();
+    _loadSchedules();
+    _scheduleTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_runSchedules()),
+    );
     if (widget.initialSerialJson.isNotEmpty) {
       try {
         _serialSnapshot = PlantState.fromSerial(
@@ -253,9 +263,54 @@ class _DashboardState extends State<Dashboard> {
     _serialMessage = null;
   });
 
+  Future<void> _loadSchedules() async {
+    final loaded = await _scheduleStore.read();
+    if (!mounted) return;
+    setState(() {
+      _schedules = loaded..sort((a, b) => a.at.compareTo(b.at));
+    });
+  }
+
+  Future<void> _addSchedule(ScheduleEntry entry) async {
+    final next = [..._schedules, entry]..sort((a, b) => a.at.compareTo(b.at));
+    setState(() => _schedules = next);
+    await _scheduleStore.write(next);
+  }
+
+  Future<void> _deleteSchedule(int id) async {
+    final next = _schedules.where((entry) => entry.id != id).toList();
+    setState(() => _schedules = next);
+    await _scheduleStore.write(next);
+  }
+
+  Future<void> _runSchedules() async {
+    if (_scheduleBusy ||
+        !_useLocalWifi ||
+        _localWifi.status != LocalWifiStatus.live ||
+        _schedules.isEmpty) {
+      return;
+    }
+    _scheduleBusy = true;
+    try {
+      final now = DateTime.now();
+      for (final entry in List<ScheduleEntry>.of(_schedules)) {
+        if (now.isBefore(entry.at)) continue;
+        if (now.difference(entry.at) > const Duration(minutes: 2)) {
+          await _deleteSchedule(entry.id);
+          continue;
+        }
+        final sent = await _localWifi.sendControlCommand(entry.command);
+        if (sent) await _deleteSchedule(entry.id);
+      }
+    } finally {
+      _scheduleBusy = false;
+    }
+  }
+
   @override
   void dispose() {
     _expiry?.cancel();
+    _scheduleTimer?.cancel();
     final localChanges = _localWifiChanges;
     if (localChanges != null) unawaited(localChanges.cancel());
     if (_ownsLocalWifi) _localWifi.dispose();
@@ -308,6 +363,9 @@ class _DashboardState extends State<Dashboard> {
             localStatus: _localWifi.status,
             onCommand: _useLocalWifi ? _sendControl : null,
             controlId: _controlId,
+            schedules: _schedules,
+            onAddSchedule: _addSchedule,
+            onDeleteSchedule: _deleteSchedule,
           ),
           _ => _SettingsPage(
             cloudSettings: widget.cloudSettings,
