@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -49,17 +50,30 @@ object NotificationHelper {
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
 
-    fun show(context: Context, id: Int, title: String, body: String, channel: String) {
+    fun show(
+        context: Context,
+        id: Int,
+        title: String,
+        body: String,
+        channel: String,
+        route: String? = null,
+        payload: String? = null,
+    ) {
         if (!canNotify(context)) return
-        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        val contentIntent = launch?.let {
-            PendingIntent.getActivity(
-                context,
-                0,
-                it,
-                PendingIntent.FLAG_UPDATE_CURRENT or immutableFlag(),
-            )
+        val launch = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("notification_id", id)
+            putExtra("notification_title", title)
+            putExtra("notification_body", body)
+            if (route != null) putExtra("notification_route", route)
+            if (payload != null) putExtra("notification_payload", payload)
         }
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            id,
+            launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or immutableFlag(),
+        )
         val priority = if (channel == CHANNEL_ALERTS) {
             NotificationCompat.PRIORITY_HIGH
         } else {
@@ -72,7 +86,7 @@ object NotificationHelper {
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(priority)
             .setAutoCancel(true)
-        if (contentIntent != null) builder.setContentIntent(contentIntent)
+            .setContentIntent(contentIntent)
         try {
             NotificationManagerCompat.from(context).notify(id, builder.build())
         } catch (_: SecurityException) {

@@ -4,8 +4,8 @@ import 'character_look.dart';
 import 'moss_app.dart';
 import 'plant_emotion.dart';
 
-/// A compact, honest presentation of the demo model. It never claims a plant
-/// diagnosis; it shows the emotion, the strongest signal and the short trend.
+/// A compact, honest presentation of the model and its factor breakdown. The
+/// score is a presentation summary, not a medical or agronomic diagnosis.
 class PredictionCard extends StatelessWidget {
   const PredictionCard({super.key, required this.reading, required this.look});
 
@@ -31,6 +31,7 @@ class PredictionCard extends StatelessWidget {
       ConditionTrend.worsening => Icons.trending_down_rounded,
       ConditionTrend.unknown => Icons.more_horiz_rounded,
     };
+    final factors = reading.factors.take(4).toList(growable: false);
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
@@ -43,16 +44,20 @@ class PredictionCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(
-                'PREDIKSI KONDISI',
-                style: TextStyle(
-                  fontSize: 10,
-                  letterSpacing: 1.5,
-                  fontWeight: FontWeight.w800,
-                  color: colors.onSurfaceVariant,
+              Expanded(
+                child: Text(
+                  'ANALISIS KONDISI',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w800,
+                    color: colors.onSurfaceVariant,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
@@ -60,7 +65,7 @@ class PredictionCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  '${reading.confidencePercent}%',
+                  'Skor ${reading.score}',
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
@@ -70,7 +75,17 @@ class PredictionCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 9),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              minHeight: 6,
+              value: reading.score / 100,
+              backgroundColor: colors.outlineVariant.withValues(alpha: .35),
+              valueColor: AlwaysStoppedAnimation<Color>(accent),
+            ),
+          ),
+          const SizedBox(height: 11),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -88,14 +103,42 @@ class PredictionCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      reading.emotion.label,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: accent,
-                        letterSpacing: -.3,
-                      ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          reading.emotion.label,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: accent,
+                            letterSpacing: -.3,
+                          ),
+                        ),
+                        if (reading.available)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              reading.modelLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: colors.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -126,18 +169,82 @@ class PredictionCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 9),
+          if (factors.isNotEmpty) ...[
+            const SizedBox(height: 11),
+            for (final factor in factors) _FactorRow(factor: factor),
+          ],
+          const SizedBox(height: 8),
           Text(
             reading.prediction,
             style: const TextStyle(fontSize: 12, height: 1.4),
           ),
+          if (reading.actions.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Tindakan: ${reading.actions.first}',
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+                color: accent,
+              ),
+            ),
+          ],
           const SizedBox(height: 7),
           Text(
-            'Model demo ${look.name} · label sintetis, bukan diagnosis tanaman.',
+            'Analisis adaptif ${look.name} · pola sensor + agronomi, '
+            'bukan diagnosis tanaman.',
             style: TextStyle(
               fontSize: 10,
               height: 1.3,
               color: colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FactorRow extends StatelessWidget {
+  const _FactorRow({required this.factor});
+  final ConditionFactor factor;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mossColors;
+    final color = switch (factor.severity) {
+      ConditionSeverity.good => const Color(0xFF3F7D58),
+      ConditionSeverity.watch => const Color(0xFFB07A2A),
+      ConditionSeverity.alert => const Color(0xFFB45A45),
+    };
+    final icon = switch (factor.severity) {
+      ConditionSeverity.good => Icons.check_circle_outline_rounded,
+      ConditionSeverity.watch => Icons.info_outline_rounded,
+      ConditionSeverity.alert => Icons.error_outline_rounded,
+    };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 7),
+          SizedBox(
+            width: 70,
+            child: Text(
+              factor.label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: colors.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              factor.detail,
+              style: const TextStyle(fontSize: 10.5, height: 1.3),
             ),
           ),
         ],

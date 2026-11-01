@@ -215,11 +215,12 @@ void main() {
     for (final (raw, expected) in [
       (451, WaterLevel.low),
       (800, WaterLevel.low),
-      (801, WaterLevel.medium),
-      (900, WaterLevel.medium),
+      (890, WaterLevel.low),
+      (950, WaterLevel.low),
+      (951, WaterLevel.medium),
       (1040, WaterLevel.medium),
-      (1099, WaterLevel.medium),
-      (1100, WaterLevel.full),
+      (1349, WaterLevel.medium),
+      (1350, WaterLevel.full),
       (1555, WaterLevel.full),
       (2000, WaterLevel.full),
     ]) {
@@ -231,7 +232,7 @@ void main() {
     expect(stateFor(2000, low: true).waterLevel, WaterLevel.low);
     expect(stateFor(450, empty: true).waterLevel, WaterLevel.empty);
     expect(stateFor(450).waterLevel, WaterLevel.empty);
-    expect(stateFor(800, low: true).mood, PlantMood.thirsty);
+    expect(stateFor(950, low: true).mood, PlantMood.thirsty);
   });
 
   test('water rails and malformed inputs stay unavailable', () {
@@ -386,7 +387,7 @@ void main() {
       const PlantState(
         isLive: true,
         soilPercent: 30,
-        waterAdc: 900,
+        waterAdc: 1000,
         waterPercent: 20,
       ).mood,
       PlantMood.content,
@@ -395,7 +396,7 @@ void main() {
       const PlantState(
         isLive: true,
         soilPercent: 50,
-        waterAdc: 800,
+        waterAdc: 950,
         waterPercent: 19,
       ).mood,
       PlantMood.thirsty,
@@ -477,5 +478,24 @@ void main() {
     );
     expect(sample(const Duration(seconds: -30)).isFreshAt(now), isTrue);
     expect(sample(const Duration(seconds: -31)).isFreshAt(now), isFalse);
+  });
+
+  test('pump runtime lockout is parsed for the UI countdown', () {
+    final state = PlantState.fromLocalWifi(
+      SerialSensorSnapshot.parse(
+        jsonEncode({
+          'type': 'sample',
+          'dht': {'temperature_c': 25, 'status': 'unverified'},
+          'water_level': {'adc_raw': 900, 'status': 'unverified'},
+          'pump_cmd': false,
+          'pump_reason': 'runtime_limit',
+          'pump_cooldown_s': 1200,
+          'pump_runtime_lockout': true,
+        }),
+      ),
+    );
+    expect(state.pumpReason, 'runtime_limit');
+    expect(state.pumpCooldownSeconds, 1200);
+    expect(state.pumpRuntimeLockout, isTrue);
   });
 }

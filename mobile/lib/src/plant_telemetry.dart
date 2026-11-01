@@ -67,6 +67,8 @@ class SerialSensorSnapshot {
     this.waterLowPreview,
     this.pumpCommand,
     this.pumpReason,
+    this.pumpCooldownSeconds,
+    this.pumpRuntimeLockout,
     this.lightCommand,
     this.lightReason,
     this.lightingCandidate,
@@ -113,6 +115,11 @@ class SerialSensorSnapshot {
   /// Requested GPIO commands, not measured relay/contact states.
   final bool? pumpCommand;
   final String? pumpReason;
+
+  /// Remaining automatic-pump cooldown, in seconds. The 30-minute value after
+  /// a 5-minute runtime limit explains why a dry pot may not start the pump.
+  final int? pumpCooldownSeconds;
+  final bool? pumpRuntimeLockout;
   final bool? lightCommand;
   final String? lightReason;
 
@@ -299,6 +306,10 @@ class SerialSensorSnapshot {
                 'runtime_limit',
               }.contains(decoded['pump_reason'])
           ? decoded['pump_reason'] as String
+          : null,
+      pumpCooldownSeconds: integer(decoded['pump_cooldown_s'], 0, 86400),
+      pumpRuntimeLockout: decoded['pump_runtime_lockout'] is bool
+          ? decoded['pump_runtime_lockout'] as bool
           : null,
       lightCommand: decoded['growlight_cmd'] is bool
           ? decoded['growlight_cmd'] as bool

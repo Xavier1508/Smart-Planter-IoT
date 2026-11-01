@@ -975,7 +975,23 @@ Build lokal: `analysis/platformio/firmware-v30-water-bands-27719b97/firmware.bin
 `27719B97346515596BC167592194F1535C261658868C4652B1A385B9B6C92A15`.
 Tes host lokal/generik, 16 frame sintetis v30, dan validasi `esptool` lulus.
 
-### Aplikasi Tunas 0.6.0: durasi, jadwal, dan koneksi stabil
+### Firmware v31: skala air 950/1350 dan lockout pompa
+
+- Bucket air: **EMPTY ≤450**, **LOW 451–950**, **MEDIUM 951–1349**,
+  **FULL ≥1350**. Nilai 890 sekarang LOW; Full hanya mulai 1350.
+- LCD `Water:LOW` untuk 451–950, `Water:MED` untuk 951–1349, `Water:FULL`
+  untuk ≥1350.
+- Telemetry baru `pump_cooldown_s` dan `pump_runtime_lockout`; LCD pompa
+  menampilkan `LOCK <menit>` saat kena batas 5 menit/soak 30 menit.
+- ACK perintah membawa sisa lockout agar app tidak menebak.
+- AUTO release dan TCP/Wi-Fi no-delay dari v30 tetap berlaku.
+
+Build lokal: `analysis/platformio/firmware-v31-holistic-water-171b7b8a/firmware.bin`
+(799.296 byte), SHA-256
+`171B7B8AE4AD8F602D2196C210AAE3F1BFE235B4F94729DF3443BF3A1C375B2B`.
+Tes host lokal/generik, 16 frame sintetis v31, dan validasi `esptool` lulus.
+
+### Aplikasi Tunas 0.7.0: analisis holistik dan notifikasi
 
 Nama aplikasi yang terlihat pengguna berubah dari **Moss** menjadi **Tunas ·
 Smart Planter**. Moss tetap dipakai sebagai nama profil/karakter pertama, bukan
@@ -1004,31 +1020,38 @@ kanal `moss/profile` dan dapat berisi sampai enam planter.
   sedang berjalan menampilkan hitungan mundur dan otomatis hilang setelah
   durasi. Eksekusi memakai satu pembacaan waktu per tick dan hanya satu job per
   tick agar dua job tidak pernah dikirim bersamaan.
-- **Skala air** memakai raw ADC: ≤450 Empty, ≤800 Low, 801–1099 Medium, ≥1100
-  Full. Halaman utama dan Perangkat menampilkan bucket yang sama; angka ADC
-  mentah tetap tidak ditampilkan di halaman Perangkat.
+- **Skala air** memakai raw ADC: ≤450 Empty, 451–950 Low, 951–1349 Medium,
+  ≥1350 Full. Halaman utama dan Perangkat menampilkan bucket yang sama; angka
+  ADC mentah tetap tidak ditampilkan di halaman Perangkat.
+- **Lockout pompa** ditampilkan sebagai hitungan mundur. Setelah pompa otomatis
+  mencapai batas 5 menit, firmware mengunci 30 menit; app menjelaskan bahwa
+  manual ON 1–30 detik masih bisa dipakai dan menandai bila probe tanah tidak
+  berubah.
 - **Koneksi** tidak lagi mengosongkan data saat timeout/reconnect. Snapshot
   terakhir ditandai stale lewat status, timeout sampel dinaikkan ke 30 detik,
   dan riwayat memuat ulang lalu menggabungkan baris file dengan data sesi agar
-  halaman Riwayat tidak kosong saat koneksi sempat terputus.
+  halaman Riwayat tidak kosong saat koneksi sempat terputus. Perintah manual
+  memakai timeout 3 detik: bila sinyal hilang, app menampilkan kegagalan dan
+  tidak membiarkan UI menunggu selamanya.
 - Halaman **Perangkat** hanya menampilkan **Tersedia / Tidak tersedia / Tidak
   dapat menampilkan data**; angka ADC mentah tidak lagi ditampilkan di sana.
   Blok "Kendali perangkat" yang redundan di bagian bawah dihapus.
-- **Emosi ML** dijalankan di ponsel dengan decision tree 3 kelas (healthy,
-  warning, critical) berfitur 8, termasuk interaksi tanah×air. Model dilatih dari
-  band agronomi sintetis (holdout 96,2%; 93 node) dan mencakup banjir,
-  kekeringan, panas, serta gas tinggi. Aturan ambang tetap menjadi pengaman:
-  tanah ≥85% atau air <20% tidak boleh tampil "Nyaman". Ini model demo, bukan
-  diagnosis agronomi tervalidasi; CSV ekspor disiapkan untuk retraining dengan
-  data nyata.
-- Halaman utama menampilkan status "Belum ada perangkat terhubung" dan tidak
-  mengarang nilai saat tidak ada sampel.
+- **Analisis ML holistik** dijalankan di ponsel dengan decision tree 6 kelas
+  (`healthy`, `watch`, `dry`, `wet`, `heat`, `air`) dan 12 fitur: tanah, air,
+  cahaya, suhu, kelembapan udara, UV, gas, interaksi tanah×air, tren tanah,
+  tren air, lockout pompa, dan kelengkapan sensor. Model dilatih dari skenario
+  agronomi seimbang **plus 273 pola sensor nyata** yang diekstrak dari log lokal
+  (holdout 99,4%; 97 node). Tanah 85% dengan air cukup kini dinilai lembap/
+  optimal, bukan merah; air rendah saja menjadi faktor pantau, bukan alarm.
+  Kartu analisis menampilkan skor 0–100, kelas, faktor per aspek, dan tindakan.
+  Ini model presentasi, bukan diagnosis agronomi tervalidasi; CSV ekspor tetap
+  menjadi jalur retraining data nyata.
 - **Notifikasi HP native**: peringatan air rendah (bucket Low/Empty, maksimal
-  sekali per 30 menit) dan ringkasan prediksi setiap 3 jam lewat
-  `NotificationManager` + `AlarmManager`. Tombol "Izinkan notifikasi" dan "Tes
-  notifikasi" ada di Pengaturan. Data real-time hanya masuk saat aplikasi
-  terhubung; notifikasi berkala memakai prediksi terakhir yang tersimpan di
-  alarm.
+  sekali per 30 menit) dan analisis ML bertahap maksimal sekali per 5 menit;
+  eskalasi ke kondisi siaga dikirim lebih cepat. Menekan notifikasi air membuka
+  halaman Perangkat; menekan notifikasi analisis membuka halaman utama dan
+  menampilkan ringkasan analisis saat itu. Tombol "Izinkan notifikasi" dan "Tes
+  notifikasi" ada di Pengaturan.
 - Kartu "Belum ada perangkat" yang muncul-hilang di dalam halaman diganti
   **pop-up singkat di atas layar** (4 detik) saat koneksi terputus. Status
   offline yang stabil tetap ada di header.
@@ -1040,14 +1063,14 @@ Untuk lintas perangkat dalam satu jaringan, firmware masih mode AP (192.168.4.1)
 tahap berikutnya adalah mode STA pada hotspot/router bersama agar beberapa ESP32
 punya alamat berbeda di jaringan yang sama.
 
-Pemeriksaan lokal: `flutter analyze` bersih, **140 tes lulus, 2 dilewati**.
-Versi aplikasi `0.6.0+21`.
+Pemeriksaan lokal: `flutter analyze` bersih, **146 tes lulus, 2 dilewati**.
+Versi aplikasi `0.7.0+22`.
 
 ### Model XGBoost sintetis lama (arsip)
 
-Catatan: aplikasi 0.6.0 memakai model decision tree 3 kelas di
-`assets/ml/plant-health.json`, bukan model XGBoost 6 kelas ini. Bagian ini
-dipertahankan untuk mereproduksi eksperimen awal.
+Catatan: aplikasi 0.7.0 memakai model holistic 6 kelas di
+`assets/ml/plant-health.json`, dan label "sintetis" tidak lagi ditampilkan di
+kartu analisis. Bagian ini dipertahankan untuk mereproduksi eksperimen awal.
 
 Model eksperimental dilatih dengan 60.000 baris buatan berdasarkan rentang
 0–100 untuk tanah, air relatif, dan LDR serta UV sintetis 1–14 atau kosong.

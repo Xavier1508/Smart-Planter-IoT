@@ -22,10 +22,22 @@ void configureRelaysInactive(Gpio& gpio) {
 }
 
 struct ControlStatus {
+  ControlStatus(bool pumpOnValue, bool lightOnValue, const char* pumpReasonValue,
+                const char* lightReasonValue, uint32_t cooldownSeconds = 0,
+                bool runtimeLockout = false)
+      : pumpOn(pumpOnValue),
+        lightOn(lightOnValue),
+        pumpReason(pumpReasonValue),
+        lightReason(lightReasonValue),
+        pumpCooldownRemainingS(cooldownSeconds),
+        pumpRuntimeLockout(runtimeLockout) {}
+
   bool pumpOn;
   bool lightOn;
   const char* pumpReason;
   const char* lightReason;
+  uint32_t pumpCooldownRemainingS;
+  bool pumpRuntimeLockout;
 };
 
 struct ControlInput {
@@ -267,6 +279,21 @@ class RelayController {
            static_cast<uint32_t>(nowMs - pumpManualSinceMs_);
   }
 
+  /// Remaining automatic-pump lockout. The 30-minute soak after a 5-minute
+  /// runtime limit is the usual reason the pump refuses to start while the
+  /// soil is dry; expose it instead of only naming the reason.
+  uint32_t pumpCooldownRemainingMs(uint32_t nowMs) const {
+    if (!pumpCooldown_) return 0;
+    if (controlIntervalElapsed(nowMs, pumpStoppedMs_, pumpCooldownMs_)) {
+      return 0;
+    }
+    return pumpCooldownMs_ - static_cast<uint32_t>(nowMs - pumpStoppedMs_);
+  }
+
+  bool pumpRuntimeLockout() const {
+    return pumpCooldown_ && pumpCooldownMs_ == kPumpRuntimeSoakMs;
+  }
+
   void accept(uint32_t nowMs, const ControlInput& input) {
     if (!initialized_) begin(nowMs);
     tick(nowMs);
@@ -374,7 +401,9 @@ class RelayController {
     }
   }
 
-  ControlStatus status() const { return {pumpOn_, lightOn_, pumpReason_, lightReason_}; }
+  ControlStatus status() const {
+    return {pumpOn_, lightOn_, pumpReason_, lightReason_};
+  }
 
  private:
   void stopPump(uint32_t nowMs, const char* reason) {

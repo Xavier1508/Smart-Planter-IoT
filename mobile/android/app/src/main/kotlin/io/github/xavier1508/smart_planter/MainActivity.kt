@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -13,13 +14,73 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
+    private var notificationSink: EventChannel.EventSink? = null
+    private var notificationListening = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        handleNotificationIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNotificationIntent(intent)
+    }
+
+    private fun handleNotificationIntent(intent: Intent?) {
+        if (intent == null) return
+        val route = intent.getStringExtra("notification_route") ?: return
+        val title = intent.getStringExtra("notification_title") ?: "Tunas"
+        val body = intent.getStringExtra("notification_body") ?: ""
+        val payload = JSONObject()
+            .put("route", route)
+            .put("title", title)
+            .put("body", body)
+            .put("id", intent.getIntExtra("notification_id", 0))
+        val map = mapOf(
+            "route" to route,
+            "title" to title,
+            "body" to body,
+            "id" to intent.getIntExtra("notification_id", 0),
+        )
+        val sink = notificationSink
+        if (notificationListening && sink != null) {
+            sink.success(map)
+            getSharedPreferences("moss_notifications", MODE_PRIVATE)
+                .edit()
+                .remove("launch")
+                .apply()
+        } else {
+            getSharedPreferences("moss_notifications", MODE_PRIVATE)
+                .edit()
+                .putString("launch", payload.toString())
+                .apply()
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         NotificationHelper.createChannels(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/update_progress")
             .setStreamHandler(UpdateProgressEvents)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/notification_taps")
+            .setStreamHandler(
+                object : EventChannel.StreamHandler {
+                    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                        notificationSink = events
+                        notificationListening = true
+                    }
+
+                    override fun onCancel(arguments: Any?) {
+                        notificationSink = null
+                        notificationListening = false
+                    }
+                },
+            )
         val appearance = getSharedPreferences("moss_appearance", MODE_PRIVATE)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/appearance")
             .setMethodCallHandler { call, result ->
@@ -105,12 +166,28 @@ class MainActivity : FlutterActivity() {
                         val body = call.argument<String>("body")
                         val channel = call.argument<String>("channel")
                             ?: NotificationHelper.CHANNEL_ALERTS
+                        val route = call.argument<String>("route")
+                        val payload = call.argument<String>("payload")
                         if (id == null || title == null || body == null) {
                             result.error("invalid", "Notification payload is invalid.", null)
                         } else {
-                            NotificationHelper.show(this, id, title, body, channel)
+                            NotificationHelper.show(
+                                this,
+                                id,
+                                title,
+                                body,
+                                channel,
+                                route,
+                                payload,
+                            )
                             result.success(null)
                         }
+                    }
+                    "takeLaunch" -> {
+                        val prefs = getSharedPreferences("moss_notifications", MODE_PRIVATE)
+                        val launch = prefs.getString("launch", null)
+                        prefs.edit().remove("launch").apply()
+                        result.success(launch)
                     }
                     "schedule" -> {
                         val id = call.argument<Int>("id")
@@ -119,8 +196,10 @@ class MainActivity : FlutterActivity() {
                         val channel = call.argument<String>("channel")
                             ?: NotificationHelper.CHANNEL_PREDICTIONS
                         val intervalMinutes = call.argument<Int>("intervalMinutes")
+                        val route = call.argument<String>("route")
+                        val payload = call.argument<String>("payload")
                         if (id == null || title == null || body == null ||
-                            intervalMinutes == null || intervalMinutes < 30
+                            intervalMinutes == null || intervalMinutes < 5
                         ) {
                             result.error("invalid", "Schedule payload is invalid.", null)
                         } else {
@@ -129,6 +208,8 @@ class MainActivity : FlutterActivity() {
                                 putExtra("title", title)
                                 putExtra("body", body)
                                 putExtra("channel", channel)
+                                if (route != null) putExtra("route", route)
+                                if (payload != null) putExtra("payload", payload)
                             }
                             val pending = PendingIntent.getBroadcast(
                                 this,
@@ -153,6 +234,8 @@ class MainActivity : FlutterActivity() {
                         val body = call.argument<String>("body")
                         val channel = call.argument<String>("channel")
                             ?: NotificationHelper.CHANNEL_PREDICTIONS
+                        val route = call.argument<String>("route")
+                        val payload = call.argument<String>("payload")
                         if (id == null || title == null || body == null) {
                             result.error("invalid", "Notification payload is invalid.", null)
                         } else {
@@ -161,6 +244,8 @@ class MainActivity : FlutterActivity() {
                                 putExtra("title", title)
                                 putExtra("body", body)
                                 putExtra("channel", channel)
+                                if (route != null) putExtra("route", route)
+                                if (payload != null) putExtra("payload", payload)
                             }
                             // Update the extras without resetting the repeating
                             // alarm's next-fire time.

@@ -215,6 +215,13 @@ class DevicesPage extends StatelessWidget {
           Text('Pompa: ${_commandText(state.pumpCommand)}'),
           if (state.pumpReason != null)
             Text('Alasan pompa: ${_pumpReasonText(state.pumpReason)}'),
+          if ((state.pumpCooldownSeconds ?? 0) > 0)
+            Text(
+              state.pumpRuntimeLockout == true
+                  ? 'Jeda otomatis: ${_cooldownText(state.pumpCooldownSeconds!)} '
+                        '(setelah batas 5 menit)'
+                  : 'Jeda pompa: ${_cooldownText(state.pumpCooldownSeconds!)}',
+            ),
           Text('Lampu: ${_commandText(state.lightCommand)}'),
           if (state.lightReason != null)
             Text('Alasan lampu: ${_lightReasonText(state.lightReason)}'),
@@ -231,6 +238,13 @@ class DevicesPage extends StatelessWidget {
       : value
       ? 'ON diminta'
       : 'OFF diminta';
+
+  String _cooldownText(int seconds) {
+    final minutes = seconds ~/ 60;
+    final rest = seconds % 60;
+    if (minutes <= 0) return '$rest dtk';
+    return rest == 0 ? '$minutes mnt' : '$minutes mnt $rest dtk';
+  }
 
   String _pumpReasonText(String? value) => switch (value) {
     'boot_grace' => 'menunggu setelah dinyalakan',

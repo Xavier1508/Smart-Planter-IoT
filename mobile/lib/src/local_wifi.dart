@@ -61,9 +61,15 @@ class LocalWifiController {
     if (socket == null || _disposed) return false;
     try {
       socket.write('$line\n');
-      await socket.flush();
+      await socket.flush().timeout(const Duration(seconds: 3));
+      lastCommandError = null;
       return true;
+    } on TimeoutException {
+      lastCommandError = 'timeout';
+      _fail(_generation, 'Perintah timeout; koneksi terputus.');
+      return false;
     } catch (_) {
+      lastCommandError = 'socket';
       _fail(_generation, 'Perintah gagal dikirim; koneksi terputus.');
       return false;
     }

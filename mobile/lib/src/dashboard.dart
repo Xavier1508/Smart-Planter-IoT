@@ -96,8 +96,8 @@ class _DashboardState extends State<Dashboard> {
   LocalWifiStatus _lastNoticeStatus = LocalWifiStatus.disconnected;
   DateTime? _lastWaterAlertAt;
   DateTime? _lastPredictionScheduleAt;
-  String? _lastPredictionBody;
-  bool _predictionScheduled = false;
+  PlantEmotion? _lastInsightEmotion;
+  StreamSubscription<NotificationPayload>? _notificationSub;
 
   @override
   void initState() {
@@ -107,8 +107,13 @@ class _DashboardState extends State<Dashboard> {
     _loadSchedules();
     _loadProfiles();
     _loadEmotionModel();
+    _notificationSub = _notifications.taps.listen(_handleNotificationPayload);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_notifications.requestPermission());
+      if (mounted) {
+        unawaited(_notifications.requestPermission());
+        unawaited(_notifications.cancel(NotificationService.predictionId));
+        unawaited(_handleNotificationLaunch());
+      }
     });
     _scheduleTimer = Timer.periodic(
       const Duration(seconds: 1),
@@ -263,7 +268,7 @@ class _DashboardState extends State<Dashboard> {
       final emotion = PlantEmotionEngine(_emotionModel)
           .evaluate(state, recent: _recentStates());
       _maybeNotifyLowWater(state, now);
-      _maybeSchedulePrediction(now, emotion);
+      _maybeShowInsight(now, emotion);
       unawaited(
         _historyService.append(
           deviceId: _profiles.active.id,
@@ -290,6 +295,48 @@ class _DashboardState extends State<Dashboard> {
             .toList()
       : _history.map((point) => point.state).toList();
 
+  Future<void> _handleNotificationLaunch() async {
+    final payload = await _notifications.takeLaunch();
+    if (payload != null && mounted) _handleNotificationPayload(payload);
+  }
+
+  void _handleNotificationPayload(NotificationPayload payload) {
+    if (!mounted) return;
+    final page = switch (payload.route) {
+      'devices' => 2,
+      'journal' => 1,
+      _ => 0,
+    };
+    setState(() => _page = page);
+    if (payload.body.trim().isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (payload.route == 'home') {
+        showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(payload.title),
+            content: SingleChildScrollView(child: Text(payload.body)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Tutup'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        showTopNotice(
+          context,
+          title: payload.title,
+          message: payload.body,
+          icon: Icons.notifications_active_outlined,
+          duration: const Duration(seconds: 6),
+        );
+      }
+    });
+  }
+
   void _maybeNotifyLowWater(PlantState state, DateTime now) {
     final level = state.waterLevel;
     final empty = level == WaterLevel.empty;
@@ -315,42 +362,40 @@ class _DashboardState extends State<Dashboard> {
             ? 'Level air kosong. Isi ulang penampung.'
             : 'Level air $label. Isi ulang penampung.',
         channel: 'tunas_alerts',
+        route: 'devices',
+        payload: empty
+            ? 'Air penampung kosong. Isi ulang penampung.'
+            : 'Air penampung $label. Isi ulang penampung.',
       ),
     );
   }
 
-  void _maybeSchedulePrediction(DateTime now, EmotionReading emotion) {
+  void _maybeShowInsight(DateTime now, EmotionReading emotion) {
     if (!emotion.available) return;
-    final body =
-        '${emotion.emotion.label}: ${emotion.signal} ${emotion.prediction}';
-    if (body == _lastPredictionBody) return;
+    final escalated =
+        emotion.emotion == PlantEmotion.alert &&
+        _lastInsightEmotion != PlantEmotion.alert;
     final last = _lastPredictionScheduleAt;
-    if (last != null && now.difference(last) < const Duration(minutes: 10)) {
+    if (!escalated &&
+        last != null &&
+        now.difference(last) < const Duration(minutes: 5)) {
       return;
     }
-    _lastPredictionBody = body;
     _lastPredictionScheduleAt = now;
-    if (!_predictionScheduled) {
-      _predictionScheduled = true;
-      unawaited(
-        _notifications.schedule(
-          id: NotificationService.predictionId,
-          title: 'Prediksi tanaman',
-          body: body,
-          intervalMinutes: 180,
-          channel: 'tunas_predictions',
-        ),
-      );
-    } else {
-      unawaited(
-        _notifications.update(
-          id: NotificationService.predictionId,
-          title: 'Prediksi tanaman',
-          body: body,
-          channel: 'tunas_predictions',
-        ),
-      );
-    }
+    _lastInsightEmotion = emotion.emotion;
+    final body = '${emotion.signal} ${emotion.prediction}'.trim();
+    unawaited(
+      _notifications.show(
+        id: NotificationService.insightId,
+        title: 'Tunas · ${emotion.emotion.label}',
+        body: body,
+        channel: emotion.emotion == PlantEmotion.alert
+            ? 'tunas_alerts'
+            : 'tunas_predictions',
+        route: 'home',
+        payload: body,
+      ),
+    );
   }
 
   Future<void> _saveProfile(DeviceProfile profile) async {
@@ -705,6 +750,8 @@ class _DashboardState extends State<Dashboard> {
     if (_ownsLocalWifi) _localWifi.dispose();
     final subscription = _subscription;
     if (subscription != null) unawaited(subscription.cancel());
+    final notificationSub = _notificationSub;
+    if (notificationSub != null) unawaited(notificationSub.cancel());
     super.dispose();
   }
 
@@ -876,6 +923,13 @@ class _Home extends StatelessWidget {
 
   String _percent(int? value) => value == null ? '—' : '$value%';
 
+  String _lockoutText(int seconds) {
+    final minutes = seconds ~/ 60;
+    final rest = seconds % 60;
+    if (minutes <= 0) return '$rest dtk';
+    return rest == 0 ? '$minutes mnt' : '$minutes mnt $rest dtk';
+  }
+
   void _stepSky({required bool next}) =>
       onSkyChanged(SkyChoice.step(selectedSky, sky.hour, next: next));
 
@@ -952,6 +1006,44 @@ class _Home extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
                 _Notice(live: state.isLive, sourceNotice: sourceNotice),
+                if ((state.pumpCooldownSeconds ?? 0) > 0) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3D6),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.timer_outlined,
+                          size: 18,
+                          color: Color(0xFF8A5A12),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            state.pumpRuntimeLockout == true
+                                ? 'Pompa otomatis dikunci '
+                                      '${_lockoutText(state.pumpCooldownSeconds!)} '
+                                      'setelah batas 5 menit. Manual ON tetap '
+                                      'bisa 1–30 detik.'
+                                : 'Pompa jeda '
+                                      '${_lockoutText(state.pumpCooldownSeconds!)} '
+                                      'sebelum otomatis menyala lagi.',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              height: 1.4,
+                              color: Color(0xFF6B4610),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 14),
                 MossSky(
                   sky: sky,

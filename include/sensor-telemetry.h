@@ -451,6 +451,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
         "\"off_at_or_above_adc\":%d,\"basis\":\"averaged_adc_unverified\"},"
        "\"control_preview\":%s,"
       "\"relay_control\":\"%s\",\"pump_cmd\":%s,\"pump_reason\":\"%s\","
+      "\"pump_cooldown_s\":%lu,\"pump_runtime_lockout\":%s,"
       "\"growlight_cmd\":%s,\"growlight_reason\":\"%s\","
       "\"pump_gpio_level_requested\":%s,\"growlight_gpio_level_requested\":%s,"
       "\"pump_state\":null,"
@@ -479,6 +480,8 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
       control ? "automatic_requested" : "inactive_requested",
       control ? jsonPreviewBoolean(control->pumpOn ? 1 : 0) : "null",
       control ? control->pumpReason : "not_available",
+      static_cast<unsigned long>(control ? control->pumpCooldownRemainingS : 0),
+      control && control->pumpRuntimeLockout ? "true" : "false",
       control ? jsonPreviewBoolean(control->lightOn ? 1 : 0) : "null",
       control ? control->lightReason : "not_available",
       !control ? "null" : (relayLevel(kPumpActiveLow, control->pumpOn)

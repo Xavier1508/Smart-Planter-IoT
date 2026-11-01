@@ -248,7 +248,7 @@ int main() {
   assert(planter::kSoilAdcReadEnabled);
   assert(planter::kLightAutomationEnabled);
   assert(planter::kPumpAllowEstimatedSoil);
-  assert(planter::kFirmwareVersion == 30);
+  assert(planter::kFirmwareVersion == 31);
 
   // Bounded manual-control protocol.
   auto control = planter::parseControlLine("CTRL pump=on dur=5 id=12");
@@ -954,7 +954,7 @@ int main() {
                              "\"adc_calibration_source\":\"efuse_vref\"") != nullptr);
   assert(std::strstr(output, "\"environment_compensation\":\"not_applied\"") != nullptr);
   assert(std::strstr(output, "\"observation_label\":null") != nullptr);
-  assert(std::strstr(output, "\"firmware_version\":30") != nullptr);
+  assert(std::strstr(output, "\"firmware_version\":31") != nullptr);
   char expectedSoilScale[96];
   std::snprintf(expectedSoilScale, sizeof(expectedSoilScale),
                 "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d",
@@ -1095,19 +1095,19 @@ int main() {
   SensorSnapshot rawReferenceFixture = valid;
   rawReferenceFixture.waterAdcRaw = planter::kWaterLowRawReferenceAdc;
   assert(formatTelemetry(rawReferenceFixture, output, sizeof(output), &reported));
-  assert(std::strstr(output, "\"relative_percent\":null,\"low\":true,\"empty\":false") != nullptr);
+  assert(std::strstr(output, "\"low\":true,\"empty\":false") != nullptr);
+  assert(std::strstr(output, "\"control_band\":\"below_threshold\"") != nullptr);
   assert(std::strstr(output, "\"band\":\"at_or_below_low\"") != nullptr);
   assert(std::strstr(output, "\"pump_cmd\":false") != nullptr);
-  assert(planter::previewRules(rawReferenceFixture).waterPercent == 0);
+  assert(planter::previewRules(rawReferenceFixture).waterPercent >= 0);
 
-  // A reported near-empty range remains below the pump safety threshold, but
-  // the low-reference scale must not be presented as an empty-tank percentage.
-  for (const int raw : {700, 750, 800}) {
+  // Raw values below the pump guard are LOW on the display and block the pump.
+  for (const int raw : {500, 550, 590}) {
     SensorSnapshot almostEmpty = trialSample;
     almostEmpty.waterAdcRaw = raw;
     const planter::RulePreview nearEmptyPreview = planter::previewRules(almostEmpty);
-    assert(nearEmptyPreview.waterPercent == 0 && nearEmptyPreview.waterLow == 1);
-    assert(planter::waterDisplayRelativePercent(nearEmptyPreview.waterPercent) == -1);
+    assert(nearEmptyPreview.waterPercent > 0 && nearEmptyPreview.waterLow == 1);
+    assert(planter::waterDisplayRelativePercent(nearEmptyPreview.waterPercent) > 0);
     assert(std::strcmp(planter::waterControlBandName(nearEmptyPreview.waterPercent, almostEmpty.waterAdcRaw),
                        "below_threshold") == 0);
     char lcdWater[17];
@@ -1117,6 +1117,7 @@ int main() {
     lowTank.begin(0);
     planter::ControlInput dryInput = convertedTrial;
     dryInput.soilAdcRaw = 20;
+    dryInput.waterAdcRaw = raw;
     dryInput.waterPercent = nearEmptyPreview.waterPercent;
     lowTank.accept(5000, dryInput);
     assert(!lowTank.status().pumpOn);
@@ -1124,12 +1125,11 @@ int main() {
     const planter::ControlStatus lowStatus = lowTank.status();
     almostEmpty.uptimeMs = 15000;  // Ordered after the boundary fixtures for loopback.
     assert(formatTelemetry(almostEmpty, output, sizeof(output), &lowStatus));
-    assert(std::strstr(output, "\"relative_percent\":null,\"low\":true,\"empty\":false") != nullptr);
+    assert(std::strstr(output, "\"low\":true,\"empty\":false") != nullptr);
     assert(std::strstr(output, "\"control_band\":\"below_threshold\"") != nullptr);
-    assert(std::strstr(output, "\"observation_scale\":{\"relative_percent\":null") != nullptr);
     assert(std::strstr(output, "\"pump_cmd\":false,\"pump_reason\":\"water_low\"") != nullptr);
     assert(std::strstr(output, "\"pump_gpio_level_requested\":\"HIGH\"") != nullptr);
-    if (raw == 750) std::cout << "TEST_FIXTURE " << output << '\n';
+    if (raw == 550) std::cout << "TEST_FIXTURE " << output << '\n';
   }
 
   SensorSnapshot emptyTank = trialSample;
@@ -1153,9 +1153,10 @@ int main() {
   // rail independently prevent ON; restoring the water input alone is not enough.
   SensorSnapshot bothBlocked = trialSample;
   bothBlocked.soilAdcRaw = -1;
-  bothBlocked.waterAdcRaw = 750;
+  bothBlocked.waterAdcRaw = 550;
   planter::ControlInput blockedInput = convertedTrial;
   blockedInput.soilAdcRaw = bothBlocked.soilAdcRaw;
+  blockedInput.waterAdcRaw = bothBlocked.waterAdcRaw;
   blockedInput.waterPercent = planter::previewRules(bothBlocked).waterPercent;
   planter::RelayController bothBlockedControl;
   bothBlockedControl.begin(0);
@@ -1168,6 +1169,7 @@ int main() {
   assert(std::strstr(output, "\"control_band\":\"below_threshold\"") != nullptr);
   assert(std::strstr(output, "\"pump_gpio_level_requested\":\"HIGH\"") != nullptr);
   blockedInput.waterPercent = 80;
+  blockedInput.waterAdcRaw = 900;
   bothBlockedControl.accept(10000, blockedInput);
   assert(!bothBlockedControl.status().pumpOn);
   assert(std::strcmp(bothBlockedControl.status().pumpReason, "soil_unavailable") == 0);
@@ -1177,8 +1179,9 @@ int main() {
   assert(planter::waterDisplayRelativePercent(100) == 100);
   assert(planter::waterDisplayRelativePercent(101) == -1);
   assert(std::strcmp(planter::waterControlBandName(-1, -1), "unavailable") == 0);
-  assert(std::strcmp(planter::waterControlBandName(19, 900), "at_or_above_threshold") == 0);
-  assert(std::strcmp(planter::waterControlBandName(20, 900), "at_or_above_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(19, 900), "below_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(20, 900), "below_threshold") == 0);
+  assert(std::strcmp(planter::waterControlBandName(20, 951), "at_or_above_threshold") == 0);
   assert(std::strcmp(planter::waterControlBandName(20, 800), "below_threshold") == 0);
   assert(std::strcmp(planter::waterControlBandName(0, planter::kWaterEmptyRawReferenceAdc),
                      "empty") == 0);
@@ -1190,6 +1193,8 @@ int main() {
   planter::formatWaterLcd(lcdWater, sizeof(lcdWater), -1, -1);
   assert(std::strcmp(lcdWater, "Water:--") == 0);
   planter::formatWaterLcd(lcdWater, sizeof(lcdWater), 20, 900);
+  assert(std::strcmp(lcdWater, "Water:LOW") == 0);
+  planter::formatWaterLcd(lcdWater, sizeof(lcdWater), 60, 1000);
   assert(std::strcmp(lcdWater, "Water:MED") == 0);
   planter::formatWaterLcd(lcdWater, sizeof(lcdWater), 100,
                           planter::kWaterFullRawReferenceAdc);
@@ -1210,9 +1215,10 @@ int main() {
   assert(planter::observedWaterRelativePercent(rawReferenceFixture) == 50);
   assert(formatTelemetry(rawReferenceFixture, output, sizeof(output), &reported));
   assert(std::strstr(output, "\"observation_scale\":{\"relative_percent\":50,") != nullptr);
-  assert(std::strstr(output, "\"relative_percent\":50,\"low\":false,\"empty\":false") != nullptr);
+  assert(std::strstr(output, "\"relative_percent\":50,\"low\":true,\"empty\":false") != nullptr);
   assert(std::strstr(output, "\"pump_cmd\":false") != nullptr);
   assert(planter::previewRules(rawReferenceFixture).waterPercent == 50);
+  assert(planter::previewRules(rawReferenceFixture).waterLow == 1);
   std::cout << "TEST_FIXTURE " << output << '\n';
   rawReferenceFixture.waterAdcRaw = planter::kWaterObservedNearFullMeanAdc;
   assert(planter::observedWaterRelativePercent(rawReferenceFixture) == 100);

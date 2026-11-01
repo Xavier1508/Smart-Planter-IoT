@@ -42,6 +42,8 @@ class PlantState {
     this.waterLowPreview,
     this.pumpCommand,
     this.pumpReason,
+    this.pumpCooldownSeconds,
+    this.pumpRuntimeLockout,
     this.lightCommand,
     this.lightReason,
     this.lightingCandidate,
@@ -103,6 +105,8 @@ class PlantState {
     waterLowPreview: reading.waterLowPreview,
     pumpCommand: reading.pumpCommand,
     pumpReason: reading.pumpReason,
+    pumpCooldownSeconds: reading.pumpCooldownSeconds,
+    pumpRuntimeLockout: reading.pumpRuntimeLockout,
     lightCommand: reading.lightCommand,
     lightReason: reading.lightReason,
     lightingCandidate: reading.lightingCandidate,
@@ -148,6 +152,8 @@ class PlantState {
     mqGasBaselineMv: mqGasBaselineMv,
     pumpCommand: reading.pumpCommand,
     pumpReason: reading.pumpReason,
+    pumpCooldownSeconds: reading.pumpCooldownSeconds,
+    pumpRuntimeLockout: reading.pumpRuntimeLockout,
     lightCommand: reading.lightCommand,
     lightReason: reading.lightReason,
     lightingCandidate: reading.lightingCandidate,
@@ -187,6 +193,8 @@ class PlantState {
   final bool? waterLowPreview;
   final bool? pumpCommand;
   final String? pumpReason;
+  final int? pumpCooldownSeconds;
+  final bool? pumpRuntimeLockout;
   final bool? lightCommand;
   final String? lightReason;
   final String? lightingCandidate;
@@ -201,8 +209,8 @@ class PlantState {
   int? get mqAdcPercent => adcDisplayPercent(mqAdc);
 
   /// Raw-ADC display buckets from the device's reported water span. The
-  /// sensor is a level strip, not a calibrated tank-volume gauge: LOW is a
-  /// warning at or below 800 ADC, MEDIUM is 801-1099, and FULL starts at 1100.
+  /// sensor is a level strip, not a calibrated tank-volume gauge: EMPTY at or
+  /// below 450, LOW through 950, MEDIUM 951-1349, and FULL at 1350 or above.
   /// The firmware's own `low` flag stays authoritative so a flagged low tank
   /// can never be shown as full.
   WaterLevel? get waterLevel {
@@ -212,8 +220,8 @@ class PlantState {
     if (raw == null || raw <= 0 || raw >= 4095) return null;
     if (raw <= 450) return WaterLevel.empty;
     if (waterLow == true) return WaterLevel.low;
-    if (raw <= 800) return WaterLevel.low;
-    if (raw < 1100) return WaterLevel.medium;
+    if (raw <= 950) return WaterLevel.low;
+    if (raw < 1350) return WaterLevel.medium;
     return WaterLevel.full;
   }
 

@@ -25,19 +25,19 @@
 #define MOSS_LIGHT_RELATIVE_BRIGHT_ADC 0
 #endif
 #ifndef MOSS_WATER_LOW_REFERENCE_ADC
-#define MOSS_WATER_LOW_REFERENCE_ADC 800
+#define MOSS_WATER_LOW_REFERENCE_ADC 950
 #endif
 #ifndef MOSS_WATER_NEAR_REFERENCE_ADC
-#define MOSS_WATER_NEAR_REFERENCE_ADC 900
+#define MOSS_WATER_NEAR_REFERENCE_ADC 1100
 #endif
 #ifndef MOSS_WATER_OBSERVED_LOW_ADC
-#define MOSS_WATER_OBSERVED_LOW_ADC 800
+#define MOSS_WATER_OBSERVED_LOW_ADC 450
 #endif
 #ifndef MOSS_WATER_OBSERVED_NEAR_FULL_ADC
-#define MOSS_WATER_OBSERVED_NEAR_FULL_ADC 1100
+#define MOSS_WATER_OBSERVED_NEAR_FULL_ADC 1350
 #endif
 #ifndef MOSS_WATER_FULL_REFERENCE_ADC
-#define MOSS_WATER_FULL_REFERENCE_ADC 1100
+#define MOSS_WATER_FULL_REFERENCE_ADC 1350
 #endif
 #ifndef MOSS_SOIL_ZERO_IS_DRY
 #define MOSS_SOIL_ZERO_IS_DRY 0
@@ -46,7 +46,7 @@
 
 namespace planter {
 
-constexpr unsigned kFirmwareVersion = 30;
+constexpr unsigned kFirmwareVersion = 31;
 
 // Historical project assignments, not a verified wiring diagram.
 constexpr int kDhtPin = 4;

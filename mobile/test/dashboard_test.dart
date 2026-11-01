@@ -298,7 +298,7 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('44%'), findsOneWidget);
-      expect(find.text('Full'), findsOneWidget);
+      expect(find.text('Medium'), findsOneWidget);
       expect(find.text('ADC 1200'), findsOneWidget);
       expect(find.text('UV'), findsOneWidget);
       expect(find.text('~0%'), findsOneWidget);

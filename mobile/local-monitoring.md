@@ -40,7 +40,7 @@ rendah harus bertahan **6 sampel (30 detik)** sebelum pompa yang sedang berjalan
 dihentikan. Saat pompa mati, satu sampel air rendah langsung memblokir start
 berikutnya. ADC 4095 atau data tidak tersedia menghalangi ON. Tanah kering
 terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan 1200 ≈ 67%. Air memakai bucket
-raw **≤450 EMPTY, ≤800 LOW, 801–1099 MEDIUM, ≥1100 FULL**; pompa tetap memakai
+raw **≤450 EMPTY, 451–950 LOW, 951–1349 MEDIUM, ≥1350 FULL**; pompa tetap memakai
 cutoff raw 600. Semua input ADC memakai median 5 sampel.
 
 Firmware v25 menambahkan **relay staging**: jika pompa dan lampu harus ON
@@ -58,15 +58,18 @@ password acak 10 karakter, bukan mematikan AP. Status AP dicetak ke serial.
 Aplikasi 0.4.1 menambahkan notifikasi HP untuk air rendah dan ringkasan prediksi
 setiap 3 jam, plus pop-up singkat di atas layar saat koneksi terputus.
 
-Firmware v30 memakai bucket air raw **EMPTY/LOW/MED/FULL**, flag `low` pada
-raw ≤800, dan pompa cutoff raw 600. Pindah dari manual ON ke AUTO langsung
-mengevaluasi sampel terakhir, dan client TCP setengah terbuka dibuang.
-Aplikasi **Tunas 0.6.0** menambahkan dialog durasi wajib sebelum ON, wizard
-jadwal (Sekarang atau kalender + jam + menit + detik, lalu durasi, lalu
-konfirmasi), daftar aksi berurutan dengan hitungan mundur dan pembatalan,
-eksekusi satu job per tick, histori CSV harian permanen, ekspor CSV ke
-`Downloads/Tunas`, serta model decision tree 3 kelas dengan deteksi banjir.
-CSV menyimpan semua angka sensor dan perintah untuk retraining model.
+Firmware v31 memakai bucket air raw **EMPTY/LOW/MED/FULL** dengan batas
+450/950/1350, flag `low` pada raw ≤950, dan pompa cutoff raw 600. Telemetry
+membawa `pump_cooldown_s` dan `pump_runtime_lockout`; LCD menampilkan
+`LOCK <menit>` saat pompa kena soak 30 menit setelah batas 5 menit. Pindah dari
+manual ON ke AUTO langsung mengevaluasi sampel terakhir, dan client TCP
+setengah terbuka dibuang.
+Aplikasi **Tunas 0.7.0** menambahkan dialog durasi wajib sebelum ON, wizard
+jadwal, daftar aksi berurutan dengan hitungan mundur, histori CSV, ekspor ke
+`Downloads/Tunas`, notifikasi analisis maksimal tiap 5 menit dengan tap ke app,
+serta model holistic 6 kelas (healthy/watch/dry/wet/heat/air) dari 12 fitur dan
+pola sensor nyata. CSV menyimpan semua angka sensor dan perintah untuk
+retraining model.
 
 Halaman **Perangkat** menyediakan kendali manual pompa/lampu lewat socket lokal
 yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; lampu
@@ -82,8 +85,9 @@ profil/karakter pertama. Sampai enam profil planter dapat didaftarkan dengan
 nama, karakter, alamat IP/host, dan port sendiri; tombol hubungkan/putuskan
 memindahkan sesi aktif. Tiga karakter memakai rig yang sama dengan palet,
 aksesori, dan tempo gerak berbeda: Moss (daun), Bara (topi), Rintik (awan).
-Emosi karakter ditentukan di ponsel; versi 0.6.0 memakai decision tree 3 kelas
-(healthy/warning/critical) dengan pengaman aturan ambang. Riwayat kini
+Emosi karakter ditentukan di ponsel; versi 0.7.0 memakai decision tree 6 kelas
+(healthy/watch/dry/wet/heat/air) dengan skor 0–100 dan faktor per aspek, bukan
+hanya kelembapan. Riwayat kini
 append-only CSV per perangkat, bukan hanya sesi. Firmware masih mode AP, jadi
 beberapa ESP32 baru bisa berada di satu jaringan setelah mode STA ditambahkan;
 alamat profil sudah bisa diedit untuk tahap itu.

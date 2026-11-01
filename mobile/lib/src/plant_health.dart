@@ -1,13 +1,13 @@
 import 'dart:convert';
 
-/// A compact decision tree trained offline by
-/// `tools/ml/train-plant-health.py`. It outputs three presentation classes:
-/// healthy, warning, critical. The model is a demo trained on synthetic
-/// agronomic bands, not a validated plant-health diagnosis.
+/// A compact holistic decision tree trained offline by
+/// `tools/ml/train-plant-health.py`. It combines agronomic scenarios with
+/// observed sensor patterns. It is a presentation model, not a validated
+/// plant-health diagnosis or an actuator command.
 class PlantHealthModel {
   PlantHealthModel._(this._tree);
 
-  static const schema = 'tunas-plant-health-tree-v1';
+  static const schema = 'tunas-plant-health-tree-v2';
   static const features = <String>[
     'soil_percent',
     'water_percent',
@@ -17,8 +17,27 @@ class PlantHealthModel {
     'uv_index',
     'mq_gas_index',
     'soil_water_interaction',
+    'soil_trend',
+    'water_trend',
+    'pump_lockout',
+    'sensor_count',
   ];
-  static const classes = <String>['healthy', 'warning', 'critical'];
+  static const classes = <String>[
+    'healthy',
+    'watch',
+    'dry',
+    'wet',
+    'heat',
+    'air',
+  ];
+  static const displayLabels = <String, String>{
+    'healthy': 'Optimal',
+    'watch': 'Pantau',
+    'dry': 'Kekeringan',
+    'wet': 'Kelebihan air',
+    'heat': 'Tekanan panas',
+    'air': 'Udara buruk',
+  };
 
   final _HealthNode _tree;
 
@@ -27,7 +46,7 @@ class PlantHealthModel {
     final decoded = jsonDecode(input);
     if (decoded is! Map<String, dynamic> ||
         decoded['schema'] != schema ||
-        decoded['training_data'] != 'synthetic_agronomic_bands_v1' ||
+        decoded['training_data'] != 'synthetic_plus_observed_patterns_v2' ||
         decoded['not_for_plant_health_or_relay_control'] != true ||
         !_sameStrings(decoded['features'], features) ||
         !_sameStrings(decoded['classes'], classes)) {
@@ -44,6 +63,10 @@ class PlantHealthModel {
     double? humidityPercent,
     double? uvIndex,
     int? mqGasIndex,
+    int soilTrend = 0,
+    int waterTrend = 0,
+    bool pumpLockout = false,
+    int sensorCount = 3,
   }) {
     bool validPercent(int? value) =>
         value != null && value >= 0 && value <= 100;
@@ -82,6 +105,10 @@ class PlantHealthModel {
       uv,
       gas,
       soilPercent * waterPercent / 100.0,
+      soilTrend.clamp(-100, 100).toDouble(),
+      waterTrend.clamp(-100, 100).toDouble(),
+      pumpLockout ? 1 : 0,
+      sensorCount.clamp(0, 3).toDouble(),
     ];
     var node = _tree;
     for (var depth = 0; depth < 32 && node.feature != null; depth++) {
@@ -146,6 +173,8 @@ class PlantHealthPrediction {
   final String label;
   final double confidence;
   final List<double> scores;
+
+  String get displayLabel => PlantHealthModel.displayLabels[label] ?? label;
 }
 
 class _HealthNode {

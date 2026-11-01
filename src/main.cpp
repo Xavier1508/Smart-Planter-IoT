@@ -163,15 +163,20 @@ void sendControlAck(const planter::ControlCommand& command, bool ok,
   const uint32_t nowMs = millis();
   const uint32_t remainingS =
       (relayController.pumpManualRemainingMs(nowMs) + 999) / 1000;
+  const uint32_t lockoutS =
+      (relayController.pumpCooldownRemainingMs(nowMs) + 999) / 1000;
   snprintf(ack, sizeof(ack),
            "{\"type\":\"ack\",\"id\":%lu,\"ok\":%s,\"error\":%s,"
            "\"pump_manual\":%s,\"pump_on\":%s,\"pump_remaining_s\":%lu,"
+           "\"pump_cooldown_s\":%lu,\"pump_runtime_lockout\":%s,"
            "\"light_manual\":%s,\"light_on\":%s}",
            command.id, ok ? "true" : "false",
            error == nullptr ? "null" : error,
            relayController.pumpManual() ? "true" : "false",
            status.pumpOn ? "true" : "false",
            static_cast<unsigned long>(remainingS),
+           static_cast<unsigned long>(lockoutS),
+           relayController.pumpRuntimeLockout() ? "true" : "false",
            relayController.lightManual() ? "true" : "false",
            status.lightOn ? "true" : "false");
   sendLocalLine(ack);
@@ -392,7 +397,19 @@ void updateLcd(const planter::SensorSnapshot& sample,
         : planter::PumpSoilBand::unavailable;
     snprintf(first, sizeof(first), "P:%s cmd %s", control.pumpOn ? "ON" : "OFF",
              planter::pumpSoilBandLcd(soilBand));
-    snprintf(second, sizeof(second), "L:%s cmd", control.lightOn ? "ON" : "OFF");
+    if (!control.pumpOn && control.pumpCooldownRemainingS > 0) {
+      if (control.pumpRuntimeLockout) {
+        const unsigned long minutes =
+            (control.pumpCooldownRemainingS + 59) / 60;
+        snprintf(second, sizeof(second), "LOCK %lum", minutes);
+      } else {
+        snprintf(second, sizeof(second), "WAIT %lus",
+                 static_cast<unsigned long>(control.pumpCooldownRemainingS));
+      }
+    } else {
+      snprintf(second, sizeof(second), "L:%s cmd",
+               control.lightOn ? "ON" : "OFF");
+    }
   } else if (localWifiReady) {
     // The password is shown only on the physical LCD, not serial or telemetry.
     snprintf(first, sizeof(first), "%s", localWifiName);
@@ -455,7 +472,10 @@ void printSample(uint32_t nowMs) {
   hasControlInput = true;
   relayController.accept(sample.uptimeMs, input);
   syncRelayCommands();
-  const planter::ControlStatus control = relayController.status();
+  planter::ControlStatus control = relayController.status();
+  control.pumpRuntimeLockout = relayController.pumpRuntimeLockout();
+  control.pumpCooldownRemainingS =
+      (relayController.pumpCooldownRemainingMs(sample.uptimeMs) + 999) / 1000;
 
   // Avoid placing the entire network frame on the ESP32 loop task's stack.
   static char output[3072];

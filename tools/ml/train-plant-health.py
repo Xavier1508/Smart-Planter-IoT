@@ -1,92 +1,141 @@
 #!/usr/bin/env python3
-"""Train a compact 3-class plant-condition decision tree (standard library only).
+"""Train a compact holistic plant-condition tree (standard library only).
 
-Synthetic labels deliberately cover flood/overwatering, drought, heat and gas
-extremes. This is a demo model, not agronomic validation. The CSV export from
-Tunas uses the same feature names so the tree can be retrained on measured rows.
+The training set combines balanced agronomic scenarios with a small fixture of
+real sensor patterns extracted from local logs. It is a presentation model, not
+a validated agronomic diagnosis or a relay controller.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import random
 from pathlib import Path
 
-FEATURES = [
-    "soil_percent",
-    "water_percent",
-    "light_percent",
-    "temperature_c",
-    "humidity_percent",
-    "uv_index",
-    "mq_gas_index",
-    "soil_water_interaction",
-]
-CLASSES = ["healthy", "warning", "critical"]
-SCHEMA = "tunas-plant-health-tree-v1"
-
-
-def features_for(soil: float, water: float, light: float, temp: float,
-                 humidity: float, uv: float, gas: float) -> list[float]:
-    return [soil, water, light, temp, humidity, uv, gas, soil * water / 100.0]
-
-
-def label_for(soil: float, water: float, light: float, temp: float,
-              humidity: float, uv: float, gas: float) -> int:
-    flood = soil >= 85.0 and water >= 75.0
-    drought = soil < 18.0 or water < 8.0
-    heat = temp >= 40.0 or temp <= 6.0
-    gas_critical = gas >= 85.0
-    if flood or drought or heat or gas_critical:
-        return 2
-    if (soil < 35.0 or soil >= 78.0 or water < 25.0 or water >= 88.0
-            or temp >= 34.0 or temp <= 12.0 or gas >= 65.0 or light < 8.0):
-        return 1
-    return 0
+from plant_health_common import (
+    CLASSES,
+    FEATURES,
+    SCHEMA,
+    TRAINING_DATA,
+    features_for,
+    label_for,
+)
 
 
 def candidate_row(rng: random.Random) -> tuple[list[float], int]:
-    soil = rng.uniform(0.0, 100.0)
-    water = rng.uniform(0.0, 100.0)
-    light = rng.uniform(0.0, 100.0)
-    temp = rng.uniform(6.0, 43.0)
-    humidity = rng.uniform(20.0, 95.0)
-    uv = rng.uniform(0.0, 14.0)
-    gas = rng.uniform(0.0, 100.0)
-    roll = rng.random()
-    if roll < 0.14:
-        soil = rng.uniform(85.0, 100.0)
-        water = rng.uniform(75.0, 100.0)
-    elif roll < 0.28:
-        soil = rng.uniform(0.0, 22.0)
-        water = rng.uniform(0.0, 35.0)
-    elif roll < 0.38:
-        temp = rng.uniform(38.0, 45.0)
-        humidity = rng.uniform(20.0, 50.0)
-    elif roll < 0.48:
+    soil = rng.uniform(42.0, 78.0)
+    water = rng.uniform(35.0, 86.0)
+    light = rng.uniform(22.0, 82.0)
+    temp = rng.uniform(19.0, 30.0)
+    humidity = rng.uniform(42.0, 76.0)
+    uv = rng.uniform(2.0, 9.0)
+    gas = rng.uniform(0.0, 52.0)
+    soil_trend = rng.uniform(-3.0, 3.0)
+    water_trend = rng.uniform(-4.0, 4.0)
+    pump_lockout = 0
+    sensor_count = 3
+    scenario = rng.choices(
+        ["healthy", "watch", "dry", "wet", "heat", "air"],
+        weights=[28, 24, 16, 12, 12, 8],
+    )[0]
+    if scenario == "watch":
+        target = rng.choice(
+            ["soil_low", "soil_high", "water_low", "temp", "humidity", "gas", "light", "trend"]
+        )
+        if target == "soil_low":
+            soil = rng.uniform(29.0, 38.0)
+        elif target == "soil_high":
+            soil = rng.uniform(85.0, 90.0)
+        elif target == "water_low":
+            water = rng.uniform(18.0, 32.0)
+        elif target == "temp":
+            temp = rng.uniform(32.0, 35.0)
+        elif target == "humidity":
+            humidity = rng.uniform(27.0, 35.0)
+        elif target == "gas":
+            gas = rng.uniform(64.0, 76.0)
+        elif target == "light":
+            light = rng.uniform(4.0, 12.0)
+        else:
+            soil_trend = rng.uniform(-12.0, -8.0)
+        if rng.random() < 0.25:
+            pump_lockout = 1
+        if rng.random() < 0.12:
+            sensor_count = 2
+    elif scenario == "dry":
+        soil = rng.uniform(1.0, 22.0)
+        water = rng.uniform(2.0, 32.0)
+        soil_trend = rng.uniform(-20.0, -3.0)
+        if rng.random() < 0.5:
+            pump_lockout = 1
+    elif scenario == "wet":
+        soil = rng.uniform(90.0, 100.0)
+        water = rng.uniform(72.0, 100.0)
+        soil_trend = rng.uniform(0.0, 8.0)
+    elif scenario == "heat":
+        temp = rng.uniform(35.0, 45.0)
+        humidity = rng.uniform(18.0, 46.0)
+        light = rng.uniform(55.0, 100.0)
+    elif scenario == "air":
         gas = rng.uniform(80.0, 100.0)
-    elif roll < 0.58:
-        soil = rng.uniform(35.0, 70.0)
-        water = rng.uniform(40.0, 80.0)
-        temp = rng.uniform(20.0, 30.0)
-        humidity = rng.uniform(45.0, 75.0)
-        gas = rng.uniform(0.0, 45.0)
-        light = rng.uniform(25.0, 80.0)
-        uv = rng.uniform(2.0, 10.0)
-    label = label_for(soil, water, light, temp, humidity, uv, gas)
-    return features_for(soil, water, light, temp, humidity, uv, gas), label
+    label = label_for(
+        soil,
+        water,
+        light,
+        temp,
+        humidity,
+        uv,
+        gas,
+        soil_trend,
+        water_trend,
+        pump_lockout,
+        sensor_count,
+    )
+    return (
+        features_for(
+            soil,
+            water,
+            light,
+            temp,
+            humidity,
+            uv,
+            gas,
+            soil_trend,
+            water_trend,
+            pump_lockout,
+            sensor_count,
+        ),
+        CLASSES.index(label),
+    )
 
 
 def balanced_dataset(total: int, rng: random.Random):
     per_class = total // len(CLASSES)
-    buckets: list[list[tuple[list[float], int]]] = [[], [], []]
+    buckets: list[list[tuple[list[float], int]]] = [[] for _ in CLASSES]
     while any(len(bucket) < per_class for bucket in buckets):
         row = candidate_row(rng)
         if len(buckets[row[1]]) < per_class:
             buckets[row[1]].append(row)
     rows = [row for bucket in buckets for row in bucket]
     rng.shuffle(rows)
+    return rows
+
+
+def load_observed(path: Path) -> list[tuple[list[float], int]]:
+    if not path.exists():
+        return []
+    decoded = json.loads(path.read_text(encoding="utf-8"))
+    rows = []
+    for item in decoded.get("rows", []):
+        features = item.get("features")
+        label = item.get("label")
+        if (
+            isinstance(features, list)
+            and len(features) == len(FEATURES)
+            and all(isinstance(value, (int, float)) for value in features)
+            and label in CLASSES
+        ):
+            rows.append(([float(value) for value in features], CLASSES.index(label)))
     return rows
 
 
@@ -103,7 +152,7 @@ class Node:
 
 
 def class_probabilities(rows) -> list[float]:
-    counts = [0, 0, 0]
+    counts = [0] * len(CLASSES)
     for _, label in rows:
         counts[label] += 1
     total = len(rows)
@@ -114,8 +163,7 @@ def gini(probabilities: list[float]) -> float:
     return 1.0 - sum(value * value for value in probabilities)
 
 
-def build_tree(rows, depth: int, max_depth: int,
-               min_samples: int) -> Node:
+def build_tree(rows, depth: int, max_depth: int, min_samples: int) -> Node:
     probabilities = class_probabilities(rows)
     if depth >= max_depth or len(rows) < min_samples or max(probabilities) >= 0.98:
         return Node(probabilities=probabilities)
@@ -138,8 +186,10 @@ def build_tree(rows, depth: int, max_depth: int,
             right = [row for row in rows if row[0][feature] > threshold]
             if len(left) < min_samples or len(right) < min_samples:
                 continue
-            weighted = (len(left) * gini(class_probabilities(left)) +
-                        len(right) * gini(class_probabilities(right))) / len(rows)
+            weighted = (
+                len(left) * gini(class_probabilities(left))
+                + len(right) * gini(class_probabilities(right))
+            ) / len(rows)
             if weighted < best_gini - 1e-6:
                 best_gini = weighted
                 best_feature = feature
@@ -159,8 +209,7 @@ def build_tree(rows, depth: int, max_depth: int,
 def predict(node: Node, features: list[float]) -> tuple[int, float]:
     while node.probabilities is None:
         node = node.left if features[node.feature] <= node.threshold else node.right
-    best = max(range(len(CLASSES)),
-               key=lambda index: node.probabilities[index])
+    best = max(range(len(CLASSES)), key=lambda index: node.probabilities[index])
     return best, node.probabilities[best]
 
 
@@ -184,14 +233,18 @@ def count_nodes(node: Node) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="mobile/assets/ml/plant-health.json")
-    parser.add_argument("--rows", type=int, default=18000)
+    parser.add_argument("--real", default="tools/ml/real-patterns.json")
+    parser.add_argument("--rows", type=int, default=24000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-depth", type=int, default=10)
-    parser.add_argument("--min-samples", type=int, default=32)
+    parser.add_argument("--max-depth", type=int, default=12)
+    parser.add_argument("--min-samples", type=int, default=28)
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
-    rows = balanced_dataset(args.rows, rng)
+    synthetic = balanced_dataset(args.rows, rng)
+    observed = load_observed(Path(args.real))
+    rows = synthetic + observed
+    rng.shuffle(rows)
     split = int(len(rows) * 0.85)
     training = rows[:split]
     holdout = rows[split:]
@@ -207,11 +260,13 @@ def main() -> None:
             correct += 1
             per_class_correct[target] += 1
     accuracy = correct / len(holdout)
-    counts = [sum(1 for _, label in rows if label == index)
-              for index in range(len(CLASSES))]
+    counts = [
+        sum(1 for _, label in rows if label == index)
+        for index in range(len(CLASSES))
+    ]
     asset = {
         "schema": SCHEMA,
-        "training_data": "synthetic_agronomic_bands_v1",
+        "training_data": TRAINING_DATA,
         "not_for_plant_health_or_relay_control": True,
         "features": FEATURES,
         "classes": CLASSES,
@@ -219,21 +274,32 @@ def main() -> None:
     }
     output = Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(asset, sort_keys=True, separators=(",", ":")) + "\n",
-                      encoding="utf-8")
-    print(json.dumps({
-        "rows": len(rows),
-        "training": len(training),
-        "holdout": len(holdout),
-        "counts": dict(zip(CLASSES, counts)),
-        "accuracy": round(accuracy, 4),
-        "per_class_recall": {
-            name: round(per_class_correct[i] / per_class[i], 4) if per_class[i] else 0
-            for i, name in enumerate(CLASSES)
-        },
-        "nodes": count_nodes(root),
-        "asset_bytes": output.stat().st_size,
-    }, indent=2))
+    output.write_text(
+        json.dumps(asset, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "synthetic": len(synthetic),
+                "observed": len(observed),
+                "rows": len(rows),
+                "training": len(training),
+                "holdout": len(holdout),
+                "counts": dict(zip(CLASSES, counts)),
+                "accuracy": round(accuracy, 4),
+                "per_class_recall": {
+                    name: round(per_class_correct[i] / per_class[i], 4)
+                    if per_class[i]
+                    else 0
+                    for i, name in enumerate(CLASSES)
+                },
+                "nodes": count_nodes(root),
+                "asset_bytes": output.stat().st_size,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

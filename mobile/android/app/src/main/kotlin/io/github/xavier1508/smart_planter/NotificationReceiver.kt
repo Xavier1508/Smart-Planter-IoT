@@ -18,6 +18,8 @@ class NotificationReceiver : BroadcastReceiver() {
             ?: "Buka Tunas untuk melihat kondisi tanaman."
         val channel = intent.getStringExtra("channel")
             ?: NotificationHelper.CHANNEL_PREDICTIONS
-        NotificationHelper.show(context, id, title, body, channel)
+        val route = intent.getStringExtra("route")
+        val payload = intent.getStringExtra("payload")
+        NotificationHelper.show(context, id, title, body, channel, route, payload)
     }
 }
