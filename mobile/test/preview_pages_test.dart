@@ -27,7 +27,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Menunggu data perangkat'), findsOneWidget);
+    expect(find.text('Belum terhubung'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Kendali perangkat'),
       200,

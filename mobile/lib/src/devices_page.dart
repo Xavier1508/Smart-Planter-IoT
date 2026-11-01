@@ -1,17 +1,37 @@
 import 'package:flutter/material.dart';
 
+import 'local_wifi.dart';
 import 'moss_app.dart';
 import 'plant_state.dart';
 
 /// Displays sensor availability and requested firmware commands; read-only.
 class DevicesPage extends StatelessWidget {
-  const DevicesPage({super.key, required this.state});
+  const DevicesPage({
+    super.key,
+    required this.state,
+    this.localSelected = false,
+    this.localStatus = LocalWifiStatus.disconnected,
+  });
   final PlantState state;
+  final bool localSelected;
+  final LocalWifiStatus localStatus;
 
   @override
   Widget build(BuildContext context) {
-    String status(bool available) =>
-        available ? 'Belum diverifikasi' : 'Belum ada data';
+    String status(bool available) => available ? 'Tersedia' : 'Belum ada data';
+    final connected =
+        localSelected &&
+        (localStatus == LocalWifiStatus.live ||
+            localStatus == LocalWifiStatus.waiting);
+    final connectionTitle = state.isSerialSnapshot
+        ? 'Data serial tersimpan'
+        : state.isLive && state.hasSensorData
+        ? 'Sudah terhubung'
+        : localSelected && localStatus == LocalWifiStatus.connecting
+        ? 'Menghubungkan…'
+        : connected
+        ? 'Sudah terhubung, belum ada data'
+        : 'Belum terhubung';
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
@@ -55,11 +75,7 @@ class DevicesPage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      state.isLive
-                          ? 'Data sensor tersedia'
-                          : state.isSerialSnapshot
-                          ? 'Data serial tersimpan'
-                          : 'Menunggu data perangkat',
+                      connectionTitle,
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -68,7 +84,7 @@ class DevicesPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Status pompa dan lampu belum dapat diverifikasi dari aplikasi.',
+                      'Perintah relay bukan pengukuran kontak atau beban fisik.',
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.4,
@@ -90,12 +106,10 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.grass_rounded,
           name: 'Kelembapan tanah',
-          status: state.soilPercent != null
-              ? 'Skala belum diverifikasi'
+          status: state.soilPercent != null && state.soilAdc != null
+              ? 'ADC ${state.soilAdc} · ${state.soilPercent}%'
               : state.soilAdc != null
-              ? state.soilAdc == 0
-                    ? 'Sinyal tidak valid · ADC 0'
-                    : 'Belum terbaca · ADC ${state.soilAdc}'
+              ? 'Belum ada data · ADC ${state.soilAdc}'
               : 'Belum ada data',
         ),
         _SensorRow(
@@ -108,14 +122,18 @@ class DevicesPage extends StatelessWidget {
         _SensorRow(
           icon: Icons.wb_sunny_outlined,
           name: 'Cahaya',
-          status: status(state.lightPercent != null),
+          status: state.lightPercent != null && state.lightAdc != null
+              ? 'ADC ${state.lightAdc} · ${state.lightPercent}%'
+              : status(state.lightPercent != null),
         ),
         _SensorRow(
           icon: Icons.wb_twilight_rounded,
           name: 'UV',
-          status: state.uvIndex == null && state.uvAdc == null
-              ? 'Belum ada data'
-              : 'Belum diverifikasi',
+          status: state.uvAdc != null
+              ? 'ADC ${state.uvAdc}'
+              : state.uvIndex != null
+              ? 'Tersedia'
+              : 'Belum ada data',
         ),
         _SensorRow(
           icon: Icons.water_drop_outlined,
@@ -133,7 +151,7 @@ class DevicesPage extends StatelessWidget {
               ? 'ADC ${state.mqAdc} · indeks belum tersedia'
               : state.mqDigital == null
               ? 'Belum tersedia'
-              : 'Digital ${state.mqDigital} · bukan ppm',
+              : 'Digital ${state.mqDigital}',
         ),
         if (state.isSerialSnapshot &&
             (state.pumpRulePreview != null ||
@@ -146,8 +164,8 @@ class DevicesPage extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Perhitungan dari snapshot dan skala relatif belum diverifikasi; '
-            'bukan perintah, status relay, atau notifikasi live.',
+            'Perhitungan dari snapshot; bukan perintah, status relay, '
+            'atau notifikasi live.',
           ),
           const SizedBox(height: 8),
           Text(
@@ -235,6 +253,7 @@ class DevicesPage extends StatelessWidget {
     'soil_dry' => 'tanah di bawah batas nyala',
     'watering' => 'siklus penyiraman berjalan',
     'cooldown' => 'jeda antarsiklus',
+    'dry_confirm' => 'menunggu tanah kering terkonfirmasi',
     'water_low' => 'air di bawah batas relatif',
     'water_unavailable' => 'data air belum tersedia',
     'soil_unverified' => 'skala tanah belum diizinkan',

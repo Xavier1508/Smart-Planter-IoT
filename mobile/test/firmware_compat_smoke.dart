@@ -63,14 +63,16 @@ Future<void> main() async {
         soil != null && ((soil > 0 && soil < 4095) || (zeroIsDry && soil == 0));
     final expectedBand = !usableSoil
         ? 'unavailable'
-        : soil < 1200
+        : soil < 1000
         ? 'dry'
+        : soil < 1200
+        ? 'hold'
         : 'wet';
     if (debug is! Map<String, dynamic> ||
         debug['band'] != expectedBand ||
-        debug['dry_below_on'] != (usableSoil ? soil < 1200 : null) ||
+        debug['dry_below_on'] != (usableSoil ? soil < 1000 : null) ||
         debug['wet_at_or_above_off'] != (usableSoil ? soil >= 1200 : null) ||
-        debug['on_below_adc'] != 1200 ||
+        debug['on_below_adc'] != 1000 ||
         debug['off_at_or_above_adc'] != 1200 ||
         debug['basis'] != 'averaged_adc_unverified') {
       throw StateError('Pump soil diagnostic mismatch');
@@ -90,7 +92,7 @@ Future<void> main() async {
         snapshot.pumpReason != json['pump_reason']) {
       throw StateError('Pump command reason mismatch');
     }
-    if (soil == 1199 && snapshot.pumpCommand == true) {
+    if (soil == 999 && snapshot.pumpCommand == true) {
       framePumpOn = jsonLine;
     }
     if (soil == 1200 && snapshot.pumpCommand == false) {
@@ -179,7 +181,7 @@ Future<void> main() async {
     }
     count++;
   }
-  if (count != 15 ||
+  if (count != 16 ||
       waterMidpoints < 1 ||
       nearEmptySamples != 1 ||
       mqReadFailures < 1 ||
@@ -187,7 +189,12 @@ Future<void> main() async {
       framePumpOn == null ||
       framePumpOff == null ||
       frameForTransport == null) {
-    throw StateError('Fixture coverage incomplete');
+    throw StateError(
+      'Fixture coverage incomplete: count=$count waterMid=$waterMidpoints '
+      'nearEmpty=$nearEmptySamples mqFail=$mqReadFailures '
+      'ldr=${ldrOnlyReasons.toList()} on=${framePumpOn != null} '
+      'off=${framePumpOff != null} transport=${frameForTransport != null}',
+    );
   }
 
   // Exercise the local client with generated v21 frames and a real loopback
@@ -200,7 +207,9 @@ Future<void> main() async {
     final connecting = wifi.connect();
     peer = await incoming.timeout(const Duration(seconds: 3));
     await connecting;
-    Future<void> sendAndWait(String frame, int expectedUptime) async {
+    Future<void> sendAndWait(String frame) async {
+      final expectedUptime =
+          (jsonDecode(frame) as Map<String, dynamic>)['uptime_ms'] as int;
       final live = wifi.changes
           .firstWhere(
             (_) =>
@@ -213,15 +222,19 @@ Future<void> main() async {
       await live;
     }
 
-    await sendAndWait(framePumpOn, 5000);
-    if (wifi.snapshot?.soilAdc != 1199 || wifi.snapshot?.pumpCommand != true) {
+    await sendAndWait(framePumpOn);
+    if (wifi.snapshot?.soilAdc != 999 || wifi.snapshot?.pumpCommand != true) {
       throw StateError('Local client did not receive pump ON');
     }
-    await sendAndWait(framePumpOff, 10000);
+    await sendAndWait(framePumpOff);
     if (wifi.snapshot?.soilAdc != 1200 || wifi.snapshot?.pumpCommand != false) {
       throw StateError('Local client did not receive pump OFF');
     }
-    await sendAndWait(frameForTransport, 15000);
+    // Give the final transport fixture a later uptime so it is not treated as a
+    // duplicate of the 1200-ADC boundary frame.
+    final transport = jsonDecode(frameForTransport) as Map<String, dynamic>;
+    transport['uptime_ms'] = 60000;
+    await sendAndWait(jsonEncode(transport));
     if (wifi.snapshot?.soilRelativePercent == null ||
         wifi.snapshot?.pumpCommand == null ||
         wifi.snapshot?.pumpReason != 'water_low' ||

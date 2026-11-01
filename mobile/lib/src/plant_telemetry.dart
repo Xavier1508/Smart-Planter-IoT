@@ -278,6 +278,7 @@ class SerialSensorSnapshot {
                 'soil_dry',
                 'watering',
                 'cooldown',
+                'dry_confirm',
                 'water_low',
                 'water_unavailable',
                 'soil_unverified',

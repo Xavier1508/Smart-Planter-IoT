@@ -258,7 +258,7 @@ void main() {
     expect(find.text('Belum ada riwayat'), findsOneWidget);
     await tester.tap(find.text('Perangkat').last);
     await tester.pumpAndSettle();
-    expect(find.text('Menunggu data perangkat'), findsOneWidget);
+    expect(find.text('Belum terhubung'), findsOneWidget);
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     expect(find.text('Tampilan & suasana'), findsOneWidget);

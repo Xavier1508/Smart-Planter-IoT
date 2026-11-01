@@ -128,6 +128,15 @@ class _DashboardState extends State<Dashboard> {
     setState(() => _useLocalWifi = false);
   }
 
+  Future<void> _refresh() async {
+    if (_useLocalWifi) {
+      await _localWifi.connect();
+    } else if (widget.telemetry == null && _serialSnapshot == null) {
+      _listenToTelemetry();
+    }
+    if (mounted) setState(() {});
+  }
+
   void _listenToTelemetry() {
     final previous = _subscription;
     if (previous != null) unawaited(previous.cancel());
@@ -281,9 +290,14 @@ class _DashboardState extends State<Dashboard> {
             automaticSky: widget.appearance.sky == SkyChoice.automatic,
             selectedSky: widget.appearance.sky,
             onSkyChanged: widget.onSkyChanged,
+            onRefresh: _refresh,
           ),
           1 => const JournalPage(),
-          2 => DevicesPage(state: state),
+          2 => DevicesPage(
+            state: state,
+            localSelected: _useLocalWifi,
+            localStatus: _localWifi.status,
+          ),
           _ => _SettingsPage(
             cloudSettings: widget.cloudSettings,
             serialMessage: _serialMessage,
@@ -346,6 +360,7 @@ class _Home extends StatelessWidget {
     required this.automaticSky,
     required this.selectedSky,
     required this.onSkyChanged,
+    required this.onRefresh,
   });
 
   final PlantState state;
@@ -359,6 +374,7 @@ class _Home extends StatelessWidget {
   final bool automaticSky;
   final SkyChoice selectedSky;
   final ValueChanged<SkyChoice> onSkyChanged;
+  final Future<void> Function() onRefresh;
 
   String _percent(int? value) => value == null ? '—' : '$value%';
 
@@ -379,327 +395,331 @@ class _Home extends StatelessWidget {
     final transition = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 1200);
-    return CustomScrollView(
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(22, 20, 22, 30),
-          sliver: SliverList.list(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'SMART PLANTER',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 2.0,
-                            color: mutedColor,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Ruang Moss',
-                          style: TextStyle(
-                            fontSize: 25,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.8,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  _StatusPill(
-                    live: state.isLive,
-                    snapshot: state.isSerialSnapshot,
-                    connecting:
-                        localSelected &&
-                        (localStatus == LocalWifiStatus.connecting ||
-                            localStatus == LocalWifiStatus.waiting),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 22),
-              MossSky(
-                sky: sky,
-                gaze: gaze,
-                atmosphere: atmosphere,
-                onSwipe: (next) => _stepSky(next: next),
-                child: Column(
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(22, 20, 22, 30),
+            sliver: SliverList.list(
+              children: [
+                Row(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-                      child: Row(
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.eco_outlined, color: skyInk, size: 17),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                              state.moodLabel.toUpperCase(),
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.2,
-                                color: skyHeaderInk,
-                              ),
+                          Text(
+                            'SMART PLANTER',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 2.0,
+                              color: mutedColor,
                             ),
                           ),
-                          Flexible(
-                            child: Text(
-                              '${sky.label.toUpperCase()} · ${automaticSky ? 'JAM HP' : 'PILIHAN'}',
-                              textAlign: TextAlign.end,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: .6,
-                                color: skyHeaderInk,
-                              ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Ruang Moss',
+                            style: TextStyle(
+                              fontSize: 25,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.8,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    SizedBox(
-                      height: 235,
-                      width: double.infinity,
-                      child: TweenAnimationBuilder<Color?>(
-                        tween: ColorTween(end: tint),
-                        duration: transition,
-                        builder: (context, color, child) => ColorFiltered(
-                          colorFilter: ColorFilter.mode(
-                            color!,
-                            BlendMode.srcATop,
-                          ),
-                          child: child,
-                        ),
-                        child: render3d
-                            ? MossAvatar(
-                                mood: mood,
-                                sky: sky,
-                                gaze: gaze,
-                                atmosphere: atmosphere,
-                              )
-                            : Center(
-                                child: Icon(
-                                  Icons.spa_outlined,
-                                  size: 88,
+                    _StatusPill(
+                      live: state.isLive,
+                      snapshot: state.isSerialSnapshot,
+                      connecting:
+                          localSelected &&
+                          (localStatus == LocalWifiStatus.connecting ||
+                              localStatus == LocalWifiStatus.waiting),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 22),
+                MossSky(
+                  sky: sky,
+                  gaze: gaze,
+                  atmosphere: atmosphere,
+                  onSwipe: (next) => _stepSky(next: next),
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                        child: Row(
+                          children: [
+                            Icon(Icons.eco_outlined, color: skyInk, size: 17),
+                            const SizedBox(width: 7),
+                            Expanded(
+                              child: Text(
+                                state.moodLabel.toUpperCase(),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.2,
                                   color: skyHeaderInk,
                                 ),
                               ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            tooltip: 'Suasana sebelumnya',
-                            onPressed: () => _stepSky(next: false),
-                            icon: Icon(
-                              Icons.chevron_left_rounded,
-                              color: skyInk,
                             ),
+                            Flexible(
+                              child: Text(
+                                '${sky.label.toUpperCase()} · ${automaticSky ? 'JAM HP' : 'PILIHAN'}',
+                                textAlign: TextAlign.end,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: .6,
+                                  color: skyHeaderInk,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        height: 235,
+                        width: double.infinity,
+                        child: TweenAnimationBuilder<Color?>(
+                          tween: ColorTween(end: tint),
+                          duration: transition,
+                          builder: (context, color, child) => ColorFiltered(
+                            colorFilter: ColorFilter.mode(
+                              color!,
+                              BlendMode.srcATop,
+                            ),
+                            child: child,
                           ),
-                          Expanded(
-                            child: Text(
-                              'Geser untuk mengubah suasana',
+                          child: render3d
+                              ? MossAvatar(
+                                  mood: mood,
+                                  sky: sky,
+                                  gaze: gaze,
+                                  atmosphere: atmosphere,
+                                )
+                              : Center(
+                                  child: Icon(
+                                    Icons.spa_outlined,
+                                    size: 88,
+                                    color: skyHeaderInk,
+                                  ),
+                                ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              tooltip: 'Suasana sebelumnya',
+                              onPressed: () => _stepSky(next: false),
+                              icon: Icon(
+                                Icons.chevron_left_rounded,
+                                color: skyInk,
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'Geser untuk mengubah suasana',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: skyInk, fontSize: 11),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Suasana berikutnya',
+                              onPressed: () => _stepSky(next: true),
+                              icon: Icon(
+                                Icons.chevron_right_rounded,
+                                color: skyInk,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
+                        child: Column(
+                          children: [
+                            Text(
+                              state.moodMessage,
                               textAlign: TextAlign.center,
-                              style: TextStyle(color: skyInk, fontSize: 11),
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.6,
+                                color: skyInk,
+                              ),
                             ),
-                          ),
-                          IconButton(
-                            tooltip: 'Suasana berikutnya',
-                            onPressed: () => _stepSky(next: true),
-                            icon: Icon(
-                              Icons.chevron_right_rounded,
-                              color: skyInk,
+                            const SizedBox(height: 7),
+                            Text(
+                              state.explanation,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.4,
+                                color: skyInk,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _Notice(live: state.isLive, sourceNotice: sourceNotice),
+                const SizedBox(height: 25),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Kondisi tanaman',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.4,
+                        ),
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
-                      child: Column(
-                        children: [
-                          Text(
-                            state.moodMessage,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.6,
-                              color: skyInk,
-                            ),
-                          ),
-                          const SizedBox(height: 7),
-                          Text(
-                            state.explanation,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 13,
-                              height: 1.4,
-                              color: skyInk,
-                            ),
-                          ),
-                        ],
+                    Text(
+                      state.isLive
+                          ? 'DATA SENSOR'
+                          : state.isSerialSnapshot
+                          ? 'DATA SERIAL'
+                          : 'BELUM TERHUBUNG',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1,
+                        color: mutedColor,
                       ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 14),
-              _Notice(live: state.isLive, sourceNotice: sourceNotice),
-              const SizedBox(height: 25),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Kondisi tanaman',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                  ),
+                const SizedBox(height: 12),
+                if (state.isLive || state.isSerialSnapshot) ...[
                   Text(
-                    state.isLive
-                        ? 'DATA SENSOR'
-                        : state.isSerialSnapshot
-                        ? 'DATA SERIAL'
-                        : 'BELUM TERHUBUNG',
+                    'Nilai sensor belum diverifikasi; tanah dan cahaya berupa skala relatif.',
                     style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1,
                       color: mutedColor,
+                      fontSize: 11,
+                      height: 1.4,
                     ),
                   ),
+                  const SizedBox(height: 10),
                 ],
-              ),
-              const SizedBox(height: 12),
-              if (state.isLive || state.isSerialSnapshot) ...[
-                Text(
-                  'Nilai sensor belum diverifikasi; tanah dan cahaya berupa skala relatif.',
-                  style: TextStyle(
-                    color: mutedColor,
-                    fontSize: 11,
-                    height: 1.4,
-                  ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final columnWidth = (constraints.maxWidth - 10) / 2;
+                    return Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        SizedBox(
+                          width: columnWidth,
+                          child: _Metric(
+                            icon: Icons.water_drop_outlined,
+                            title: 'Kelembapan tanah',
+                            value: state.soilPercent != null
+                                ? _percent(state.soilPercent)
+                                : 'Belum terbaca',
+                            detail: state.soilPercent != null
+                                ? state.soilAdc != null
+                                      ? 'ADC ${state.soilAdc}'
+                                      : 'Belum tersedia'
+                                : state.soilAdc != null
+                                ? state.soilAdc == 0
+                                      ? 'ADC 0 · sinyal tidak valid; pompa dikunci'
+                                      : 'ADC ${state.soilAdc} · penyebab belum diketahui'
+                                : 'Menunggu sensor',
+                            color: const Color(0xFF51859A),
+                          ),
+                        ),
+                        SizedBox(
+                          width: columnWidth,
+                          child: _Metric(
+                            icon: Icons.waves_rounded,
+                            title: 'Level air',
+                            value: switch (state.waterLevel) {
+                              WaterLevel.low => 'Low',
+                              WaterLevel.medium => 'Medium',
+                              WaterLevel.full => 'Full',
+                              null => 'Belum terbaca',
+                            },
+                            detail: state.waterAdc != null
+                                ? 'ADC ${state.waterAdc}'
+                                : 'Belum tersedia',
+                            color: const Color(0xFF568896),
+                          ),
+                        ),
+                        SizedBox(
+                          width: columnWidth,
+                          child: _Metric(
+                            icon: Icons.thermostat_rounded,
+                            title: 'Suhu udara',
+                            value: state.temperatureC == null
+                                ? '—'
+                                : '${state.temperatureC!.toStringAsFixed(1)}°',
+                            detail: state.humidityPercent == null
+                                ? 'Menunggu sensor'
+                                : 'Kelembapan ${state.humidityPercent}%',
+                            color: terracotta,
+                          ),
+                        ),
+                        SizedBox(
+                          width: columnWidth,
+                          child: _Metric(
+                            icon: Icons.wb_sunny_outlined,
+                            title: 'Cahaya',
+                            value: state.lightPercent != null
+                                ? _percent(state.lightPercent)
+                                : '—',
+                            detail: state.lightAdc != null
+                                ? state.lightPercent != null
+                                      ? 'ADC ${state.lightAdc}'
+                                      : 'ADC ${state.lightAdc} · belum dapat diestimasi'
+                                : state.lightPercent != null
+                                ? 'Belum tersedia'
+                                : 'Menunggu sensor',
+                            color: const Color(0xFFAB843A),
+                          ),
+                        ),
+                        SizedBox(
+                          width: constraints.maxWidth,
+                          child: _Metric(
+                            icon: Icons.wb_twilight_rounded,
+                            title: 'UV',
+                            value:
+                                (state.uvAdcPercent == null
+                                    ? null
+                                    : '~${state.uvAdcPercent}%') ??
+                                state.uvIndex?.toStringAsFixed(1) ??
+                                '—',
+                            detail: state.uvAdc != null
+                                ? 'ADC ${state.uvAdc}'
+                                : state.uvIndex == null
+                                ? 'Menunggu data sensor'
+                                : 'Belum diverifikasi',
+                            color: const Color(0xFF967144),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 10),
+                _AirRow(state: state),
               ],
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final columnWidth = (constraints.maxWidth - 10) / 2;
-                  return Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      SizedBox(
-                        width: columnWidth,
-                        child: _Metric(
-                          icon: Icons.water_drop_outlined,
-                          title: 'Kelembapan tanah',
-                          value: state.soilPercent != null
-                              ? _percent(state.soilPercent)
-                              : 'Belum terbaca',
-                          detail: state.soilPercent != null
-                              ? state.soilAdc != null
-                                    ? 'ADC ${state.soilAdc}'
-                                    : 'Belum tersedia'
-                              : state.soilAdc != null
-                              ? state.soilAdc == 0
-                                    ? 'ADC 0 · sinyal tidak valid; pompa dikunci'
-                                    : 'ADC ${state.soilAdc} · penyebab belum diketahui'
-                              : 'Menunggu sensor',
-                          color: const Color(0xFF51859A),
-                        ),
-                      ),
-                      SizedBox(
-                        width: columnWidth,
-                        child: _Metric(
-                          icon: Icons.waves_rounded,
-                          title: 'Level air',
-                          value: switch (state.waterLevel) {
-                            WaterLevel.low => 'Low',
-                            WaterLevel.medium => 'Medium',
-                            WaterLevel.full => 'Full',
-                            null => 'Belum terbaca',
-                          },
-                          detail: state.waterAdc != null
-                              ? 'ADC ${state.waterAdc}'
-                              : 'Belum tersedia',
-                          color: const Color(0xFF568896),
-                        ),
-                      ),
-                      SizedBox(
-                        width: columnWidth,
-                        child: _Metric(
-                          icon: Icons.thermostat_rounded,
-                          title: 'Suhu udara',
-                          value: state.temperatureC == null
-                              ? '—'
-                              : '${state.temperatureC!.toStringAsFixed(1)}°',
-                          detail: state.humidityPercent == null
-                              ? 'Menunggu sensor'
-                              : 'Kelembapan ${state.humidityPercent}%',
-                          color: terracotta,
-                        ),
-                      ),
-                      SizedBox(
-                        width: columnWidth,
-                        child: _Metric(
-                          icon: Icons.wb_sunny_outlined,
-                          title: 'Cahaya',
-                          value: state.lightPercent != null
-                              ? _percent(state.lightPercent)
-                              : '—',
-                          detail: state.lightAdc != null
-                              ? state.lightPercent != null
-                                    ? 'ADC ${state.lightAdc}'
-                                    : 'ADC ${state.lightAdc} · belum dapat diestimasi'
-                              : state.lightPercent != null
-                              ? 'Belum tersedia'
-                              : 'Menunggu sensor',
-                          color: const Color(0xFFAB843A),
-                        ),
-                      ),
-                      SizedBox(
-                        width: constraints.maxWidth,
-                        child: _Metric(
-                          icon: Icons.wb_twilight_rounded,
-                          title: 'UV',
-                          value:
-                              (state.uvAdcPercent == null
-                                  ? null
-                                  : '~${state.uvAdcPercent}%') ??
-                              state.uvIndex?.toStringAsFixed(1) ??
-                              '—',
-                          detail: state.uvAdc != null
-                              ? 'ADC ${state.uvAdc}'
-                              : state.uvIndex == null
-                              ? 'Menunggu data sensor'
-                              : 'Belum diverifikasi',
-                          color: const Color(0xFF967144),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-              _AirRow(state: state),
-            ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

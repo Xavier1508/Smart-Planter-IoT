@@ -25,16 +25,17 @@ berarti sensor atau sambungan bermasalah. Jangan menganggapnya bukti UV rendah.
 Proksi UV adalah pemetaan ADC perkiraan, bukan indeks UV terkalibrasi.
 
 Pada firmware lokal v21, relay pompa memakai polaritas **active-LOW** (ON = LOW,
-OFF = HIGH) dan relay lampu **active-HIGH** (ON = HIGH, OFF = LOW), mengikuti
-contoh kerja pengguna. Sebelumnya pompa active-HIGH sehingga pin OFF (LOW)
-justru menyalakan modul relay active-LOW. Lampu memakai **LDR saja** dengan satu ambang:
-ON di bawah 65% kecerahan relatif, OFF pada 65% ke atas. UV hanya dipantau.
-Pompa mencoba ON saat rata-rata ADC tanah 1–1199 dan OFF pada 1200 ke atas;
-ADC 4095 atau data tidak tersedia menghalangi ON. Pada perangkat ini ADC 0
-diverifikasi sebagai tanah benar-benar kering sehingga diperlakukan sebagai 0%.
-Dengan acuan lokal kering 0 dan jenuh 1800, ambang 1200 setara **≈67%**.
-Air memakai rentang **826 (rendah) sampai 1150 (penuh)**; indikator Full
-dimulai pada 50% rentang karena pin atas sudah terendam di sekitar 1000.
+OFF = HIGH) dan relay lampu **active-HIGH** (ON = HIGH, OFF = LOW). Lampu
+memakai **LDR saja** dengan satu ambang 65%; pada perangkat ini LDR gelap
+sekitar 0 ADC dan terang sekitar 2360 ADC. UV hanya dipantau.
+
+Pompa memakai histeresis: ON di bawah **1000 ADC**, OFF pada **1200 ADC** ke
+atas. Setelah berhenti karena batas waktu 30 detik, pompa menunggu **5 menit**
+agar air meresap sebelum mencoba lagi. ADC 4095 atau data tidak tersedia
+menghalangi ON. Tanah kering terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan
+1200 ≈ 67%. Air memakai rentang **826 (rendah) sampai 1150 (penuh)**; indikator
+Full dimulai pada 50% rentang karena pin atas sudah terendam di sekitar 1000.
+Semua input ADC memakai median 5 sampel.
 Interlock air, watchdog, batas waktu, jeda pompa, dan jeda lampu tetap berlaku.
 Nilai rata-rata memakai lima konversi berturutan per siklus untuk setiap input
 ADC, bukan rata-rata lima siklus. DHT dan input digital MQ tidak dirata-ratakan.
