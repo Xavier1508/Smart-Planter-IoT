@@ -12,6 +12,7 @@
 #include "local-wifi.h"
 #include "planter-config.h"
 #include "relay-safety.h"
+#include "relay-staging.h"
 #include "sensor-telemetry.h"
 #include "soil-sensor.h"
 
@@ -40,6 +41,15 @@ struct FakeSoilGpio {
 struct FakeRandom {
   uint32_t value = 0;
   uint32_t next() { return value++; }
+};
+
+struct LevelGpio {
+  bool pumpHigh = true;
+  bool lightHigh = false;
+  void write(int pin, bool high) {
+    if (pin == planter::kLegacyPumpRelayPin) pumpHigh = high;
+    if (pin == planter::kLegacyLightRelayPin) lightHigh = high;
+  }
 };
 
 int main() {
@@ -71,6 +81,40 @@ int main() {
   assert(commandGpio.calls[1].pin == 26 && !commandGpio.calls[1].high);
   assert(commandGpio.calls[2].pin == 13 && !commandGpio.calls[2].high);
   assert(commandGpio.calls[3].pin == 26 && commandGpio.calls[3].high);
+
+  // Relay staging: both coils start inactive, stay inactive for the 2-second
+  // settle window, and two ON transitions are 150 milliseconds apart. OFF is
+  // always immediate. 150 is milliseconds, not seconds.
+  planter::RelayStager<LevelGpio> staged;
+  LevelGpio stagedLevel;
+  staged.begin(0, stagedLevel);
+  assert(!staged.pumpOn() && !staged.lightOn());
+  assert(stagedLevel.pumpHigh && !stagedLevel.lightHigh);
+  staged.update(1999, true, true, stagedLevel);
+  assert(!staged.pumpOn() && !staged.lightOn());
+  staged.update(2000, true, true, stagedLevel);
+  assert(staged.pumpOn());
+  assert(!staged.lightOn());
+  staged.update(2149, true, true, stagedLevel);
+  assert(!staged.lightOn());
+  staged.update(2150, true, true, stagedLevel);
+  assert(staged.lightOn());
+  staged.update(2151, false, false, stagedLevel);
+  assert(!staged.pumpOn() && !staged.lightOn());
+  assert(stagedLevel.pumpHigh && !stagedLevel.lightHigh);
+  staged.update(3000, false, true, stagedLevel);
+  assert(staged.lightOn() && !staged.pumpOn());
+  staged.update(4000, true, false, stagedLevel);
+  assert(!staged.lightOn() && !staged.pumpOn());
+  staged.update(4149, true, false, stagedLevel);
+  assert(!staged.pumpOn());
+  staged.update(4150, true, false, stagedLevel);
+  assert(staged.pumpOn());
+  planter::RelayStager<LevelGpio> freshStaged;
+  LevelGpio freshLevel;
+  freshStaged.begin(0, freshLevel);
+  freshStaged.update(2000, false, true, freshLevel);
+  assert(freshStaged.lightOn() && !freshStaged.pumpOn());
 
   const float nan = std::numeric_limits<float>::quiet_NaN();
   const float infinity = std::numeric_limits<float>::infinity();
@@ -198,7 +242,7 @@ int main() {
   assert(planter::kSoilAdcReadEnabled);
   assert(planter::kLightAutomationEnabled);
   assert(planter::kPumpAllowEstimatedSoil);
-  assert(planter::kFirmwareVersion == 24);
+  assert(planter::kFirmwareVersion == 25);
 
   // Bounded manual-control protocol.
   auto control = planter::parseControlLine("CTRL pump=on dur=5 id=12");
@@ -834,7 +878,7 @@ int main() {
                              "\"adc_calibration_source\":\"efuse_vref\"") != nullptr);
   assert(std::strstr(output, "\"environment_compensation\":\"not_applied\"") != nullptr);
   assert(std::strstr(output, "\"observation_label\":null") != nullptr);
-  assert(std::strstr(output, "\"firmware_version\":24") != nullptr);
+  assert(std::strstr(output, "\"firmware_version\":25") != nullptr);
   char expectedSoilScale[96];
   std::snprintf(expectedSoilScale, sizeof(expectedSoilScale),
                 "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d",

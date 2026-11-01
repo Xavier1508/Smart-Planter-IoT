@@ -899,6 +899,28 @@ Build lokal: `analysis/platformio/firmware-v24-lockout-label-a4d316b1/firmware.b
 `A4D316B1BB9596585D2D5FD515A827C00A01E0A8D1E72E6C90572355982F320B`.
 Tes host lokal/generik, 16 frame sintetis v24, dan validasi `esptool` lulus.
 
+### Firmware v25: relay staging dan log brownout
+
+v25 menambahkan pengaman urutan relay dan diagnostik daya:
+
+- Jika pompa dan lampu harus ON bersamaan, pompa ON lebih dulu dan lampu
+  menyusul **150 milidetik** kemudian. OFF selalu langsung; tidak ada penundaan
+  untuk mematikan.
+- Kedua coil ditahan OFF selama **2 detik** pertama setelah setup. Kontrol tetap
+  menunggu boot grace 5 detik dan sampel pertama, jadi relay pertama tidak aktif
+  sebelum sekitar 5 detik.
+- Setiap boot mencetak satu baris JSON **hanya ke serial**:
+  `{"type":"boot","firmware_version":25,"reset_reason":"...","brownout_count":N,"nvs_ready":true}`.
+  Hitungan brownout disimpan di NVS dan bertambah setiap reset brownout.
+- Brownout detector tetap aktif; tidak dimatikan lewat software.
+
+Build lokal: `analysis/platformio/firmware-v25-relay-staging-9a3671cd/firmware.bin`
+(791.664 byte), SHA-256
+`9A3671CDBBC95E4E36730856B0957355788F6F65CF40037D193C93F80CCF8A31`.
+Tes host lokal/generik, timing relay, 16 frame sintetis v25, dan validasi
+`esptool` lulus. Staging hanya mengurangi inrush; adaptor lemah dan pull-up relay
+saat boot tetap perlu diperbaiki di hardware.
+
 ### Aplikasi Tunas 0.4.0: profil, karakter, dan emosi ML
 
 Nama aplikasi yang terlihat pengguna berubah dari **Moss** menjadi **Tunas ·

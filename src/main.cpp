@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <DHT.h>
 #include <LiquidCrystal_I2C.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <driver/adc.h>
@@ -24,6 +25,7 @@
 #endif
 #include "planter-config.h"
 #include "relay-safety.h"
+#include "relay-staging.h"
 #include "sensor-telemetry.h"
 #include "soil-sensor.h"
 
@@ -191,6 +193,44 @@ void sendLocalSample(char* output, size_t capacity) {
   output[length] = '\0';
 }
 
+const char* resetReasonName(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON: return "poweron";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "interrupt_watchdog";
+    case ESP_RST_TASK_WDT: return "task_watchdog";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep_sleep";
+    case ESP_RST_EXT: return "external";
+    default: return "unknown";
+  }
+}
+
+void logBootReason() {
+  Preferences prefs;
+  uint32_t brownouts = 0;
+  bool nvsReady = false;
+  const esp_reset_reason_t reason = esp_reset_reason();
+  nvsReady = prefs.begin("moss_boot", false);
+  if (nvsReady) {
+    brownouts = prefs.getUInt("brownouts", 0);
+    if (reason == ESP_RST_BROWNOUT) {
+      ++brownouts;
+      prefs.putUInt("brownouts", brownouts);
+    }
+    prefs.end();
+  }
+  // Serial diagnostic only; this line is never sent over the TCP telemetry
+  // stream, so the Android parser is unaffected.
+  Serial.printf(
+      "{\"type\":\"boot\",\"firmware_version\":%u,\"reset_reason\":\"%s\","
+      "\"brownout_count\":%lu,\"nvs_ready\":%s}\n",
+      planter::kFirmwareVersion, resetReasonName(reason),
+      static_cast<unsigned long>(brownouts), nvsReady ? "true" : "false");
+}
+
 struct ArduinoGpio {
   void write(int pin, bool high) { digitalWrite(pin, high ? HIGH : LOW); }
   void enableOutput(int pin) { pinMode(pin, OUTPUT); }
@@ -208,9 +248,12 @@ struct ArduinoSoilGpio {
   int readAnalog(int pin) { return medianAnalogRead(pin); }
 };
 
+ArduinoGpio relayGpio;
+planter::RelayStager<ArduinoGpio> relayStager;
+
 void syncRelayCommands() {
-  ArduinoGpio gpio;
-  planter::writeRelayCommands(gpio, relayController.status());
+  const planter::ControlStatus status = relayController.status();
+  relayStager.update(millis(), status.pumpOn, status.lightOn, relayGpio);
 }
 
 int readSoilRaw() {
@@ -394,8 +437,11 @@ void printSample(uint32_t nowMs) {
 void setup() {
   ArduinoGpio gpio;
   planter::configureRelaysInactive(gpio);
+  relayStager.begin(millis(), relayGpio);
   relayController.begin(millis());
   Serial.begin(115200);
+  delay(50);
+  logBootReason();
   const esp_err_t watchdogInit =
       esp_task_wdt_init(planter::kWatchdogTimeoutSeconds, true);
   watchdogReady = (watchdogInit == ESP_OK || watchdogInit == ESP_ERR_INVALID_STATE) &&

@@ -43,6 +43,13 @@ terverifikasi 0 ADC, jenuh 1800 ADC; 0 = 0% dan 1200 ≈ 67%. Air memakai rentan
 karena pin atas sudah terendam di sekitar 1000. Semua input ADC memakai median
 5 sampel.
 
+Firmware v25 menambahkan **relay staging**: jika pompa dan lampu harus ON
+bersamaan, pompa ON lebih dulu dan lampu menyusul **150 milidetik** kemudian.
+OFF selalu langsung untuk keduanya. Kedua coil juga ditahan OFF selama 2 detik
+pertama setelah setup. Setiap boot mencetak `reset_reason` dan `brownout_count`
+hanya ke serial. Brownout detector tetap aktif; staging hanya mengurangi inrush,
+bukan menggantikan adaptor 5V yang kuat atau pull-up relay saat boot.
+
 Halaman **Perangkat** menyediakan kendali manual pompa/lampu lewat socket lokal
 yang sama. Pompa ON manual dibatasi 1–30 detik lalu kembali otomatis; pompa OFF
 dan lampu manual bertahan sampai AUTO. Perintah memakai baris `CTRL` dan

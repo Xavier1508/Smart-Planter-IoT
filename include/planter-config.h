@@ -43,7 +43,7 @@
 
 namespace planter {
 
-constexpr unsigned kFirmwareVersion = 24;
+constexpr unsigned kFirmwareVersion = 25;
 
 // Historical project assignments, not a verified wiring diagram.
 constexpr int kDhtPin = 4;
@@ -74,6 +74,13 @@ constexpr bool kLightAutomationEnabled = true;
 constexpr bool relayLevel(bool activeLow, bool on) {
   return activeLow ? !on : on;
 }
+
+// Relay output staging. Both coils are held inactive for a short settle window
+// after boot, and two ON transitions are separated by 150 milliseconds so the
+// coil inrush events do not coincide. OFF is always immediate. These values are
+// milliseconds, not seconds.
+constexpr uint32_t kRelayEnableDelayMs = 2000;
+constexpr uint32_t kRelaySwitchGapMs = 150;
 
 // The original project used DHT11; the actual sensor model is still unverified.
 // A successful protocol read is not proof that the selected model is correct.
