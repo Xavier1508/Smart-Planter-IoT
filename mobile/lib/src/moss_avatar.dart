@@ -5,9 +5,11 @@ import 'package:flutter_scene/scene.dart' as scene;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import 'appearance.dart';
+import 'character_look.dart';
 import 'moss_app.dart';
 import 'moss_gaze.dart';
 import 'moss_motion.dart';
+import 'plant_emotion.dart';
 import 'plant_state.dart';
 
 /// An original, stylized placeholder character composed from 3D primitives.
@@ -20,11 +22,18 @@ class MossAvatar extends StatefulWidget {
     required this.sky,
     required this.gaze,
     required this.atmosphere,
+    this.look = CharacterLook.moss,
+    this.emotion,
   });
   final PlantMood mood;
   final SkyAppearance sky;
   final MossGaze gaze;
   final MossAtmosphere atmosphere;
+  final CharacterLook look;
+
+  /// Presentation emotion from the demo model. Null keeps the original mood
+  /// behavior for callers that only know the plant state.
+  final PlantEmotion? emotion;
 
   @override
   State<MossAvatar> createState() => _MossAvatarState();
@@ -38,6 +47,8 @@ class _MossAvatarState extends State<MossAvatar>
   late final scene.CylinderGeometry _soil;
   late final scene.CylinderGeometry _rim;
   late final scene.CylinderGeometry _dress;
+  late final scene.CylinderGeometry _hatBrim;
+  late final scene.CylinderGeometry _hatTop;
   late final scene.PhysicallyBasedMaterial _skin;
   late final scene.PhysicallyBasedMaterial _hair;
   late final scene.PhysicallyBasedMaterial _leaf;
@@ -49,6 +60,9 @@ class _MossAvatarState extends State<MossAvatar>
   late final scene.PhysicallyBasedMaterial _cheek;
   late final scene.UnlitMaterial _highlight;
   late final scene.PhysicallyBasedMaterial _potLight;
+  late final scene.PhysicallyBasedMaterial _hat;
+  late final scene.PhysicallyBasedMaterial _cloud;
+  late final scene.PhysicallyBasedMaterial _rain;
   final _sunLight = scene.DirectionalLight(
     color: vm.Vector3(1, .84, .65),
     intensity: 0,
@@ -228,17 +242,54 @@ class _MossAvatarState extends State<MossAvatar>
       height: .56,
       radialSegments: 32,
     );
-    _skin = _material(.85, .68, .51);
-    _hair = _material(.12, .26, .19);
-    _leaf = _material(.22, .42, .29, roughness: .58);
-    _leafLight = _material(.43, .63, .36, roughness: .58);
-    _clothes = _material(.31, .50, .32);
+    _hatBrim = scene.CylinderGeometry(
+      bottomRadius: .44,
+      topRadius: .44,
+      height: .035,
+      radialSegments: 32,
+    );
+    _hatTop = scene.CylinderGeometry(
+      bottomRadius: .23,
+      topRadius: .19,
+      height: .19,
+      radialSegments: 32,
+    );
+    final look = widget.look;
+    final skin = look.skinColor;
+    final hair = look.hairColor;
+    final clothes = look.clothesColor;
+    final accent = look.accentColor;
+    final accentLight = Color.lerp(accent, Colors.white, .30)!;
+    _skin = _material(skin.r, skin.g, skin.b);
+    _hair = _material(hair.r, hair.g, hair.b, roughness: .72);
+    _leaf = _material(
+      accent.r * .72,
+      accent.g * .72,
+      accent.b * .72,
+      roughness: .58,
+    );
+    _leafLight = _material(
+      accentLight.r,
+      accentLight.g,
+      accentLight.b,
+      roughness: .58,
+    );
+    _clothes = _material(clothes.r, clothes.g, clothes.b);
     _potColor = _material(.65, .34, .24);
     _soilColor = _material(.25, .18, .12);
     _ink = _unlit(.11, .16, .12);
-    _cheek = _material(.82, .43, .37);
+    final cheek = Color.lerp(skin, const Color(0xFFE06B5A), .45)!;
+    _cheek = _material(cheek.r, cheek.g, cheek.b);
     _highlight = _unlit(.98, .91, .72);
     _potLight = _material(.79, .48, .34);
+    _hat = _material(accent.r, accent.g, accent.b, roughness: .9);
+    _cloud = _material(.92, .95, .96, roughness: .95);
+    _rain = _material(
+      accent.r * .55,
+      accent.g * .72,
+      accent.b * .95,
+      roughness: .55,
+    );
   }
 
   scene.SceneMesh _oval({
@@ -292,10 +343,116 @@ class _MossAvatarState extends State<MossAvatar>
     ],
   );
 
+  PlantEmotion get _expression {
+    final explicit = widget.emotion;
+    if (explicit != null) return explicit;
+    return switch (widget.mood) {
+      PlantMood.content => PlantEmotion.happy,
+      PlantMood.thirsty || PlantMood.airConcern => PlantEmotion.alert,
+      PlantMood.waiting => PlantEmotion.neutral,
+    };
+  }
+
+  List<Widget> _accessory() => switch (widget.look.accessory) {
+    CharacterAccessory.leafCrown => [
+      _oval(
+        material: _leaf,
+        x: -.20,
+        y: 1.18,
+        z: -.02,
+        sx: .080,
+        sy: .155,
+        sz: .035,
+        angle: -.85,
+      ),
+      _oval(
+        material: _leafLight,
+        x: 0,
+        y: 1.235,
+        z: -.02,
+        sx: .075,
+        sy: .17,
+        sz: .035,
+        angle: .08,
+      ),
+      _oval(
+        material: _leaf,
+        x: .20,
+        y: 1.18,
+        z: -.02,
+        sx: .080,
+        sy: .155,
+        sz: .035,
+        angle: .85,
+      ),
+    ],
+    CharacterAccessory.sunHat => [
+      scene.SceneNode(
+        position: vm.Vector3(0, 1.135, -.01),
+        rotation: vm.Quaternion.axisAngle(vm.Vector3(1, 0, 0), -.10),
+        children: [
+          scene.SceneMesh(geometry: _hatBrim, material: _hat),
+          scene.SceneMesh(
+            geometry: _hatTop,
+            material: _hat,
+            position: vm.Vector3(0, .105, 0),
+          ),
+        ],
+      ),
+    ],
+    CharacterAccessory.rainCloud => [
+      _oval(
+        material: _cloud,
+        x: -.13,
+        y: 1.255,
+        z: -.02,
+        sx: .125,
+        sy: .100,
+        sz: .100,
+      ),
+      _oval(
+        material: _cloud,
+        x: 0,
+        y: 1.315,
+        z: -.02,
+        sx: .150,
+        sy: .120,
+        sz: .110,
+      ),
+      _oval(
+        material: _cloud,
+        x: .14,
+        y: 1.255,
+        z: -.02,
+        sx: .110,
+        sy: .090,
+        sz: .090,
+      ),
+      _oval(
+        material: _rain,
+        x: -.06,
+        y: 1.125,
+        z: .02,
+        sx: .025,
+        sy: .050,
+        sz: .020,
+      ),
+      _oval(
+        material: _rain,
+        x: .07,
+        y: 1.095,
+        z: .02,
+        sx: .022,
+        sy: .045,
+        sz: .020,
+      ),
+    ],
+  };
+
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Karakter Moss, ${widget.mood.label}',
+      label: 'Karakter ${widget.look.name}, ${_expression.label}',
       child: FutureBuilder<void>(
         future: _ready,
         builder: (context, snapshot) {
@@ -313,14 +470,25 @@ class _MossAvatarState extends State<MossAvatar>
               ),
             );
           }
-          _motion.windAmplitude = widget.mood == PlantMood.content
-              ? .035
-              : .015;
-          _motion.idlePersonality = true;
-          final concerned =
-              widget.mood == PlantMood.thirsty ||
-              widget.mood == PlantMood.airConcern;
-          final mouthY = concerned ? .76 : .72;
+          _motion.speed = widget.look.motionSpeed;
+          _motion.windAmplitude = switch (_expression) {
+            PlantEmotion.happy => .035,
+            PlantEmotion.neutral => .022,
+            PlantEmotion.alert => .012,
+          };
+          _motion.idlePersonality = _expression != PlantEmotion.alert;
+          final expression = _expression;
+          final mouthY = .72;
+          final mouthCurve = switch (expression) {
+            PlantEmotion.happy => -.018,
+            PlantEmotion.neutral => 0.0,
+            PlantEmotion.alert => .020,
+          };
+          final browAngle = switch (expression) {
+            PlantEmotion.happy => .06,
+            PlantEmotion.neutral => 0.0,
+            PlantEmotion.alert => .34,
+          };
           return MossTouchSurface(
             motion: _motion,
             hitTest: _hitCharacter,
@@ -453,6 +621,26 @@ class _MossAvatarState extends State<MossAvatar>
                                 _eye(-.115, _leftBlink),
                                 _eye(.115, _rightBlink),
                                 _oval(
+                                  material: _hair,
+                                  x: -.115,
+                                  y: .905,
+                                  z: .345,
+                                  sx: .055,
+                                  sy: .013,
+                                  sz: .012,
+                                  angle: browAngle,
+                                ),
+                                _oval(
+                                  material: _hair,
+                                  x: .115,
+                                  y: .905,
+                                  z: .345,
+                                  sx: .055,
+                                  sy: .013,
+                                  sz: .012,
+                                  angle: -browAngle,
+                                ),
+                                _oval(
                                   material: _highlight,
                                   x: 0,
                                   y: .765,
@@ -503,7 +691,7 @@ class _MossAvatarState extends State<MossAvatar>
                                 _oval(
                                   material: _ink,
                                   x: 0,
-                                  y: concerned ? mouthY + .015 : mouthY - .015,
+                                  y: mouthY + mouthCurve,
                                   z: .372,
                                   sx: .019,
                                   sy: .014,
@@ -518,6 +706,7 @@ class _MossAvatarState extends State<MossAvatar>
                                   sy: .014,
                                   sz: .01,
                                 ),
+                                ..._accessory(),
                               ],
                             ),
                           ],

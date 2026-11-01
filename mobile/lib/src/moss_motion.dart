@@ -24,6 +24,9 @@ class MossMotion {
   double windAmplitude = .06;
   bool idlePersonality = false;
   bool reduceMotion = false;
+
+  /// Idle tempo multiplier. 1.0 is the original Moss rhythm.
+  double speed = 1.0;
   MossFrame lastFrame = const MossFrame(
     yaw: 0,
     pitch: 0,
@@ -108,7 +111,7 @@ class MossMotion {
     final blend = 1 - math.exp(-6 * dt);
     _yaw += (targetYaw - _yaw) * blend;
     _pitch += (targetPitch - _pitch) * blend;
-    _windTime += dt;
+    _windTime += dt * (speed.isFinite ? speed.clamp(.5, 2.0) : 1.0);
     final reactionTarget = _reactionHold > 0 ? 1.0 : 0.0;
     _reactionHold = math.max(0.0, _reactionHold - dt);
     final responseTime = reactionTarget > _reaction ? .16 : .45;

@@ -50,6 +50,18 @@ mendapat balasan `ack`. Jaringan tetap WPA2 lokal tanpa TLS; jangan bagikan
 password AP. Scheduler app-side aktif selama aplikasi terbuka dan socket lokal
 terhubung; jadwal yang terlewat lebih dari 2 menit dilewati.
 Interlock air, watchdog, batas waktu, jeda pompa, dan jeda lampu tetap berlaku.
+
+Aplikasi **Tunas 0.4.0** menggantikan nama tampilan Moss. Moss tetap menjadi
+profil/karakter pertama. Sampai enam profil planter dapat didaftarkan dengan
+nama, karakter, alamat IP/host, dan port sendiri; tombol hubungkan/putuskan
+memindahkan sesi aktif. Tiga karakter memakai rig yang sama dengan palet,
+aksesori, dan tempo gerak berbeda: Moss (daun), Bara (topi), Rintik (awan).
+Emosi karakter ditentukan di ponsel dari model XGBoost sintetis yang sudah ada
+plus aturan ambang; hasilnya tiga label: Nyaman, Waspada, Perlu perhatian.
+Riwayat menampilkan grafik sesi dan 14 sampel terakhir, belum disimpan permanen.
+Firmware masih mode AP, jadi beberapa ESP32 baru bisa berada di satu jaringan
+setelah mode STA ditambahkan; alamat profil sudah bisa diedit untuk tahap itu.
+
 Nilai rata-rata memakai lima konversi berturutan per siklus untuk setiap input
 ADC, bukan rata-rata lima siklus. DHT dan input digital MQ tidak dirata-ratakan.
 Sumber v20 belum membuktikan perilaku fisik relay atau sensor.

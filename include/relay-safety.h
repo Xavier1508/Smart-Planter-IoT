@@ -260,7 +260,11 @@ class RelayController {
         dryConfirm_ = 0;
         pumpReason_ = "dry_confirm";
       } else if (pumpCooldown_) {
-        pumpReason_ = "cooldown";
+        // Keep the 30-minute runtime-limit lockout visible instead of hiding it
+        // behind the shorter ordinary cooldown label.
+        pumpReason_ = pumpCooldownMs_ == kPumpRuntimeSoakMs
+                          ? "runtime_limit"
+                          : "cooldown";
       } else {
         ++dryConfirm_;
         if (dryConfirm_ < kPumpDryConfirmSamples) {

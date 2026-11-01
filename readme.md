@@ -887,6 +887,54 @@ untuk v23. Commit `390512c` memperbaiki daftar jadwal yang tidak bisa diubah saa
 dimuat. CI run `41264094618` sukses termasuk distribusi APK tester lewat Firebase
 App Distribution.
 
+### Firmware v24: label lockout 30 menit
+
+v24 hanya memperbaiki label diagnostik. Selama lockout 30 menit setelah
+`runtime_limit`, alasan pompa tetap `runtime_limit`, bukan `cooldown`. Perilaku
+pompa tidak berubah dari v23: otomatis maksimal 5 menit, lockout 30 menit,
+manual/jadwal 30 detik, konfirmasi air rendah 6 sampel saat pompa berjalan.
+
+Build lokal: `analysis/platformio/firmware-v24-lockout-label-a4d316b1/firmware.bin`
+(788.448 byte), SHA-256
+`A4D316B1BB9596585D2D5FD515A827C00A01E0A8D1E72E6C90572355982F320B`.
+Tes host lokal/generik, 16 frame sintetis v24, dan validasi `esptool` lulus.
+
+### Aplikasi Tunas 0.4.0: profil, karakter, dan emosi ML
+
+Nama aplikasi yang terlihat pengguna berubah dari **Moss** menjadi **Tunas ·
+Smart Planter**. Moss tetap dipakai sebagai nama profil/karakter pertama, bukan
+nama aplikasi. Profil perangkat disimpan di SharedPreferences Android melalui
+kanal `moss/profile` dan dapat berisi sampai enam planter.
+
+- Setiap profil punya nama planter, nama karakter, alamat IP/host, port, dan
+  pilihan karakter. Alamat dapat diedit agar ESP32 di jaringan yang sama bisa
+  dipakai tanpa membangun ulang aplikasi.
+- Tombol hubungkan/putuskan memindahkan sesi aktif ke profil yang dipilih.
+  Riwayat sesi dikosongkan saat berpindah perangkat.
+- Tiga karakter memakai rig primitif yang sama dengan palet, aksesori, dan tempo
+  gerak berbeda: **Moss** (daun), **Bara** (topi matahari), **Rintik** (awan
+  hujan). Pemilih karakter memakai geser ala game dan tombol konfirmasi.
+- Halaman **Riwayat** menampilkan kartu karakter aktif, grafik tanah/air/cahaya,
+  dan 14 sampel terakhir. Riwayat masih per sesi; belum disimpan permanen.
+- **Emosi ML** dijalankan di ponsel, bukan ESP32. Model XGBoost sintetis yang
+  sudah ada (4 fitur: tanah, air, cahaya, UV) dipetakan ke tiga emosi:
+  **Nyaman**, **Waspada**, **Perlu perhatian**. Aturan ambang tetap menjadi
+  pengaman: tanah <35% atau air <20% tidak boleh tampil sebagai "Nyaman".
+  Kartu prediksi menampilkan sinyal utama, arah tren 6 sampel, dan keyakinan
+  model. Label ini demo, bukan diagnosis tanaman.
+- Halaman utama menampilkan status "Belum ada perangkat terhubung" dan tidak
+  mengarang nilai saat tidak ada sampel.
+
+Alasan ML di ponsel: model sudah berupa JSON dan inferensi pohon murni Dart;
+ESP32 klasik tetap menjadi pengendali relay real-time yang deterministik, tanpa
+menambah beban flash/RAM atau risiko TinyML. Data tetap di LAN, tanpa server.
+Untuk lintas perangkat dalam satu jaringan, firmware masih mode AP (192.168.4.1);
+tahap berikutnya adalah mode STA pada hotspot/router bersama agar beberapa ESP32
+punya alamat berbeda di jaringan yang sama.
+
+Pemeriksaan lokal: `flutter analyze` bersih, **131 tes lulus, 2 dilewati**.
+Versi aplikasi `0.4.0+18`.
+
 ### Model XGBoost sintetis di Moss
 
 Model eksperimental dilatih dengan 60.000 baris buatan berdasarkan rentang

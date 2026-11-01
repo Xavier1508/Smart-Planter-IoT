@@ -193,7 +193,7 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
       ),
     );
     return MaterialApp(
-      title: 'Moss · Smart Planter',
+      title: 'Tunas · Smart Planter',
       debugShowCheckedModeBanner: false,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),

@@ -54,6 +54,23 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        val profile = getSharedPreferences("tunas_profile", MODE_PRIVATE)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/profile")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "read" -> result.success(profile.getString("json", ""))
+                    "write" -> {
+                        val json = call.argument<String>("json")
+                        if (json == null || json.length > 65536) {
+                            result.error("invalid", "Profile is invalid.", null)
+                        } else {
+                            profile.edit().putString("json", json).apply()
+                            result.success(null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/build_info")
             .setMethodCallHandler { call, result ->
                 if (call.method != "read") {

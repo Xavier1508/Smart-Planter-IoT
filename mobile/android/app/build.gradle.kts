@@ -36,7 +36,7 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "io.github.xavier1508.smart_planter"
-        manifestPlaceholders["appLabel"] = "Moss · Smart Planter"
+        manifestPlaceholders["appLabel"] = "Tunas · Smart Planter"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -72,7 +72,7 @@ android {
             // A disposable local preview must not replace the signed beta app.
             applicationIdSuffix = ".preview"
             versionNameSuffix = "-preview"
-            manifestPlaceholders["appLabel"] = "Moss · Pratinjau"
+            manifestPlaceholders["appLabel"] = "Tunas · Pratinjau"
         }
         release {
             // Never sign a distributable APK with an ephemeral debug key.

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'appearance.dart';
 import 'appearance_panel.dart';
 import 'app_version_panel.dart';
+import 'character_look.dart';
+import 'character_picker.dart';
 import 'devices_page.dart';
 import 'journal_page.dart';
 import 'local_wifi.dart';
@@ -13,9 +15,14 @@ import 'moss_app.dart';
 import 'moss_avatar.dart';
 import 'moss_gaze.dart';
 import 'moss_sky.dart';
+import 'plant_emotion.dart';
 import 'plant_state.dart';
 import 'plant_telemetry.dart';
+import 'prediction_card.dart';
+import 'profile_panel.dart';
+import 'profile_store.dart';
 import 'schedule.dart';
+import 'synthetic_xgboost.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({
@@ -75,6 +82,11 @@ class _DashboardState extends State<Dashboard> {
   List<ScheduleEntry> _schedules = const [];
   Timer? _scheduleTimer;
   bool _scheduleBusy = false;
+  final ProfileStore _profileStore = const ProfileStore();
+  ProfileSettings _profiles = ProfileSettings.defaults;
+  SyntheticXgboostModel? _emotionModel;
+  final List<HistoryPoint> _history = [];
+  int? _lastHistoryUptime;
 
   @override
   void initState() {
@@ -82,6 +94,8 @@ class _DashboardState extends State<Dashboard> {
     _attachLocalWifi(widget.localWifi);
     _listenToTelemetry();
     _loadSchedules();
+    _loadProfiles();
+    _loadEmotionModel();
     _scheduleTimer = Timer.periodic(
       const Duration(seconds: 1),
       (_) => unawaited(_runSchedules()),
@@ -117,12 +131,132 @@ class _DashboardState extends State<Dashboard> {
 
   void _attachLocalWifi(LocalWifiController? controller) {
     _ownsLocalWifi = controller == null;
-    _localWifi = controller ?? LocalWifiController();
+    _localWifi =
+        controller ??
+        LocalWifiController(
+          address: _profiles.active.host,
+          port: _profiles.active.port,
+        );
     _localWifiChanges = _localWifi.changes.listen((_) => _onLocalWifiChanged());
   }
 
+  Future<void> _loadProfiles() async {
+    final loaded = await _profileStore.read();
+    if (!mounted) return;
+    final previous = _profiles.active;
+    final changed =
+        loaded.active.host != previous.host ||
+        loaded.active.port != previous.port;
+    setState(() => _profiles = loaded);
+    if (widget.localWifi == null && changed) {
+      final wasWanted = _useLocalWifi;
+      _rebindLocalWifi();
+      if (wasWanted) unawaited(_localWifi.connect());
+    }
+  }
+
+  Future<void> _loadEmotionModel() async {
+    try {
+      final raw = await rootBundle.loadString('assets/ml/pattern-models.json');
+      final model = SyntheticXgboostModel.parse(raw);
+      if (mounted) setState(() => _emotionModel = model);
+    } catch (_) {
+      // The threshold rules still drive the presentation if the asset is
+      // unavailable; no invented model output is shown.
+    }
+  }
+
+  void _rebindLocalWifi() {
+    final previous = _localWifiChanges;
+    if (previous != null) unawaited(previous.cancel());
+    if (_ownsLocalWifi) _localWifi.dispose();
+    final active = _profiles.active;
+    _ownsLocalWifi = true;
+    _localWifi = LocalWifiController(address: active.host, port: active.port);
+    _localWifiChanges = _localWifi.changes.listen((_) => _onLocalWifiChanged());
+    _history.clear();
+    _lastHistoryUptime = null;
+  }
+
   void _onLocalWifiChanged() {
+    final sample = _localWifi.snapshot;
+    final uptime = sample?.uptimeMs;
+    if (sample != null && uptime != null && uptime != _lastHistoryUptime) {
+      _lastHistoryUptime = uptime;
+      _history.add(
+        HistoryPoint(
+          DateTime.now(),
+          PlantState.fromLocalWifi(
+            sample,
+            mqAverageAdc: _localWifi.mqAverageAdc,
+            mqAverageSamples: _localWifi.mqAverageSamples,
+            mqTrend: _localWifi.mqTrend,
+            mqGasIndex: _localWifi.mqGasIndex,
+            mqGasStatus: _localWifi.mqGasStatus,
+            mqGasBaselineMv: _localWifi.mqGasBaselineMv,
+          ),
+        ),
+      );
+      if (_history.length > 240) _history.removeAt(0);
+    }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _saveProfile(DeviceProfile profile) async {
+    final previous = _profiles.active;
+    setState(() => _profiles = _profiles.upsert(profile));
+    await _profileStore.write(_profiles);
+    if (widget.localWifi == null &&
+        profile.id == _profiles.activeId &&
+        (profile.host != previous.host || profile.port != previous.port)) {
+      final wasWanted = _useLocalWifi;
+      _rebindLocalWifi();
+      if (wasWanted) unawaited(_localWifi.connect());
+    }
+  }
+
+  Future<void> _selectProfile(String id) async {
+    if (id == _profiles.activeId) return;
+    setState(() {
+      _profiles = _profiles.copyWith(activeId: id);
+      _serialSnapshot = null;
+      _history.clear();
+      _lastHistoryUptime = null;
+    });
+    await _profileStore.write(_profiles);
+    if (widget.localWifi == null) {
+      final wasWanted = _useLocalWifi;
+      _rebindLocalWifi();
+      if (wasWanted) unawaited(_localWifi.connect());
+    }
+  }
+
+  Future<void> _deleteProfile(String id) async {
+    if (_profiles.devices.length <= 1) return;
+    final wasActive = id == _profiles.activeId;
+    setState(() => _profiles = _profiles.remove(id));
+    await _profileStore.write(_profiles);
+    if (wasActive && widget.localWifi == null) {
+      _rebindLocalWifi();
+      if (_useLocalWifi) unawaited(_localWifi.connect());
+    }
+  }
+
+  Future<void> _pickCharacter() async {
+    final active = _profiles.active;
+    final selected = await showCharacterPicker(
+      context,
+      current: active.look,
+      render3d: widget.render3d,
+    );
+    if (selected == null || !mounted) return;
+    final keepName = active.charName != active.look.name;
+    await _saveProfile(
+      active.copyWith(
+        characterId: selected.id,
+        charName: keepName ? active.charName : selected.name,
+      ),
+    );
   }
 
   void _connectLocalWifi() {
@@ -336,6 +470,15 @@ class _DashboardState extends State<Dashboard> {
                   mqGasBaselineMv: _localWifi.mqGasBaselineMv,
                 ))
         : (_serialSnapshot ?? _liveState);
+    final active = _profiles.active;
+    final recent = _history.length > PlantEmotionEngine.window
+        ? _history
+              .sublist(_history.length - PlantEmotionEngine.window)
+              .map((point) => point.state)
+              .toList()
+        : _history.map((point) => point.state).toList();
+    final emotion = PlantEmotionEngine(_emotionModel)
+        .evaluate(state, recent: recent);
     return Scaffold(
       body: SafeArea(
         child: switch (_page) {
@@ -356,8 +499,16 @@ class _DashboardState extends State<Dashboard> {
             selectedSky: widget.appearance.sky,
             onSkyChanged: widget.onSkyChanged,
             onRefresh: _refresh,
+            profile: active,
+            emotion: emotion,
+            onPickCharacter: _pickCharacter,
+            onOpenSettings: () => setState(() => _page = 3),
           ),
-          1 => const JournalPage(),
+          1 => JournalPage(
+            history: List<HistoryPoint>.unmodifiable(_history),
+            profile: active,
+            emotion: emotion,
+          ),
           2 => DevicesPage(
             state: state,
             localSelected: _useLocalWifi,
@@ -384,6 +535,11 @@ class _DashboardState extends State<Dashboard> {
             onThemeChanged: widget.onThemeChanged,
             onSkyChanged: widget.onSkyChanged,
             onManualTimeChanged: widget.onManualTimeChanged,
+            profiles: _profiles,
+            onSelectProfile: _selectProfile,
+            onSaveProfile: _saveProfile,
+            onDeleteProfile: _deleteProfile,
+            render3d: widget.render3d,
           ),
         },
       ),
@@ -431,6 +587,10 @@ class _Home extends StatelessWidget {
     required this.selectedSky,
     required this.onSkyChanged,
     required this.onRefresh,
+    required this.profile,
+    required this.emotion,
+    required this.onPickCharacter,
+    required this.onOpenSettings,
   });
 
   final PlantState state;
@@ -445,6 +605,17 @@ class _Home extends StatelessWidget {
   final SkyChoice selectedSky;
   final ValueChanged<SkyChoice> onSkyChanged;
   final Future<void> Function() onRefresh;
+  final DeviceProfile profile;
+  final EmotionReading emotion;
+  final VoidCallback onPickCharacter;
+  final VoidCallback onOpenSettings;
+
+  bool get _deviceConnected =>
+      state.isLive ||
+      state.isSerialSnapshot ||
+      localStatus == LocalWifiStatus.live ||
+      localStatus == LocalWifiStatus.waiting ||
+      localStatus == LocalWifiStatus.connecting;
 
   String _percent(int? value) => value == null ? '—' : '$value%';
 
@@ -490,12 +661,23 @@ class _Home extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text(
-                            'Ruang Moss',
-                            style: TextStyle(
+                          Text(
+                            'Ruang ${profile.charName}',
+                            style: const TextStyle(
                               fontSize: 25,
                               fontWeight: FontWeight.w700,
                               letterSpacing: -0.8,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            _deviceConnected
+                                ? profile.deviceName
+                                : 'Belum ada perangkat terhubung',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: mutedColor,
                             ),
                           ),
                         ],
@@ -511,7 +693,9 @@ class _Home extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 22),
+                const SizedBox(height: 14),
+                _Notice(live: state.isLive, sourceNotice: sourceNotice),
+                const SizedBox(height: 14),
                 MossSky(
                   sky: sky,
                   gaze: gaze,
@@ -527,7 +711,9 @@ class _Home extends StatelessWidget {
                             const SizedBox(width: 7),
                             Expanded(
                               child: Text(
-                                state.moodLabel.toUpperCase(),
+                                emotion.available
+                                    ? emotion.emotion.label.toUpperCase()
+                                    : state.moodLabel.toUpperCase(),
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w800,
@@ -568,16 +754,28 @@ class _Home extends StatelessWidget {
                           ),
                           child: render3d
                               ? MossAvatar(
+                                  key: ValueKey(
+                                    'avatar-${profile.characterId}',
+                                  ),
                                   mood: mood,
+                                  emotion: emotion.emotion,
+                                  look: profile.look,
                                   sky: sky,
                                   gaze: gaze,
                                   atmosphere: atmosphere,
                                 )
                               : Center(
                                   child: Icon(
-                                    Icons.spa_outlined,
+                                    switch (profile.look.accessory) {
+                                      CharacterAccessory.leafCrown =>
+                                        Icons.eco_rounded,
+                                      CharacterAccessory.sunHat =>
+                                        Icons.wb_sunny_rounded,
+                                      CharacterAccessory.rainCloud =>
+                                        Icons.water_drop_rounded,
+                                    },
                                     size: 88,
-                                    color: skyHeaderInk,
+                                    color: profile.look.accentColor,
                                   ),
                                 ),
                         ),
@@ -636,6 +834,23 @@ class _Home extends StatelessWidget {
                                 color: skyInk,
                               ),
                             ),
+                            const SizedBox(height: 4),
+                            TextButton.icon(
+                              onPressed: onPickCharacter,
+                              icon: Icon(
+                                Icons.auto_awesome_rounded,
+                                size: 15,
+                                color: skyInk,
+                              ),
+                              label: Text(
+                                '${profile.charName} · ganti karakter',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: skyInk,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -643,7 +858,11 @@ class _Home extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 14),
-                _Notice(live: state.isLive, sourceNotice: sourceNotice),
+                if (!_deviceConnected) ...[
+                  _NoDeviceNotice(onOpenSettings: onOpenSettings),
+                  const SizedBox(height: 10),
+                ],
+                PredictionCard(reading: emotion, look: profile.look),
                 const SizedBox(height: 25),
                 Row(
                   children: [
@@ -831,6 +1050,53 @@ class _StatusPill extends StatelessWidget {
             color: live ? forest : muted,
           ),
         ),
+      ],
+    ),
+  );
+}
+
+class _NoDeviceNotice extends StatelessWidget {
+  const _NoDeviceNotice({required this.onOpenSettings});
+
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+    decoration: BoxDecoration(
+      color: context.mossColors.primaryContainer,
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Row(
+      children: [
+        Icon(
+          Icons.devices_other_rounded,
+          size: 22,
+          color: context.mossColors.primary,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Belum ada perangkat terhubung',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'No device has connected. Daftarkan planter dan pilih profilnya.',
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.35,
+                  color: context.mossColors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 6),
+        TextButton(onPressed: onOpenSettings, child: const Text('Atur')),
       ],
     ),
   );
@@ -1092,6 +1358,11 @@ class _SettingsPage extends StatelessWidget {
     required this.onThemeChanged,
     required this.onSkyChanged,
     required this.onManualTimeChanged,
+    required this.profiles,
+    required this.onSelectProfile,
+    required this.onSaveProfile,
+    required this.onDeleteProfile,
+    required this.render3d,
   });
   final Widget? cloudSettings;
   final String? serialMessage;
@@ -1108,6 +1379,11 @@ class _SettingsPage extends StatelessWidget {
   final ValueChanged<ThemeMode> onThemeChanged;
   final ValueChanged<SkyChoice> onSkyChanged;
   final ValueChanged<int> onManualTimeChanged;
+  final ProfileSettings profiles;
+  final Future<void> Function(String) onSelectProfile;
+  final Future<void> Function(DeviceProfile) onSaveProfile;
+  final Future<void> Function(String) onDeleteProfile;
+  final bool render3d;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -1141,6 +1417,19 @@ class _SettingsPage extends StatelessWidget {
       ),
       const Divider(height: 32),
       ?cloudSettings,
+      ProfilePanel(
+        settings: profiles,
+        localSelected: localSelected,
+        localStatus: localStatus,
+        localMessage: localMessage,
+        onConnect: onConnectLocal,
+        onDisconnect: onDisconnectLocal,
+        onSave: onSaveProfile,
+        onSelect: onSelectProfile,
+        onDelete: onDeleteProfile,
+        render3d: render3d,
+      ),
+      const Divider(height: 32),
       const Text(
         'Wi-Fi lokal ESP32',
         style: TextStyle(fontWeight: FontWeight.w700),
