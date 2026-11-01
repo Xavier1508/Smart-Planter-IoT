@@ -267,7 +267,8 @@ class _DashboardState extends State<Dashboard> {
     final loaded = await _scheduleStore.read();
     if (!mounted) return;
     setState(() {
-      _schedules = loaded..sort((a, b) => a.at.compareTo(b.at));
+      _schedules = List<ScheduleEntry>.of(loaded)
+        ..sort((a, b) => a.at.compareTo(b.at));
     });
   }
 
