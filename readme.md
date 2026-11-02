@@ -1320,7 +1320,10 @@ membaik.
    `mobile/supabase/migrations/20261102120000_ack_device_command_idempotent.sql`
    di SQL Editor Supabase.
 2. Deploy ulang Edge Function `device-api` dari
-   `mobile/supabase/functions/device-api/index.ts`.
+   `mobile/supabase/functions/device-api/index.ts`. Pertahankan
+   **JWT verification OFF** karena perangkat memakai header
+   `x-device-id`/`x-device-token`, bukan Supabase JWT. Dengan CLI:
+   `supabase functions deploy device-api --no-verify-jwt`.
 3. Uji route baru dengan token perangkat:
 
    ```text
@@ -1365,6 +1368,7 @@ Yang **belum** diuji: flash v38 ke papan, koneksi STA ke router nyata, handshake
 | Binary firmware | 1.093.872 byte, SHA-256 `b08ca79bdaab566f442f39dc582ca6dbd7610d00e6b808541d1a2f349314ad49` |
 | `flutter analyze --no-pub` | Tidak ada issue |
 | `flutter test --no-pub` | 155 lulus, 2 dilewati |
+| Host test C++ `sensor-telemetry-test` | Lulus (fixture data only) |
 | Sintaks Edge Function (`node --experimental-strip-types --check`) | Lulus |
 | Deploy Edge Function `sync` | Belum dilakukan dari sesi ini; butuh akses dashboard/CLI Supabase |
 | Flash v39 dan pengukuran latency fisik | Belum dilakukan; harus diuji operator |

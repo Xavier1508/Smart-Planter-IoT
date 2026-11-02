@@ -248,7 +248,7 @@ int main() {
   assert(planter::kSoilAdcReadEnabled);
   assert(planter::kLightAutomationEnabled);
   assert(planter::kPumpAllowEstimatedSoil);
-  assert(planter::kFirmwareVersion == 31);
+  assert(planter::kFirmwareVersion == 39);
 
   // Bounded manual-control protocol.
   auto control = planter::parseControlLine("CTRL pump=on dur=5 id=12");
@@ -713,7 +713,7 @@ int main() {
   pumpControl.accept(305000 + planter::kPumpRuntimeSoakMs, input);
   assert(pumpControl.status().pumpOn);
   input.soilAdcRaw = 1200;
-  pumpControl.accept(2110000, input);
+  pumpControl.accept(910000, input);
   assert(!pumpControl.status().pumpOn);
   assert(std::strcmp(pumpControl.status().pumpReason, "soil_moist") == 0);
 
@@ -973,7 +973,7 @@ int main() {
                              "\"adc_calibration_source\":\"efuse_vref\"") != nullptr);
   assert(std::strstr(output, "\"environment_compensation\":\"not_applied\"") != nullptr);
   assert(std::strstr(output, "\"observation_label\":null") != nullptr);
-  assert(std::strstr(output, "\"firmware_version\":31") != nullptr);
+  assert(std::strstr(output, "\"firmware_version\":39") != nullptr);
   char expectedSoilScale[96];
   std::snprintf(expectedSoilScale, sizeof(expectedSoilScale),
                 "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d",
@@ -1234,10 +1234,10 @@ int main() {
   assert(planter::observedWaterRelativePercent(rawReferenceFixture) == 50);
   assert(formatTelemetry(rawReferenceFixture, output, sizeof(output), &reported));
   assert(std::strstr(output, "\"observation_scale\":{\"relative_percent\":50,") != nullptr);
-  assert(std::strstr(output, "\"relative_percent\":50,\"low\":true,\"empty\":false") != nullptr);
+  assert(std::strstr(output, "\"relative_percent\":50,\"low\":false,\"empty\":false") != nullptr);
   assert(std::strstr(output, "\"pump_cmd\":false") != nullptr);
   assert(planter::previewRules(rawReferenceFixture).waterPercent == 50);
-  assert(planter::previewRules(rawReferenceFixture).waterLow == 1);
+  assert(planter::previewRules(rawReferenceFixture).waterLow == 0);
   std::cout << "TEST_FIXTURE " << output << '\n';
   rawReferenceFixture.waterAdcRaw = planter::kWaterObservedNearFullMeanAdc;
   assert(planter::observedWaterRelativePercent(rawReferenceFixture) == 100);
