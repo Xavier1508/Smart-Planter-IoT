@@ -403,7 +403,7 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       localHttpServer.send(200, "application/json", latestTelemetry);
     });
     localHttpServer.on("/api/v1/health", HTTP_GET, []() {
-      char body[640];
+      char body[800];
       snprintf(body, sizeof(body),
                "{\"firmware_version\":%u,\"uptime_ms\":%lu,"
                "\"hardware_id\":\"%s\","
@@ -411,7 +411,8 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
                "\"sta_status\":%d,\"scan_cached\":%lu,"
                "\"ap_clients\":%d,\"tx_power\":%d,"
                "\"local_ap\":%s,\"sta_connected\":%s,\"cloud_enabled\":%s,"
-               "\"cloud_online\":%s,\"buffered_batches\":%lu,"
+               "\"cloud_online\":%s,\"storage_ready\":%s,"
+               "\"cloud_status\":\"%s\",\"buffered_batches\":%lu,"
                "\"dropped_samples\":%lu,\"free_heap\":%lu}",
                planter::kFirmwareVersion,
                static_cast<unsigned long>(millis()),
@@ -426,6 +427,8 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
                WiFi.status() == WL_CONNECTED ? "true" : "false",
                cloudLink.enabled() ? "true" : "false",
                cloudLink.cloudOnline() ? "true" : "false",
+               cloudLink.storageReady() ? "true" : "false",
+               cloudLink.statusText(),
                static_cast<unsigned long>(cloudLink.bufferedBatches()),
                static_cast<unsigned long>(cloudLink.droppedSamples()),
                static_cast<unsigned long>(ESP.getFreeHeap()));
@@ -909,85 +912,26 @@ void lcdLine(uint8_t row, const char* text) {
   lcd.print(padded);
 }
 
-void updateLcd(const planter::SensorSnapshot& sample,
-               const planter::ControlStatus& control) {
-  const unsigned page = planter::lcdPageForUptime(sample.uptimeMs);
-  char first[17];
-  char second[17];
-  if (page == 0) {
-    char temperature[8] = "--";
-    char humidity[8] = "--";
-    if (sample.dhtEnabled && planter::validTemperature(sample.temperatureC))
-      snprintf(temperature, sizeof(temperature), "%.0fC", sample.temperatureC);
-    if (sample.dhtEnabled && planter::validHumidity(sample.humidityPercent))
-      snprintf(humidity, sizeof(humidity), "%.0f%%", sample.humidityPercent);
-    snprintf(first, sizeof(first), "T:%s H:%s", temperature, humidity);
-    const int soil = planter::observedSoilRelativePercent(sample);
-    if (soil >= 0) snprintf(second, sizeof(second), "Soil:~%d%%", soil);
-    else snprintf(second, sizeof(second), "Soil:--");
-  } else if (page == 1) {
-    const int light = planter::relativePercent(sample.lightAdcRaw,
-                                               planter::kLightRelativeZeroAdc,
-                                               planter::kLightRelativeFullAdc);
-    if (light >= 0) snprintf(first, sizeof(first), "Light:~%d%%", light);
-    else snprintf(first, sizeof(first), "Light:--");
-    const int uvAdcPercent = planter::relativePercent(sample.uvAdcRaw, 0, 4095);
-    if (uvAdcPercent >= 0) {
-      // ADC fraction only; this is not a UV index or lamp control input.
-      snprintf(second, sizeof(second), "UV ADC:~%d%%", uvAdcPercent);
-    } else {
-      snprintf(second, sizeof(second), "UV:--");
-    }
-  } else if (page == 2) {
-    const int water = planter::observedWaterRelativePercent(sample);
-    planter::formatWaterLcd(first, sizeof(first), water, sample.waterAdcRaw);
-    if (sample.mqEnabled && sample.mqAdcReadable &&
-        planter::validAdcRaw(sample.mqAdcRaw)) {
-      const int mqAdcPercent = planter::relativePercent(sample.mqAdcRaw, 0, 4095);
-      // ADC fraction only; not a gas concentration or air-quality percentage.
-      snprintf(second, sizeof(second), "MQ ADC:~%d%%", mqAdcPercent);
-    } else if (sample.mqEnabled &&
-               (sample.mqDigitalRaw == 0 || sample.mqDigitalRaw == 1)) {
-      snprintf(second, sizeof(second), "MQ digital: %d", sample.mqDigitalRaw);
-    } else {
-      snprintf(second, sizeof(second), "MQ:--");
-    }
-  } else if (page == 3) {
-    // "cmd" is the requested output, not a measured relay/contact state.
-    // The soil band is diagnostic only and never bypasses the pump guards.
-    const planter::PumpSoilBand soilBand = sample.soilEnabled
-        ? planter::pumpSoilBand(sample.soilAdcRaw)
-        : planter::PumpSoilBand::unavailable;
-    snprintf(first, sizeof(first), "P:%s cmd %s", control.pumpOn ? "ON" : "OFF",
-             planter::pumpSoilBandLcd(soilBand));
-    if (!control.pumpOn && control.pumpCooldownRemainingS > 0) {
-      if (control.pumpRuntimeLockout) {
-        const unsigned long minutes =
-            (control.pumpCooldownRemainingS + 59) / 60;
-        snprintf(second, sizeof(second), "LOCK %lum", minutes);
-      } else {
-        snprintf(second, sizeof(second), "WAIT %lus",
-                 static_cast<unsigned long>(control.pumpCooldownRemainingS));
-      }
-    } else {
-      snprintf(second, sizeof(second), "L:%s cmd",
-               control.lightOn ? "ON" : "OFF");
-    }
-  } else if (MOSS_CLOUD_ENABLED && sample.uptimeMs < 12000 &&
-             MOSS_DEVICE_CLAIM_CODE[0] != '\0') {
-    // Physical claim window: the code is shown only on the LCD, never logged.
-    snprintf(first, sizeof(first), "Cloud Pairing");
-    snprintf(second, sizeof(second), "Claim:%.10s", MOSS_DEVICE_CLAIM_CODE);
-  } else if (localWifiReady) {
-    // The password is shown only on the physical LCD, not serial or telemetry.
-    snprintf(first, sizeof(first), "%s", localWifiName);
-    snprintf(second, sizeof(second), "PW:%s", localWifiPassword);
-  } else {
-    snprintf(first, sizeof(first), "WiFi:--");
-    snprintf(second, sizeof(second), "Local AP failed");
+void updateLcd(uint32_t nowMs) {
+  // The LCD is a pairing aid, not a rotating sensor dashboard. The device ID
+  // scrolls on line 1; the claim code stays fixed on line 2. This avoids the
+  // user having to chase a page while typing credentials into the app.
+  static char idText[48] = {};
+  if (idText[0] == '\0') {
+    snprintf(idText, sizeof(idText), "  ID:%s  ", MOSS_DEVICE_ID);
   }
-  lcdLine(0, first);
-  lcdLine(1, second);
+  const size_t length = strlen(idText);
+  char window[17] = {};
+  if (length > 0) {
+    const size_t offset = (nowMs / 450U) % length;
+    for (size_t index = 0; index < 16; ++index) {
+      window[index] = idText[(offset + index) % length];
+    }
+  }
+  lcdLine(0, window);
+  char claim[17] = {};
+  snprintf(claim, sizeof(claim), "Claim:%s", MOSS_DEVICE_CLAIM_CODE);
+  lcdLine(1, claim);
 }
 
 void printSample(uint32_t nowMs) {
@@ -1101,7 +1045,7 @@ void printSample(uint32_t nowMs) {
                                           sizeof(cloud.capturedAt));
     cloudLink.enqueueSample(cloud);
   }
-  updateLcd(sample, control);
+  updateLcd(sample.uptimeMs);
 }
 
 }  // namespace
@@ -1211,6 +1155,11 @@ void loop() {
     ESP.restart();
   }
   const uint32_t nowMs = millis();
+  static uint32_t lastLcdUpdateMs = 0;
+  if (nowMs - lastLcdUpdateMs >= 400) {
+    lastLcdUpdateMs = nowMs;
+    updateLcd(nowMs);
+  }
   if (watchdogReady && esp_task_wdt_reset() != ESP_OK) {
     watchdogReady = false;
     relayController.inhibit(nowMs, "watchdog_unavailable");

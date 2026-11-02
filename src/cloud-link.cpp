@@ -175,13 +175,16 @@ bool CloudLink::begin(const char* baseUrl, const char* deviceId,
   password_ = password;
   bootId_ = hexBootId();
 
-  if (!LittleFS.begin(true)) {
-    setStatus("LittleFS unavailable; offline buffer disabled.");
-    return false;
+  storageReady_ = LittleFS.begin(true);
+  if (storageReady_) {
+    LittleFS.mkdir("/q");
+    buffered_ = countBufferedBatches();
+    nextFileSequence_ = buffered_ == 0 ? 1 : buffered_ + 1;
+  } else {
+    // Cloud connectivity must not depend on the optional offline queue.
+    // flushBatch() falls back to a direct upload when persistBatch() fails.
+    setStatus("LittleFS unavailable; cloud will run without offline buffer.");
   }
-  LittleFS.mkdir("/q");
-  buffered_ = countBufferedBatches();
-  nextFileSequence_ = buffered_ == 0 ? 1 : buffered_ + 1;
   sampleQueue_ = xQueueCreate(kSampleQueueLength, sizeof(CloudSample));
   commandQueue_ = xQueueCreate(kCommandQueueLength, sizeof(CloudCommand));
   ackQueue_ = xQueueCreate(kAckQueueLength, sizeof(Ack));
