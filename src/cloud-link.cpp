@@ -13,6 +13,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "cloud-config.h"
 #include "planter-config.h"
 
 namespace planter {

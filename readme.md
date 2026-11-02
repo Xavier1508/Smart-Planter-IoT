@@ -6,10 +6,10 @@ Aplikasi Android menggunakan karakter bernama Moss sebagai antarmuka interaktif.
 
 ## Status proyek
 
-Prototipe v36 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
+Prototipe v37 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
 
 - Aplikasi Android `0.9.0+24` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
-- Firmware v36 memakai AP+STA, NTP, HTTPS ke Edge Function, buffer batch LittleFS, polling perintah, ACK, dan deduplikasi perintah.
+- Firmware v37 memakai AP+STA, NTP, HTTPS ke Edge Function, buffer batch LittleFS, polling perintah, ACK, dan deduplikasi perintah.
 - Supabase sudah berisi migrasi skema, RLS, RPC perintah atomik, dan Edge Function `device-api`.
 - Firmware sudah dikompilasi; unggahan ke papan dan pengujian sensor/tanaman nyata belum dilakukan dalam sesi ini.
 - Endpoint ingest sudah diuji dengan satu baris uji melalui HTTPS; baris uji tersebut dihapus kembali sehingga dataset tidak tercemar.
@@ -38,13 +38,13 @@ Ketika belum ada data sensor valid, aplikasi menampilkan kondisi menunggu,
 bukan angka yang dibuat-buat. Perintah relay adalah permintaan, bukan bukti
 keadaan kontak fisik.
 
-## Arsitektur cloud v36
+## Arsitektur cloud v37
 
 ```text
 DHT11 / soil / LDR / UV / water / MQ135
                   |
                   v
-      ESP32 v36: sampling 5 s, relay safety, LCD
+      ESP32 v37: sampling 5 s, relay safety, LCD
                   |
        batch 6 sampel / 30 s + LittleFS fallback
                   |
@@ -1279,13 +1279,13 @@ Pastikan rangkaian dan tegangan GPIO aman sebelum menyalakan ESP32; baterai pomp
 - **Suhu/kelembapan udara:** pastikan model DHT yang digunakan dan bandingkan dengan termometer serta higrometer acuan pada kondisi yang sesuai. Hasil bacaan yang gagal tetap tidak tersedia, bukan nol.
 - **Water level:** versi 9 menambahkan perbandingan ADC mentah terhadap acuan pengguna 850/900; nilainya belum menjadi level atau persentase terkalibrasi. MQ135 belum menghasilkan konsentrasi tepercaya tanpa rangkaian dan kalibrasi yang sesuai.
 
-## Bukti pengujian v36 (2 November 2026)
+## Bukti pengujian v37 (2 November 2026)
 
 Pengujian yang benar-benar dijalankan:
 
 | Pemeriksaan | Hasil |
 |---|---|
-| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 55.512 B (16,9%), flash 894.121 B (68,2%) |
+| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 56.876 B (17,4%), flash 1.085.777 B (82,8%) |
 | `flutter analyze --no-pub` | Tidak ada issue |
 | `flutter test --no-pub` | 154 lulus, 2 dilewati (fixture loopback tidak dikonfigurasi) |
 | `:app:compileProductionReleaseKotlin` | Sukses (signing release tidak tersedia lokal) |
@@ -1302,7 +1302,7 @@ Pengujian yang benar-benar dijalankan:
 | Baris uji ingest | Dihapus; jumlah reading kembali 0 |
 | Perangkat setelah transaksi uji | Tetap `owner_id = null`, claim code dipulihkan |
 
-Yang **belum** diuji: flash v36 ke papan, koneksi STA ke router nyata, handshake TLS ke Supabase dari ESP32, buffer saat kabel internet dicabut, eksekusi relay cloud pada beban, dan dataset 1.000 baris dari tanaman nyata. Semua klaim di atas tidak boleh dibaca sebagai bukti pengujian fisik tersebut.
+Yang **belum** diuji: flash v37 ke papan, koneksi STA ke router nyata, handshake TLS ke Supabase dari ESP32, buffer saat kabel internet dicabut, eksekusi relay cloud pada beban, dan dataset 1.000 baris dari tanaman nyata. Semua klaim di atas tidak boleh dibaca sebagai bukti pengujian fisik tersebut.
 
 ## Mencoba aplikasi
 
