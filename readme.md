@@ -1285,7 +1285,7 @@ Pengujian yang benar-benar dijalankan:
 
 | Pemeriksaan | Hasil |
 |---|---|
-| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 54.408 B (16,6%), flash 891.753 B (68,0%) |
+| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 54.408 B (16,6%), flash 891.865 B (68,0%) |
 | `flutter analyze --no-pub` | Tidak ada issue |
 | `flutter test --no-pub` | 154 lulus, 2 dilewati (fixture loopback tidak dikonfigurasi) |
 | `:app:compileProductionReleaseKotlin` | Sukses (signing release tidak tersedia lokal) |

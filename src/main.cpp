@@ -297,6 +297,7 @@ async function poll(){
     busy=false; $('connect').disabled=false;
   }
 }
+$('ssid-select').addEventListener('change',()=>{if($('ssid-select').value) $('ssid-manual').value='';});
 fetch('/api/v1/health').then(r=>r.json()).then(j=>{$('device-id').textContent=j.hardware_id||'-';}).catch(()=>{$('device-id').textContent='tidak tersedia';});
 poll();
 setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di sekitar perangkat.');
