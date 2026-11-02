@@ -46,7 +46,7 @@
 
 namespace planter {
 
-constexpr unsigned kFirmwareVersion = 38;
+constexpr unsigned kFirmwareVersion = 39;
 
 // Historical project assignments, not a verified wiring diagram.
 constexpr int kDhtPin = 4;
@@ -137,9 +137,17 @@ constexpr uint32_t kPumpMaxOnMs = 300000;
 constexpr uint32_t kPumpManualMaxOnMs = 30000;
 constexpr uint32_t kLightManualMaxOnMs = 1800000;  // 30 minutes
 constexpr uint32_t kPumpCooldownMs = 30000;
-// After hitting the hard cap, lock out automatic watering for 30 minutes so a
+// After hitting the hard cap, lock out automatic watering for 10 minutes so a
 // failed sensor cannot flood the pot. A manual command can still be used.
-constexpr uint32_t kPumpRuntimeSoakMs = 1800000;
+constexpr uint32_t kPumpRuntimeSoakMs = 600000;
+// If the soil reading does not move after two minutes of automatic watering,
+// stop and retry later instead of running the full five-minute cap.
+constexpr uint32_t kPumpEffectCheckMs = 120000;
+constexpr int kPumpEffectMinDelta = 20;
+constexpr uint32_t kPumpNoResponseCooldownMs = 300000;
+// A brownout boot keeps the cloud reachable but holds automatic watering for
+// one minute so the pump cannot immediately repeat the power event.
+constexpr uint32_t kBrownoutPumpHoldMs = 60000;
 constexpr uint32_t kLightMinStateMs = 5000;
 constexpr uint32_t kSampleStaleMs = 15000;
 constexpr uint32_t kWatchdogTimeoutSeconds = 8;

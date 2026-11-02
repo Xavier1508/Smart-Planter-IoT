@@ -661,7 +661,7 @@ class _DashboardState extends State<Dashboard> {
     if (!reading.isFreshAt(now, maxAge: _readingMaxAge)) {
       if (!_liveState.isLive) {
         setState(() {
-          _sourceNotice = 'Pembacaan terlalu lama atau waktu tidak sesuai.';
+          _sourceNotice = 'Perangkat belum mengirim data baru; periksa daya/Wi-Fi perangkat.';
         });
       }
       return;
@@ -728,7 +728,8 @@ class _DashboardState extends State<Dashboard> {
       if (!mounted) return;
       setState(() {
         _liveState = const PlantState.waiting();
-        _sourceNotice = 'Data sensor sudah lama; menunggu pembaruan.';
+        _sourceNotice =
+            'Perangkat belum mengirim data baru; periksa daya/Wi-Fi perangkat.';
       });
     });
   }
@@ -738,7 +739,7 @@ class _DashboardState extends State<Dashboard> {
     _expiry?.cancel();
     setState(() {
       _liveState = const PlantState.waiting();
-      _sourceNotice = 'Koneksi data terputus.';
+      _sourceNotice = 'Koneksi data terputus; mencoba menyambung ulang.';
     });
     final cloud = widget.cloud;
     if (cloud != null && !_useLocalWifi && cloud.hasDevice) {

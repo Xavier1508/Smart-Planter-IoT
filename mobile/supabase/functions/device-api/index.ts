@@ -297,6 +297,34 @@ function sampleRow(
   };
 }
 
+
+// Idempotent ACK helper for the combined sync path. A command may be
+// superseded or expired between lease and acknowledgement; that is a normal
+// race, not a server error, so it must not consume a retry cycle.
+async function applyAck(deviceId: string, raw: unknown): Promise<void> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return;
+  const ack = raw as JsonRecord;
+  const commandId = text(ack.command_id, 36);
+  if (!commandId || !/^[0-9a-f-]{36}$/i.test(commandId)) return;
+  if (typeof ack.ok !== "boolean") return;
+  const errorCode = ack.error_code == null ? null : text(ack.error_code, 64);
+  const result = ack.result && typeof ack.result === "object" &&
+      !Array.isArray(ack.result)
+    ? ack.result as JsonRecord
+    : {};
+  try {
+    await admin.rpc("ack_device_command", {
+      p_device_id: deviceId,
+      p_command_id: commandId,
+      p_ok: ack.ok,
+      p_error_code: errorCode,
+      p_result: result,
+    });
+  } catch (_) {
+    // Terminal (superseded/expired) commands are acknowledged as a no-op.
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const url = new URL(req.url);
@@ -304,7 +332,7 @@ Deno.serve(async (req) => {
   if (rateLimited(`${req.headers.get("x-device-id") ?? req.headers.get("x-forwarded-for") ?? "unknown"}:${action}`, 180)) {
     return json(429, { error: "rate_limited" }, { "Retry-After": "60" });
   }
-  if (action !== "register" && action !== "ingest" && action !== "commands" && action !== "ack") {
+  if (action !== "register" && action !== "ingest" && action !== "commands" && action !== "ack" && action !== "sync") {
     return json(404, { error: "not_found" });
   }
   if (action === "commands" ? req.method !== "GET" : req.method !== "POST") {
@@ -374,6 +402,73 @@ Deno.serve(async (req) => {
       });
       if (error) throw error;
       return json(200, { ok: true, command: data });
+    }
+
+    if (action === "sync") {
+      const body = await readJson(req);
+      const bootId = text(body.boot_id, 16)?.toLowerCase() ?? "";
+      const firmware = integer(body.firmware_version, 1, 10000);
+      const samples = Array.isArray(body.samples) ? body.samples : [];
+      const acks = Array.isArray(body.acks) ? body.acks.slice(0, 8) : [];
+      if (!bootPattern.test(bootId)) return json(400, { error: "boot_id" });
+      if (firmware === null) return json(400, { error: "firmware_version" });
+      if (samples.length > MAX_BATCH) {
+        return json(400, { error: "samples" });
+      }
+      const replay = body.replay === true ||
+        req.headers.get("x-moss-replay") === "1";
+
+      // ACKs are terminal state, not part of the telemetry transaction. A
+      // failure here must never reject the samples or the command lease.
+      await Promise.allSettled(acks.map((ack) => applyAck(device.id, ack)));
+
+      const rows: JsonRecord[] = [];
+      const rejected: { index: number; code: string }[] = [];
+      samples.forEach((sample, index) => {
+        const parsed = sampleRow(sample, index, device.id, replay);
+        if (parsed.row) {
+          parsed.row.boot_id = bootId;
+          parsed.row.firmware_version = firmware;
+          rows.push(parsed.row);
+        } else if (parsed.rejected) {
+          rejected.push(parsed.rejected);
+        }
+      });
+
+      let accepted = 0;
+      if (rows.length > 0) {
+        const { data, error } = await admin
+          .from("planter_readings")
+          .upsert(rows, {
+            onConflict: "device_id,boot_id,uptime_ms",
+            ignoreDuplicates: true,
+          })
+          .select("id");
+        if (error) throw error;
+        accepted = data?.length ?? 0;
+      }
+
+      const { data: commands, error: leaseError } = await admin.rpc(
+        "lease_device_commands",
+        { p_device_id: device.id, p_limit: 4 },
+      );
+      if (leaseError) throw leaseError;
+
+      await admin
+        .from("planter_devices")
+        .update({
+          firmware_version: firmware,
+          last_seen_at: new Date().toISOString(),
+        })
+        .eq("id", device.id);
+
+      return json(200, {
+        accepted,
+        duplicates: rows.length - accepted,
+        rejected,
+        commands: commands ?? [],
+        server_time: new Date().toISOString(),
+      });
     }
 
     // ingest

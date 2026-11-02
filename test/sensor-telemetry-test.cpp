@@ -707,15 +707,34 @@ int main() {
   assert(!pumpControl.status().pumpOn);
   assert(std::strcmp(pumpControl.status().pumpReason, "runtime_limit") == 0);
   input.soilAdcRaw = 39;
-  pumpControl.accept(2104999, input);
+  pumpControl.accept(305000 + planter::kPumpRuntimeSoakMs - 1, input);
   assert(!pumpControl.status().pumpOn);
   assert(std::strcmp(pumpControl.status().pumpReason, "runtime_limit") == 0);
-  pumpControl.accept(2105000, input);
+  pumpControl.accept(305000 + planter::kPumpRuntimeSoakMs, input);
   assert(pumpControl.status().pumpOn);
   input.soilAdcRaw = 1200;
   pumpControl.accept(2110000, input);
   assert(!pumpControl.status().pumpOn);
   assert(std::strcmp(pumpControl.status().pumpReason, "soil_moist") == 0);
+
+  planter::RelayController noResponsePump;
+  noResponsePump.begin(0);
+  input = {39, 70, 80, true, true, true, true};
+  noResponsePump.accept(5000, input);
+  assert(noResponsePump.status().pumpOn);
+  for (uint32_t now = 10000; now < 125000; now += 5000) {
+    noResponsePump.accept(now, input);
+  }
+  assert(noResponsePump.status().pumpOn);
+  noResponsePump.accept(126000, input);
+  assert(!noResponsePump.status().pumpOn);
+  assert(std::strcmp(noResponsePump.status().pumpReason,
+                     "soil_no_response") == 0);
+  noResponsePump.accept(126000 + planter::kPumpNoResponseCooldownMs - 1,
+                        input);
+  assert(!noResponsePump.status().pumpOn);
+  noResponsePump.accept(126000 + planter::kPumpNoResponseCooldownMs, input);
+  assert(noResponsePump.status().pumpOn);
 
   planter::RelayController blockedPump;
   blockedPump.begin(0);

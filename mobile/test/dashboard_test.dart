@@ -376,7 +376,7 @@ void main() {
     expect(wifi.commands, isEmpty);
     await tester.tap(find.text('Mulai'));
     await tester.pumpAndSettle();
-    expect(wifi.commands.single, startsWith('CTRL pump=on dur=5 id='));
+    expect(wifi.commands.single, startsWith('CTRL pump=on dur=10 id='));
   });
 
   testWidgets('manual AUTO is sent immediately without a duration dialog', (
@@ -440,7 +440,7 @@ void main() {
       expect(find.text('Konfirmasi'), findsOneWidget);
       await tester.tap(find.text('Jalankan sekarang'));
       await tester.pumpAndSettle();
-      expect(wifi.commands.single, startsWith('CTRL pump=on dur=5 id='));
+      expect(wifi.commands.single, startsWith('CTRL pump=on dur=10 id='));
       expect(find.textContaining('sisa'), findsOneWidget);
     },
   );
@@ -845,7 +845,10 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('OFFLINE'), findsOneWidget);
-    expect(find.text('Koneksi data terputus.'), findsOneWidget);
+    expect(
+      find.text('Koneksi data terputus; mencoba menyambung ulang.'),
+      findsOneWidget,
+    );
 
     final closing = readings.close();
     await tester.pump();
@@ -1022,7 +1025,9 @@ void main() {
     );
     expect(find.text('OFFLINE'), findsOneWidget);
     expect(
-      find.text('Data sensor sudah lama; menunggu pembaruan.'),
+      find.text(
+        'Perangkat belum mengirim data baru; periksa daya/Wi-Fi perangkat.',
+      ),
       findsOneWidget,
     );
 

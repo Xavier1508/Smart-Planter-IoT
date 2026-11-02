@@ -261,6 +261,8 @@ class DevicesPage extends StatelessWidget {
     'watchdog_unavailable' => 'pengawas perangkat belum tersedia',
     'sample_stale' => 'data sensor terlambat',
     'runtime_limit' => 'batas waktu pompa tercapai',
+    'soil_no_response' => 'tanah tidak merespons penyiraman',
+    'brownout_hold' => 'pompa ditahan setelah brownout',
     _ => 'belum diketahui',
   };
 
@@ -581,7 +583,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
   bool _now = true;
   late DateTime _at;
   int _second = 0;
-  int _pumpSeconds = 5;
+  int _pumpSeconds = 10;
   int _lampMinutes = 5;
   int _lampSeconds = 0;
   String? _error;
@@ -1166,7 +1168,7 @@ class _ManualControls extends StatefulWidget {
 }
 
 class _ManualControlsState extends State<_ManualControls> {
-  int _pumpSeconds = 5;
+  int _pumpSeconds = 10;
   int _lampMinutes = 5;
   int _lampSeconds = 0;
   _ManualMode _pumpMode = _ManualMode.auto;

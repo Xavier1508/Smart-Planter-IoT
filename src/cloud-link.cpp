@@ -25,6 +25,8 @@ constexpr size_t kAckQueueLength = 8;
 constexpr size_t kSampleQueueLength = 64;
 constexpr uint32_t kRegisterIntervalMs = 300000;
 constexpr uint32_t kCommandPollIntervalMs = 3000;
+constexpr uint32_t kSyncIntervalMs = 2000;
+constexpr uint32_t kSyncMaxBatchMs = 8000;
 constexpr uint32_t kReconnectIntervalMs = 60000;
 constexpr uint32_t kMaxBackoffMs = 60000;
 
@@ -272,6 +274,7 @@ void CloudLink::run() {
     }
     if (!wifiUp) {
       online_ = false;
+      tlsClient_.stop();
       setStatus("Wi-Fi STA disconnected; samples are buffered.");
     } else if (!timeUp) {
       online_ = false;
@@ -285,14 +288,89 @@ void CloudLink::run() {
         if (!registerDevice()) {
           online_ = false;
           setStatus("Cloud registration failed; samples stay buffered.");
-          vTaskDelay(pdMS_TO_TICKS(5000));
+          vTaskDelay(pdMS_TO_TICKS(2000));
         } else {
           lastRegisterMs_ = now;
           backoffMs_ = 0;
           retryAtMs_ = 0;
         }
       }
-      if (online_) {
+    }
+
+    // One bounded receive per loop. The sync path wakes every 100 ms so the
+    // 2-second cadence is not quantised to the old 5-second sample interval.
+    const bool fastLoop = online_ && syncSupported_;
+    CloudSample sample;
+    if (xQueueReceive(sampleQueue_, &sample,
+                      pdMS_TO_TICKS(fastLoop ? 100 : 800)) == pdTRUE) {
+      if (batchCount == 0) batchStartedMs = millis();
+      if (batchCount < sizeof(batch) / sizeof(batch[0])) {
+        batch[batchCount++] = sample;
+      } else {
+        ++dropped_;
+      }
+    }
+
+    if (wifiUp && timeUp && online_) {
+      if (syncSupported_) {
+        const uint32_t now = millis();
+        const bool syncDue = lastSyncMs_ == 0 ||
+                             now - lastSyncMs_ >= kSyncIntervalMs;
+        const bool batchDue =
+            batchCount > 0 &&
+            (flushRequested_ || batchCount >= 6 ||
+             now - batchStartedMs >= kSyncMaxBatchMs);
+        const bool backoffClear =
+            backoffMs_ == 0 ||
+            static_cast<int32_t>(now - retryAtMs_) >= 0;
+        if ((syncDue || batchDue) && backoffClear) {
+          const int result = syncWithCloud(batch, batchCount);
+          if (result == 1) {
+            batchCount = 0;
+            flushRequested_ = false;
+          } else if (result == -1) {
+            // The sync route is not deployed (or the body is permanently
+            // invalid). Fall back to the legacy endpoints for this boot.
+            if (batchCount > 0) {
+              flushBatch(batch, batchCount);
+              batchCount = 0;
+            }
+          } else if (batchCount >= 6 ||
+                     (batchCount > 0 &&
+                      now - batchStartedMs >= kSyncMaxBatchMs)) {
+            // Transient failure: persist instead of retrying in a tight loop.
+            const String body = buildBatchBody(batch, batchCount);
+            String path;
+            if (persistBatch(body, path)) {
+              batchCount = 0;
+              setStatus("Telemetry buffered; cloud retry scheduled.");
+            } else {
+              dropped_ += batchCount;
+              batchCount = 0;
+              setStatus("Cloud upload failed; no buffer available.");
+            }
+          }
+        } else if (!backoffClear && batchCount > 0 &&
+                   now - batchStartedMs >= kSyncMaxBatchMs) {
+          // A retry backoff must not pin samples in RAM until the queue fills.
+          const String body = buildBatchBody(batch, batchCount);
+          String path;
+          if (persistBatch(body, path)) {
+            batchCount = 0;
+            setStatus("Telemetry buffered; cloud retry scheduled.");
+          } else {
+            dropped_ += batchCount;
+            batchCount = 0;
+            setStatus("Cloud upload failed; no buffer available.");
+          }
+        }
+        if (buffered_ > 0 &&
+            (backoffMs_ == 0 ||
+             static_cast<int32_t>(millis() - retryAtMs_) >= 0)) {
+          drainOldestBatch();
+        }
+      } else {
+        // Backward-compatible path for an Edge Function that predates sync.
         if (lastCommandPollMs_ == 0 ||
             millis() - lastCommandPollMs_ >= kCommandPollIntervalMs) {
           pollCommands();
@@ -304,27 +382,19 @@ void CloudLink::run() {
              static_cast<int32_t>(millis() - retryAtMs_) >= 0)) {
           drainOldestBatch();
         }
+        const bool forced = flushRequested_ && batchCount > 0;
+        if (forced || batchCount >= 6 ||
+            (batchCount > 0 && millis() - batchStartedMs >= 20000)) {
+          flushBatch(batch, batchCount);
+          batchCount = 0;
+          flushRequested_ = false;
+        }
       }
-    }
-
-    // Network state must never stop local sampling. Even while offline or
-    // waiting for NTP, samples are packed and persisted to LittleFS.
-    CloudSample sample;
-    if (xQueueReceive(sampleQueue_, &sample,
-                      pdMS_TO_TICKS(online_ ? 300 : 800)) == pdTRUE) {
-      if (batchCount == 0) batchStartedMs = millis();
-      batch[batchCount++] = sample;
-    }
-    const bool forced = online_ && flushRequested_ && batchCount > 0;
-    // Twenty seconds gives the uploader a sustainable cadence. The previous
-    // eight-second partial batches created a queue backlog because each HTTPS
-    // request costs more than the samples it carried.
-    const uint32_t flushAfterMs = online_ ? 20000 : 30000;
-    if (forced || batchCount >= 6 ||
-        (batchCount > 0 && millis() - batchStartedMs >= flushAfterMs)) {
+    } else if (batchCount > 0 &&
+               millis() - batchStartedMs >= 30000) {
+      // Offline: keep samples in the durable queue, not RAM.
       flushBatch(batch, batchCount);
       batchCount = 0;
-      flushRequested_ = false;
     }
   }
 }
@@ -351,7 +421,10 @@ void CloudLink::pollCommands() {
     return;
   }
   if (result != 1) return;
+  applyCommandsJson(response);
+}
 
+void CloudLink::applyCommandsJson(const String& response) {
   JsonDocument document;
   const DeserializationError error = deserializeJson(document, response);
   if (error) {
@@ -408,6 +481,42 @@ void CloudLink::pollCommands() {
   }
 }
 
+int CloudLink::syncWithCloud(CloudSample* batch, size_t count) {
+  if (!syncSupported_) return 0;
+  if (WiFi.status() != WL_CONNECTED || token_.isEmpty()) return 0;
+
+  Ack acks[8];
+  size_t ackCount = 0;
+  while (ackCount < sizeof(acks) / sizeof(acks[0]) &&
+         xQueueReceive(ackQueue_, &acks[ackCount], 0) == pdTRUE) {
+    ++ackCount;
+  }
+
+  const String body = buildBatchBody(batch, count, acks, ackCount);
+  String response;
+  const int result = postJson("sync", body, false, &response);
+  if (result != 1) {
+    // The request did not commit. Put the acks back so the next successful
+    // sync can deliver them; drop only after the bounded retry budget.
+    for (size_t index = 0; index < ackCount; ++index) {
+      ++acks[index].attempts;
+      if (acks[index].attempts < 3) {
+        if (xQueueSend(ackQueue_, &acks[index], 0) != pdTRUE) {
+          logEvent("cloud_ack_queue_full", acks[index].id);
+        }
+      } else {
+        logEvent("cloud_ack_dropped", acks[index].id);
+      }
+    }
+    return result;
+  }
+
+  applyCommandsJson(response);
+  lastSyncMs_ = millis();
+  if (count > 0) lastUploadMs_ = millis();
+  return 1;
+}
+
 void CloudLink::processAckQueue() {
   if (ackQueue_ == nullptr || uxQueueMessagesWaiting(ackQueue_) == 0) return;
   if (backoffMs_ != 0 && static_cast<int32_t>(millis() - retryAtMs_) < 0) return;
@@ -440,17 +549,22 @@ void CloudLink::processAckQueue() {
   xQueueSend(ackQueue_, &ack, 0);
 }
 
-int CloudLink::postJson(const char* action, const String& body, bool replay) {
+int CloudLink::postJson(const char* action, const String& body, bool replay,
+                        String* response) {
   if (WiFi.status() != WL_CONNECTED || token_.isEmpty()) return 0;
-  WiFiClientSecure client;
-  client.setCACert(kRootCa);
-  client.setTimeout(8);
+  if (!tlsReady_) {
+    tlsClient_.setCACert(kRootCa);
+    tlsClient_.setTimeout(8);
+    tlsReady_ = true;
+  }
   HTTPClient http;
-  http.setConnectTimeout(6000);
-  http.setTimeout(9000);
-  http.setReuse(false);
+  http.setConnectTimeout(4000);
+  http.setTimeout(7000);
+  // Keep the TLS socket alive between the 2-second sync requests. A fresh
+  // handshake per request was the dominant fixed cost on this ESP32.
+  http.setReuse(true);
   const String url = endpoint(action);
-  if (!http.begin(client, url)) {
+  if (!http.begin(tlsClient_, url)) {
     logEvent("cloud_http_begin_failed", action);
     return 0;
   }
@@ -461,12 +575,23 @@ int CloudLink::postJson(const char* action, const String& body, bool replay) {
   const int code = http.POST(
       reinterpret_cast<uint8_t*>(const_cast<char*>(body.c_str())),
       body.length());
+  if (code > 0) {
+    const String payload = http.getString();
+    if (response != nullptr) *response = payload;
+  } else {
+    tlsClient_.stop();
+  }
   http.end();
   if (code >= 200 && code < 300) {
     backoffMs_ = 0;
     retryAtMs_ = 0;
     online_ = true;
     return 1;
+  }
+  if (code == 404 && strcmp(action, "sync") == 0) {
+    syncSupported_ = false;
+    setStatus("Cloud sync route unavailable; using legacy transport.");
+    return -1;
   }
   if (code == 400 || code == 413 || code == 422) {
     char detail[24];
@@ -486,18 +611,24 @@ int CloudLink::postJson(const char* action, const String& body, bool replay) {
 
 int CloudLink::getJson(const char* action, String& response) {
   if (WiFi.status() != WL_CONNECTED || token_.isEmpty()) return 0;
-  WiFiClientSecure client;
-  client.setCACert(kRootCa);
-  client.setTimeout(8);
+  if (!tlsReady_) {
+    tlsClient_.setCACert(kRootCa);
+    tlsClient_.setTimeout(8);
+    tlsReady_ = true;
+  }
   HTTPClient http;
-  http.setConnectTimeout(6000);
-  http.setTimeout(9000);
-  http.setReuse(false);
-  if (!http.begin(client, endpoint(action))) return 0;
+  http.setConnectTimeout(4000);
+  http.setTimeout(7000);
+  http.setReuse(true);
+  if (!http.begin(tlsClient_, endpoint(action))) return 0;
   http.addHeader("x-device-id", deviceId_);
   http.addHeader("x-device-token", token_);
   const int code = http.GET();
-  if (code >= 200 && code < 300) response = http.getString();
+  if (code > 0) {
+    response = http.getString();
+  } else {
+    tlsClient_.stop();
+  }
   http.end();
   if (code >= 200 && code < 300) {
     online_ = true;
@@ -514,7 +645,8 @@ String CloudLink::endpoint(const char* action) const {
   return url;
 }
 
-String CloudLink::buildBatchBody(const CloudSample* batch, size_t count) const {
+String CloudLink::buildBatchBody(const CloudSample* batch, size_t count,
+                                 const Ack* acks, size_t ackCount) const {
   String body;
   body.reserve(7000);
   body += F("{\"schema\":1,\"firmware_version\":");
@@ -567,7 +699,28 @@ String CloudLink::buildBatchBody(const CloudSample* batch, size_t count) const {
     appendNullableText(body, "light_reason", sample.lightReason);
     body += '}';
   }
-  body += F("]}");
+  body += ']';
+  if (acks != nullptr && ackCount > 0) {
+    body += F(",\"acks\":[");
+    for (size_t index = 0; index < ackCount; ++index) {
+      if (index != 0) body += ',';
+      body += F("{\"command_id\":\"");
+      body += acks[index].id;
+      body += F("\",\"ok\":");
+      body += acks[index].ok ? F("true") : F("false");
+      body += F(",\"error_code\":");
+      if (acks[index].ok || acks[index].error[0] == '\0') {
+        body += F("null");
+      } else {
+        body += '"';
+        body += acks[index].error;
+        body += '"';
+      }
+      body += F(",\"result\":{\"delivery\":\"acknowledged\"}}");
+    }
+    body += ']';
+  }
+  body += '}';
   return body;
 }
 

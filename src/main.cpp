@@ -175,10 +175,11 @@ void startLocalWifi() {
   }
   const bool brownoutBoot = strcmp(bootResetReason, "brownout") == 0;
   const bool stationRequested =
-      MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0 && !brownoutBoot;
+      MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0;
   // Before credentials exist, use AP-only. This removes STA radio activity
-  // and makes the setup network much more stable. A brownout boot also stays
-  // AP-only so a power fault cannot create a reset loop while joining a router.
+  // and makes the setup network much more stable. After a brownout the cloud
+  // stays reachable; the pump itself is held separately for one minute so a
+  // power fault cannot immediately repeat while the relay is energised.
   // After saving credentials the page switches to AP+STA for the attempt.
   if (!WiFi.mode(stationRequested ? WIFI_AP_STA : WIFI_AP)) {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_mode_failed\"}");
@@ -988,7 +989,12 @@ void printSample(uint32_t nowMs) {
   };
   lastControlInput = input;
   hasControlInput = true;
-  relayController.accept(sample.uptimeMs, input);
+  if (strcmp(bootResetReason, "brownout") == 0 &&
+      millis() < planter::kBrownoutPumpHoldMs) {
+    relayController.inhibit(sample.uptimeMs, "brownout_hold");
+  } else {
+    relayController.accept(sample.uptimeMs, input);
+  }
   syncRelayCommands();
   planter::ControlStatus control = relayController.status();
   control.pumpRuntimeLockout = relayController.pumpRuntimeLockout();

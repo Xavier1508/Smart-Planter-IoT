@@ -6,12 +6,12 @@ Aplikasi Android menggunakan karakter bernama Moss sebagai antarmuka interaktif.
 
 ## Status proyek
 
-Prototipe v38 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
+Prototipe v39 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
 
-- Aplikasi Android `0.9.1+25` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
-- Firmware v38 memakai AP+STA, NTP, HTTPS ke Edge Function, buffer batch LittleFS, polling perintah, ACK, dan deduplikasi perintah.
-- Skala air v38: **EMPTY ≤450, LOW 451–950, MEDIUM 951–1499, FULL ≥1500**; cutoff pompa tetap 600. Nilai 1072–1233 berarti MEDIUM, bukan FULL.
-- Upload telemetry memakai batch 20 detik; perintah manual memicu flush batch berikutnya, polling perintah 3 detik, dan aplikasi memakai REST fallback bila Realtime putus.
+- Aplikasi Android `0.9.2+26` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
+- Firmware v39 memakai AP+STA, NTP, HTTPS sync 2 detik, koneksi TLS keep-alive, buffer LittleFS, ACK idempoten, dan deduplikasi perintah.
+- Skala air v39: **EMPTY ≤450, LOW 451–950, MEDIUM 951–1499, FULL ≥1500**; cutoff pompa tetap 600. Nilai 1072–1233 berarti MEDIUM, bukan FULL.
+- Upload v39 memakai `sync` 2 detik (sampel + ACK + perintah) dengan TLS keep-alive; jalur `ingest`/`commands`/`ack` lama tetap menjadi fallback. Aplikasi tetap memakai REST poll 5 detik bila Realtime putus.
 - Indeks gas MQ135 dihitung dari `mq_pin_mv` cloud; ini indeks relatif 0–100, bukan ppm/CO₂.
 - Supabase sudah berisi migrasi skema, RLS, RPC perintah atomik, dan Edge Function `device-api`.
 - Firmware sudah dikompilasi; unggahan ke papan dan pengujian sensor/tanaman nyata belum dilakukan dalam sesi ini.
@@ -41,20 +41,20 @@ Ketika belum ada data sensor valid, aplikasi menampilkan kondisi menunggu,
 bukan angka yang dibuat-buat. Perintah relay adalah permintaan, bukan bukti
 keadaan kontak fisik.
 
-## Arsitektur cloud v38
+## Arsitektur cloud v39
 
 ```text
 DHT11 / soil / LDR / UV / water / MQ135
                   |
                   v
-      ESP32 v38: sampling 5 s, relay safety, LCD
+      ESP32 v39: sampling 5 s, sync 2 s, relay safety, LCD
                   |
-       batch 6 sampel / 30 s + LittleFS fallback
+       sync 2 s: sampel + ACK -> commands + LittleFS fallback
                   |
                   | HTTPS POST (token per perangkat)
                   v
    Supabase Edge Function: device-api
-   register | ingest | commands | ack
+   register | sync | ingest | commands | ack
                   |
                   v
           Supabase Postgres (canonical)
@@ -1282,6 +1282,56 @@ Pastikan rangkaian dan tegangan GPIO aman sebelum menyalakan ESP32; baterai pomp
 - **Suhu/kelembapan udara:** pastikan model DHT yang digunakan dan bandingkan dengan termometer serta higrometer acuan pada kondisi yang sesuai. Hasil bacaan yang gagal tetap tidak tersedia, bukan nol.
 - **Water level:** versi 9 menambahkan perbandingan ADC mentah terhadap acuan pengguna 850/900; nilainya belum menjadi level atau persentase terkalibrasi. MQ135 belum menghasilkan konsentrasi tepercaya tanpa rangkaian dan kalibrasi yang sesuai.
 
+## Perubahan v39: latensi dan ketahanan pompa
+
+v39 mengurangi jalur jaringan dari tiga request HTTPS per siklus menjadi satu
+request `sync` setiap 2 detik. Request itu membawa sampel baru dan ACK perintah,
+lalu mengembalikan perintah yang menunggu. Koneksi TLS juga dipakai ulang
+(keep-alive), sehingga ESP32 tidak melakukan handshake baru untuk setiap
+request. Endpoint lama tetap tersedia sebagai fallback; firmware otomatis
+kembali ke `ingest`/`commands`/`ack` bila `sync` belum dideploy.
+
+Perubahan perilaku pompa:
+
+- Auto watering berhenti setelah 2 menit bila pembacaan tanah tidak bergerak
+  sedikit pun (`soil_no_response`), lalu mencoba lagi setelah 5 menit. Sebelumnya
+  pompa dapat berjalan 5 menit lalu terkunci 30 menit.
+- Batas runtime tetap 5 menit; lockout setelah batas itu dipendekkan menjadi
+  10 menit.
+- Boot akibat brownout tidak lagi mematikan cloud. Pompa ditahan 60 detik
+  (`brownout_hold`), tetapi perangkat tetap mencoba terhubung ke Supabase.
+- Durasi manual default menjadi 10 detik; pengguna tetap dapat memilih 1-30 detik.
+
+Target yang harus diukur setelah flash, bukan klaim:
+
+- sampel 5 detik sampai muncul di aplikasi: **? 5 detik** pada kondisi jaringan
+  normal;
+- tombol sampai relay bereaksi: **? 3 detik**;
+- ACK perintah: **? 5 detik**;
+- tidak ada retry ACK 500 dan tidak ada backlog LittleFS saat online.
+
+### Deploy v39 sebelum flash
+
+Firmware v39 memakai route `sync`; route itu harus ada di Edge Function.
+Tanpa deploy, firmware tetap jalan lewat jalur lama, tetapi latensi belum
+membaik.
+
+1. Jalankan migrasi
+   `mobile/supabase/migrations/20261102120000_ack_device_command_idempotent.sql`
+   di SQL Editor Supabase.
+2. Deploy ulang Edge Function `device-api` dari
+   `mobile/supabase/functions/device-api/index.ts`.
+3. Uji route baru dengan token perangkat:
+
+   ```text
+   POST /functions/v1/device-api?action=sync
+   x-device-id: moss-c31c-9c9c01f0
+   x-device-token: <token>
+   {"schema":1,"boot_id":"deadbeef","firmware_version":39,"samples":[],"acks":[]}
+   ```
+
+   Respons yang diharapkan: `200` dengan `commands` dan `server_time`.
+
 ## Bukti pengujian v38 (2 November 2026)
 
 Pengujian yang benar-benar dijalankan:
@@ -1306,6 +1356,21 @@ Pengujian yang benar-benar dijalankan:
 | Perangkat setelah transaksi uji | Tetap `owner_id = null`, claim code dipulihkan |
 
 Yang **belum** diuji: flash v38 ke papan, koneksi STA ke router nyata, handshake TLS ke Supabase dari ESP32, buffer saat kabel internet dicabut, eksekusi relay cloud pada beban, dan dataset 1.000 baris dari tanaman nyata. Semua klaim di atas tidak boleh dibaca sebagai bukti pengujian fisik tersebut.
+
+## Bukti pengujian v39 (2 November 2026)
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 56.988 B (17,4%), flash 1.087.293 B (83,0%) |
+| Binary firmware | 1.093.872 byte, SHA-256 `b08ca79bdaab566f442f39dc582ca6dbd7610d00e6b808541d1a2f349314ad49` |
+| `flutter analyze --no-pub` | Tidak ada issue |
+| `flutter test --no-pub` | 155 lulus, 2 dilewati |
+| Sintaks Edge Function (`node --experimental-strip-types --check`) | Lulus |
+| Deploy Edge Function `sync` | Belum dilakukan dari sesi ini; butuh akses dashboard/CLI Supabase |
+| Flash v39 dan pengukuran latency fisik | Belum dilakukan; harus diuji operator |
+
+Angka latency di atas adalah target desain. Belum ada pengukuran end-to-end
+pada perangkat nyata untuk v39.
 
 ## Mencoba aplikasi
 

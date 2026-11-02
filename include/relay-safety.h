@@ -166,6 +166,8 @@ class RelayController {
     lightChangedMs_ = nowMs - kLightMinStateMs;
     pumpCooldown_ = false;
     pumpCooldownMs_ = kPumpCooldownMs;
+    pumpAutoStartedMs_ = nowMs;
+    pumpAutoStartSoilAdc_ = -1;
     dryConfirm_ = 0;
     waterLowRunningConfirm_ = 0;
     lightHoldBypass_ = false;
@@ -232,6 +234,7 @@ class RelayController {
     // Releasing a manual override must re-evaluate from a neutral output, not
     // keep the pump running until the next sample or until the wet threshold.
     pumpOn_ = false;
+    pumpAutoStartSoilAdc_ = -1;
     dryConfirm_ = 0;
     waterLowRunningConfirm_ = 0;
     pumpReason_ = "manual_released";
@@ -328,10 +331,22 @@ class RelayController {
       } else {
         waterLowRunningConfirm_ = 0;
       }
+      int soilDelta = input.soilAdcRaw - pumpAutoStartSoilAdc_;
+      if (soilDelta < 0) soilDelta = -soilDelta;
+      const bool soilNotResponding =
+          !pumpManual_ && pumpAutoStartSoilAdc_ >= 0 &&
+          input.soilAdcRaw < kPumpOnBelowRawAdc &&
+          controlIntervalElapsed(nowMs, pumpAutoStartedMs_,
+                                 kPumpEffectCheckMs) &&
+          soilDelta < kPumpEffectMinDelta;
       if (waterLowRunningConfirm_ >= kWaterLowRunningConfirmSamples) {
         stopPump(nowMs, "water_low");
       } else if (input.soilAdcRaw >= kPumpOffAtOrAboveRawAdc) {
         stopPump(nowMs, "soil_moist");
+      } else if (soilNotResponding) {
+        // The pump ran but the probe did not move. Stop before the hard cap
+        // and retry later instead of flooding or locking auto for 30 minutes.
+        stopPump(nowMs, "soil_no_response");
       } else {
         pumpReason_ = "watering";
       }
@@ -360,6 +375,8 @@ class RelayController {
         } else {
           pumpOn_ = true;
           pumpStartedMs_ = nowMs;
+          pumpAutoStartedMs_ = nowMs;
+          pumpAutoStartSoilAdc_ = input.soilAdcRaw;
           dryConfirm_ = 0;
           pumpReason_ = "soil_dry";
         }
@@ -411,10 +428,14 @@ class RelayController {
       pumpOn_ = false;
       pumpStoppedMs_ = nowMs;
       pumpCooldown_ = true;
-      pumpCooldownMs_ = strcmp(reason, "runtime_limit") == 0
-                            ? kPumpRuntimeSoakMs
-                            : kPumpCooldownMs;
+      pumpCooldownMs_ =
+          strcmp(reason, "runtime_limit") == 0
+              ? kPumpRuntimeSoakMs
+              : (strcmp(reason, "soil_no_response") == 0
+                     ? kPumpNoResponseCooldownMs
+                     : kPumpCooldownMs);
     }
+    pumpAutoStartSoilAdc_ = -1;
     dryConfirm_ = 0;
     waterLowRunningConfirm_ = 0;
     pumpReason_ = reason;
@@ -436,6 +457,8 @@ class RelayController {
   uint32_t pumpCooldownMs_ = kPumpCooldownMs;
   int dryConfirm_ = 0;
   int waterLowRunningConfirm_ = 0;
+  int pumpAutoStartSoilAdc_ = -1;
+  uint32_t pumpAutoStartedMs_ = 0;
   uint32_t bootMs_ = 0;
   uint32_t lastSampleMs_ = 0;
   uint32_t pumpStartedMs_ = 0;

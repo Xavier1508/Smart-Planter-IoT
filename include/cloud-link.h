@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <WiFiClientSecure.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -94,14 +95,19 @@ class CloudLink {
   bool registerDevice();
   void pollCommands();
   void processAckQueue();
-  int postJson(const char* action, const String& body, bool replay);
+  void applyCommandsJson(const String& response);
+  int postJson(const char* action, const String& body, bool replay,
+               String* response = nullptr);
   int getJson(const char* action, String& response);
+  int syncWithCloud(CloudSample* batch, size_t count);
   bool uploadBody(const String& body, bool replay);
   bool uploadFile(const String& path, bool replay);
   bool persistBatch(const String& body, String& path);
   void flushBatch(CloudSample* batch, size_t count);
   void drainOldestBatch();
-  String buildBatchBody(const CloudSample* batch, size_t count) const;
+  String buildBatchBody(const CloudSample* batch, size_t count,
+                        const Ack* acks = nullptr,
+                        size_t ackCount = 0) const;
   String oldestBatchPath() const;
   String nextBatchPath();
   uint32_t countBufferedBatches() const;
@@ -133,6 +139,10 @@ class CloudLink {
   uint32_t lastReconnectMs_ = 0;
   uint32_t lastRegisterMs_ = 0;
   uint32_t lastCommandPollMs_ = 0;
+  uint32_t lastSyncMs_ = 0;
+  bool syncSupported_ = true;
+  bool tlsReady_ = false;
+  WiFiClientSecure tlsClient_;
   uint32_t backoffMs_ = 0;
   uint32_t retryAtMs_ = 0;
   uint32_t nextFileSequence_ = 1;
