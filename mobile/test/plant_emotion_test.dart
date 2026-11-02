@@ -75,19 +75,24 @@ void main() {
     );
   });
 
-  test('saturated soil with a full reservoir is a flood, not healthy', () {
+  test('saturated soil is a watch condition, not an emergency', () {
     final reading = PlantEmotionEngine(model)
         .evaluate(live(soil: 99, water: 99));
-    expect(reading.emotion, PlantEmotion.alert);
-    expect(reading.signal, contains('banjir'));
-    expect(reading.prediction, contains('Kurangi air'));
+    expect(reading.emotion, isNot(PlantEmotion.alert));
+    expect(reading.signal, isNot(contains('banjir')));
+    expect(reading.signal, isNot(contains('terlalu basah')));
+    expect(
+      reading.factors.any((factor) => factor.detail.contains('lembap')),
+      isTrue,
+    );
   });
 
-  test('saturated soil alone is overwatering', () {
+  test('very moist soil is not labelled as overwatering', () {
     final reading = PlantEmotionEngine(model)
         .evaluate(live(soil: 95, water: 40));
-    expect(reading.emotion, PlantEmotion.alert);
-    expect(reading.signal, contains('terlalu basah'));
+    expect(reading.emotion, isNot(PlantEmotion.alert));
+    expect(reading.signal, contains('lembap'));
+    expect(reading.signal, isNot(contains('terlalu basah')));
   });
 
   test('the middle band is never presented as happy', () {

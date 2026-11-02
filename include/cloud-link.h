@@ -140,6 +140,7 @@ class CloudLink {
   uint32_t lastRegisterMs_ = 0;
   uint32_t lastCommandPollMs_ = 0;
   uint32_t lastSyncMs_ = 0;
+  uint8_t syncFailures_ = 0;
   bool syncSupported_ = true;
   bool tlsReady_ = false;
   WiFiClientSecure tlsClient_;

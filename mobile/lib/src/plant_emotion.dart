@@ -181,7 +181,6 @@ class PlantEmotionEngine {
         state.waterEmpty == true ||
         (soil != null && soil < 25) ||
         (water != null && water < 10 && (soil == null || soil < 35)) ||
-        (soil != null && soil >= 95 && water != null && water >= 85) ||
         (temperature != null && temperature >= 42) ||
         (gas != null && gas >= 90);
     final adjustedScore = hardAlert ? math.min(score, 24) : score;
@@ -259,7 +258,6 @@ class PlantEmotionEngine {
           probability('healthy') * 100 +
           probability('watch') * 68 +
           probability('dry') * 24 +
-          probability('wet') * 30 +
           probability('heat') * 28 +
           probability('air') * 22;
     } else {
@@ -271,10 +269,6 @@ class PlantEmotionEngine {
           score -= 35;
         } else if (soil < 45) {
           score -= 15;
-        } else if (soil >= 95) {
-          score -= 55;
-        } else if (soil >= 90) {
-          score -= 25;
         } else if (soil >= 85) {
           score -= 8;
         }
@@ -312,7 +306,11 @@ class PlantEmotionEngine {
 
     // Small presentation nudges; they cannot turn a dry pot green or a flood
     // into a healthy result.
-    if (state.waterLow == true) score -= 6;
+    if (state.waterLow == true || (water != null && water < 22)) {
+      // A low reservoir is a watch condition even when the other features are
+      // healthy. It must not be presented as an optimal result.
+      score = math.min(score, 68);
+    }
     if (state.pumpRuntimeLockout == true) score -= 5;
     if (sensorCount < 3) {
       score -= 6 * (3 - sensorCount);
@@ -366,16 +364,6 @@ class PlantEmotionEngine {
           label: 'Tanah',
           detail: 'Tanah agak kering ($soil%).',
           severity: ConditionSeverity.watch,
-        ),
-      );
-    } else if (soil >= 95) {
-      factors.add(
-        ConditionFactor(
-          label: 'Tanah',
-          detail: water != null && water >= 85
-              ? 'Tanah dan air terlalu tinggi — risiko banjir ($soil%).'
-              : 'Tanah terlalu basah ($soil%).',
-          severity: ConditionSeverity.alert,
         ),
       );
     } else if (soil >= 90) {
@@ -622,8 +610,6 @@ class PlantEmotionEngine {
     }
     if (soil != null && soil < 35) {
       actions.add('Nyalakan pompa atau siram tanah.');
-    } else if (soil != null && soil >= 95) {
-      actions.add('Kurangi air dan pastikan drainase pot.');
     } else if (soil != null && soil >= 90) {
       actions.add('Pantau kelembapan; jangan menambah air dulu.');
     }
@@ -670,16 +656,6 @@ class PlantEmotionEngine {
     required List<String> actions,
   }) {
     final label = prediction?.label;
-    if (label == 'wet' ||
-        (emotion == PlantEmotion.alert &&
-            factors.any(
-              (factor) =>
-                  factor.detail.contains('terlalu basah') ||
-                  factor.detail.contains('banjir'),
-            ))) {
-      return 'Kurangi air dan pastikan drainase; jangan siram lagi. '
-          '${actions.first}';
-    }
     if (label == 'dry' ||
         (emotion == PlantEmotion.alert &&
             factors.any((factor) => factor.detail.contains('kering')))) {

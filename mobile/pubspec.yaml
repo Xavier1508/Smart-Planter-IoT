@@ -1,7 +1,7 @@
 name: smart_planter
 description: "Dashboard Android Tunas untuk smart planter, karakter 3D, dan prediksi demo."
 publish_to: 'none'
-version: 0.9.2+26
+version: 0.9.3+27
 
 environment:
   sdk: ^3.13.7

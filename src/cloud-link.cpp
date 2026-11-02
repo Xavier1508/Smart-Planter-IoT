@@ -186,6 +186,15 @@ bool CloudLink::begin(const char* baseUrl, const char* deviceId,
     storageReady_ = LittleFS.format() && LittleFS.begin(false);
   }
   if (storageReady_) {
+    // A previous build could leave a file named /q. mkdir() then fails and
+    // every buffered batch is dropped with "no permits for creation".
+    File queue = LittleFS.open("/q");
+    if (queue && !queue.isDirectory()) {
+      queue.close();
+      LittleFS.remove("/q");
+    } else if (queue) {
+      queue.close();
+    }
     LittleFS.mkdir("/q");
     buffered_ = countBufferedBatches();
     nextFileSequence_ = buffered_ == 0 ? 1 : buffered_ + 1;
@@ -495,6 +504,17 @@ int CloudLink::syncWithCloud(CloudSample* batch, size_t count) {
   const String body = buildBatchBody(batch, count, acks, ackCount);
   String response;
   const int result = postJson("sync", body, false, &response);
+  if (result == 1) {
+    syncFailures_ = 0;
+  } else if (result == 0) {
+    // A deployed sync route that keeps returning 5xx must not hide the working
+    // legacy transport. After three failures, switch for this boot.
+    if (syncFailures_ < 255) ++syncFailures_;
+    if (syncFailures_ >= 3) {
+      syncSupported_ = false;
+      setStatus("Cloud sync failed repeatedly; using legacy transport.");
+    }
+  }
   if (result != 1) {
     // The request did not commit. Put the acks back so the next successful
     // sync can deliver them; drop only after the bounded retry budget.
@@ -730,6 +750,13 @@ String CloudLink::buildBatchBody(const CloudSample* batch, size_t count,
 }
 
 bool CloudLink::persistBatch(const String& body, String& path) {
+  File queue = LittleFS.open("/q");
+  if (queue && !queue.isDirectory()) {
+    queue.close();
+    LittleFS.remove("/q");
+  } else if (queue) {
+    queue.close();
+  }
   if (!LittleFS.exists("/q")) LittleFS.mkdir("/q");
   path = nextBatchPath();
   File file = LittleFS.open(path, "w");

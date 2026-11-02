@@ -41,6 +41,8 @@ struct SensorSnapshot {
   bool mqAdcReadable;
   int mqAdcPinMillivolts;
   AdcCalibrationMethod mqAdcCalibration;
+  // GPIO35 UV output voltage estimate. Diagnostic only; -1 means unavailable.
+  int uvAdcPinMillivolts;
 };
 
 inline bool sampleDue(uint32_t nowMs, uint32_t lastMs, uint32_t intervalMs) {
@@ -298,6 +300,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
   char mq135[520];
   char labelJson[200];
   char uvProxy[16];
+  char uvPinMv[16];
   formatClimateValue(temperature, sizeof(temperature), sample.temperatureC,
                      temperatureValid);
   formatClimateValue(humidity, sizeof(humidity), sample.humidityPercent,
@@ -305,6 +308,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
   formatAdcValue(soil, sizeof(soil), sample.soilEnabled ? sample.soilAdcRaw : -1);
   formatAdcValue(light, sizeof(light), sample.lightAdcRaw);
   formatAdcValue(uv, sizeof(uv), sample.uvAdcRaw);
+  formatAdcValue(uvPinMv, sizeof(uvPinMv), sample.uvAdcPinMillivolts);
   formatAdcValue(uvProxy, sizeof(uvProxy), uvAdcProxyTenths(sample.uvAdcRaw));
   const RulePreview preview = previewRules(sample);
   const PumpSoilBand soilBand = sample.soilEnabled
@@ -426,7 +430,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
        "\"adc_sampling\":{\"method\":\"median_5\",\"samples_per_cycle\":%u,"
        "\"mixed_rail\":\"unavailable\",\"failed_read\":\"unavailable\"},"
        "\"adc\":{\"soil_raw\":%s,\"soil_status\":\"%s\","
-      "\"light_raw\":%s,\"uv_raw\":%s,"
+      "\"light_raw\":%s,\"uv_raw\":%s,\"uv_pin_mv\":%s,"
       "\"soil_relative_percent\":%s,\"light_relative_percent\":%s,"
       "\"status\":\"unverified\",\"soil_signal_quality\":\"%s\","
       "\"soil_supply_mode\":\"%s\",\"soil_zero_is_dry\":%s,"
@@ -457,7 +461,8 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
       "\"pump_state\":null,"
       "\"growlight_state\":null}",
       kFirmwareVersion, static_cast<unsigned long>(sample.uptimeMs), temperature, humidity,
-       climateStatus, kAdcSamplesPerCycle, soil, soilStatus, light, uv, soilRelative, lightRelative,
+       climateStatus, kAdcSamplesPerCycle, soil, soilStatus, light, uv, uvPinMv,
+       soilRelative, lightRelative,
       adcSignalQuality(sample.soilAdcRaw, sample.soilEnabled),
       kSoilPowerWiringVerified ? "gpio25_switched_operator_configured"
                                : "gpio25_input_supply_unverified",

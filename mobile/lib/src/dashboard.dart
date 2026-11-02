@@ -1490,16 +1490,20 @@ class _Home extends StatelessWidget {
                             icon: Icons.wb_twilight_rounded,
                             title: 'UV',
                             value:
-                                (state.uvAdcPercent == null
-                                    ? null
-                                    : '~${state.uvAdcPercent}%') ??
-                                state.uvIndex?.toStringAsFixed(1) ??
-                                '—',
-                            detail: state.uvAdc != null
-                                ? 'ADC ${state.uvAdc}'
-                                : state.uvIndex == null
-                                ? 'Menunggu data sensor'
-                                : 'Belum diverifikasi',
+                                state.uvAdcPercent == null ||
+                                    state.uvAdc == 0 ||
+                                    state.uvAdc == 4095
+                                ? (state.uvIndex?.toStringAsFixed(1) ?? '—')
+                                : '~${state.uvAdcPercent}%',
+                            detail: state.uvAdc == null
+                                ? state.uvIndex == null
+                                      ? 'Menunggu data sensor'
+                                      : 'Belum diverifikasi'
+                                : state.uvAdc == 0
+                                ? '0 V - cek catu/sinyal sensor UV'
+                                : state.uvAdc == 4095
+                                ? 'Rail tinggi - cek sinyal sensor UV'
+                                : 'ADC ${state.uvAdc}',
                             color: const Color(0xFF967144),
                           ),
                         ),

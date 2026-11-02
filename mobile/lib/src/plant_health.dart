@@ -7,7 +7,7 @@ import 'dart:convert';
 class PlantHealthModel {
   PlantHealthModel._(this._tree);
 
-  static const schema = 'tunas-plant-health-tree-v2';
+  static const schema = 'tunas-plant-health-tree-v3';
   static const features = <String>[
     'soil_percent',
     'water_percent',
@@ -22,19 +22,11 @@ class PlantHealthModel {
     'pump_lockout',
     'sensor_count',
   ];
-  static const classes = <String>[
-    'healthy',
-    'watch',
-    'dry',
-    'wet',
-    'heat',
-    'air',
-  ];
+  static const classes = <String>['healthy', 'watch', 'dry', 'heat', 'air'];
   static const displayLabels = <String, String>{
     'healthy': 'Optimal',
     'watch': 'Pantau',
     'dry': 'Kekeringan',
-    'wet': 'Kelebihan air',
     'heat': 'Tekanan panas',
     'air': 'Udara buruk',
   };
@@ -46,7 +38,7 @@ class PlantHealthModel {
     final decoded = jsonDecode(input);
     if (decoded is! Map<String, dynamic> ||
         decoded['schema'] != schema ||
-        decoded['training_data'] != 'synthetic_plus_observed_patterns_v2' ||
+        decoded['training_data'] != 'synthetic_plus_observed_patterns_v3' ||
         decoded['not_for_plant_health_or_relay_control'] != true ||
         !_sameStrings(decoded['features'], features) ||
         !_sameStrings(decoded['classes'], classes)) {

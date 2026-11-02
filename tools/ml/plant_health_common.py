@@ -16,9 +16,9 @@ FEATURES = [
     "sensor_count",
 ]
 
-CLASSES = ["healthy", "watch", "dry", "wet", "heat", "air"]
-SCHEMA = "tunas-plant-health-tree-v2"
-TRAINING_DATA = "synthetic_plus_observed_patterns_v2"
+CLASSES = ["healthy", "watch", "dry", "heat", "air"]
+SCHEMA = "tunas-plant-health-tree-v3"
+TRAINING_DATA = "synthetic_plus_observed_patterns_v3"
 
 
 def features_for(
@@ -65,14 +65,12 @@ def label_for(
 ) -> str:
     """Holistic class used by the presentation layer.
 
-    The boundaries are intentionally tolerant around 85% soil: that is very
-    moist, not automatically an emergency. A wet class requires near-saturation
-    plus a high reservoir, or soil at/above 95%.
+    There is no separate overwatering class. Very moist soil stays a watch
+    condition, never an automatic "too wet" emergency. This keeps normal wet
+    soil from being presented as a fault while still asking the user to watch.
     """
     if sensor_count < 2:
         return "watch"
-    if soil >= 95.0 or (soil >= 92.0 and water >= 80.0):
-        return "wet"
     if soil < 22.0 or water < 10.0:
         return "dry"
     if temp >= 38.0 or (temp >= 34.0 and humidity < 30.0):

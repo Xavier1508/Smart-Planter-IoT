@@ -35,8 +35,8 @@ def candidate_row(rng: random.Random) -> tuple[list[float], int]:
     pump_lockout = 0
     sensor_count = 3
     scenario = rng.choices(
-        ["healthy", "watch", "dry", "wet", "heat", "air"],
-        weights=[28, 24, 16, 12, 12, 8],
+        ["healthy", "watch", "dry", "heat", "air"],
+        weights=[30, 26, 16, 16, 12],
     )[0]
     if scenario == "watch":
         target = rng.choice(
@@ -68,10 +68,6 @@ def candidate_row(rng: random.Random) -> tuple[list[float], int]:
         soil_trend = rng.uniform(-20.0, -3.0)
         if rng.random() < 0.5:
             pump_lockout = 1
-    elif scenario == "wet":
-        soil = rng.uniform(90.0, 100.0)
-        water = rng.uniform(72.0, 100.0)
-        soil_trend = rng.uniform(0.0, 8.0)
     elif scenario == "heat":
         temp = rng.uniform(35.0, 45.0)
         humidity = rng.uniform(18.0, 46.0)
@@ -133,9 +129,14 @@ def load_observed(path: Path) -> list[tuple[list[float], int]]:
             isinstance(features, list)
             and len(features) == len(FEATURES)
             and all(isinstance(value, (int, float)) for value in features)
-            and label in CLASSES
+            and isinstance(label, str)
         ):
-            rows.append(([float(value) for value in features], CLASSES.index(label)))
+            # The old six-class dataset used "wet". Keep those observed rows as
+            # watch samples instead of discarding real sensor patterns.
+            if label == "wet":
+                label = "watch"
+            if label in CLASSES:
+                rows.append(([float(value) for value in features], CLASSES.index(label)))
     return rows
 
 

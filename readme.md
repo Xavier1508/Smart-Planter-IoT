@@ -6,11 +6,11 @@ Aplikasi Android menggunakan karakter bernama Moss sebagai antarmuka interaktif.
 
 ## Status proyek
 
-Prototipe v39 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
+Prototipe v40 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
 
-- Aplikasi Android `0.9.2+26` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
-- Firmware v39 memakai AP+STA, NTP, HTTPS sync 2 detik, koneksi TLS keep-alive, buffer LittleFS, ACK idempoten, dan deduplikasi perintah.
-- Skala air v39: **EMPTY ≤450, LOW 451–950, MEDIUM 951–1499, FULL ≥1500**; cutoff pompa tetap 600. Nilai 1072–1233 berarti MEDIUM, bukan FULL.
+- Aplikasi Android `0.9.3+27` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
+- Firmware v40 memakai AP+STA, NTP, HTTPS sync 2 detik, TLS keep-alive, buffer LittleFS, ACK idempoten, dan deduplikasi perintah. UV dibaca eksplisit dari ADC1 channel 7 (GPIO35) dengan `uv_pin_mv` dan probe semua pin ADC1 saat boot.
+- Skala air v40: **EMPTY ≤450, LOW 451–950, MEDIUM 951–1499, FULL ≥1500**; cutoff pompa tetap 600. Nilai 1072–1233 berarti MEDIUM, bukan FULL.
 - Upload v39 memakai `sync` 2 detik (sampel + ACK + perintah) dengan TLS keep-alive; jalur `ingest`/`commands`/`ack` lama tetap menjadi fallback. Aplikasi tetap memakai REST poll 5 detik bila Realtime putus.
 - Indeks gas MQ135 dihitung dari `mq_pin_mv` cloud; ini indeks relatif 0–100, bukan ppm/CO₂.
 - Supabase sudah berisi migrasi skema, RLS, RPC perintah atomik, dan Edge Function `device-api`.
@@ -1151,13 +1151,14 @@ kanal `moss/profile` dan dapat berisi sampai enam planter.
 - Halaman **Perangkat** hanya menampilkan **Tersedia / Tidak tersedia / Tidak
   dapat menampilkan data**; angka ADC mentah tidak lagi ditampilkan di sana.
   Blok "Kendali perangkat" yang redundan di bagian bawah dihapus.
-- **Analisis ML holistik** dijalankan di ponsel dengan decision tree 6 kelas
-  (`healthy`, `watch`, `dry`, `wet`, `heat`, `air`) dan 12 fitur: tanah, air,
+- **Analisis ML holistik** dijalankan di ponsel dengan decision tree 5 kelas
+  (`healthy`, `watch`, `dry`, `heat`, `air`) dan 12 fitur: tanah, air,
   cahaya, suhu, kelembapan udara, UV, gas, interaksi tanah×air, tren tanah,
   tren air, lockout pompa, dan kelengkapan sensor. Model dilatih dari skenario
   agronomi seimbang **plus 273 pola sensor nyata** yang diekstrak dari log lokal
-  (holdout 99,4%; 97 node). Tanah 85% dengan air cukup kini dinilai lembap/
-  optimal, bukan merah; air rendah saja menjadi faktor pantau, bukan alarm.
+  (holdout 98,3%; 41 node). Tanah 85% dengan air cukup dinilai lembap/
+  optimal; tanah sangat lembap 90% atau lebih menjadi watch, bukan alert. Air
+  rendah tetap menjadi faktor pantau, bukan alarm.
   Kartu analisis menampilkan skor 0–100, kelas, faktor per aspek, dan tindakan.
   Ini model presentasi, bukan diagnosis agronomi tervalidasi; CSV ekspor tetap
   menjadi jalur retraining data nyata.
@@ -1183,7 +1184,7 @@ Versi aplikasi `0.7.0+22`.
 
 ### Model XGBoost sintetis lama (arsip)
 
-Catatan: aplikasi 0.7.0 memakai model holistic 6 kelas di
+Catatan: aplikasi 0.7.0 memakai model holistic 5 kelas di
 `assets/ml/plant-health.json`, dan label "sintetis" tidak lagi ditampilkan di
 kartu analisis. Bagian ini dipertahankan untuk mereproduksi eksperimen awal.
 
@@ -1359,6 +1360,41 @@ Pengujian yang benar-benar dijalankan:
 | Perangkat setelah transaksi uji | Tetap `owner_id = null`, claim code dipulihkan |
 
 Yang **belum** diuji: flash v38 ke papan, koneksi STA ke router nyata, handshake TLS ke Supabase dari ESP32, buffer saat kabel internet dicabut, eksekusi relay cloud pada beban, dan dataset 1.000 baris dari tanaman nyata. Semua klaim di atas tidak boleh dibaca sebagai bukti pengujian fisik tersebut.
+
+## Perubahan v40: UV, buffer, dan model 5 kelas
+
+Log serial v39 menunjukkan `uv_raw` selalu **0** sementara LDR bergerak
+525-947. Kualitas sinyal UV tercatat `rail_low_unverified`, jadi ini bukan
+masalah tampilan aplikasi: GPIO35 benar-benar membaca 0 V. UV juga bisa
+benar-benar nol di dalam ruangan atau di balik kaca karena LDR melihat cahaya
+tampak, bukan UV.
+
+v40 menambahkan diagnostik agar penyebabnya bisa dipisahkan:
+
+- UV dibaca eksplisit dari **ADC1 channel 7 / GPIO35**, bukan lewat pemetaan
+  pin Arduino.
+- Telemetry menambahkan `uv_pin_mv` (perkiraan tegangan pin).
+- Saat boot dicetak `uv_probe` untuk GPIO32, 33, 34, 35, 36, dan 39. Jika
+  sinyal UV ternyata ada di pin lain, probe akan menunjukkan pin yang hidup.
+- Aplikasi tidak lagi menampilkan `~0%` seolah UV nol terukur; nilai 0 V
+  ditampilkan sebagai peringatan cek catu/sinyal.
+- Buffer LittleFS memperbaiki kasus `/q` berubah menjadi file, yang sebelumnya
+  membuat `open()` gagal dan sampel dibuang.
+- Jika route `sync` mengembalikan 5xx tiga kali, firmware kembali ke jalur
+  `ingest`/`commands`/`ack` lama agar data tetap terkirim.
+
+Model ML sekarang **5 kelas** (`healthy`, `watch`, `dry`, `heat`, `air`);
+kelas `wet` / "Kelebihan air" dihapus. Tanah 85-89% ditampilkan sebagai lembap
+normal, dan 90% atau lebih sebagai watch "sangat lembap", bukan alert.
+
+Build v40:
+
+```text
+Size    : 1.094.912 byte
+SHA-256 : 1228ef09fef7e1f50f3f275b6198be96d9a46d91a07450630124e6d43b38fccb
+Flash   : 1.088.329 B (83,0%)
+RAM     : 57.028 B (17,4%)
+```
 
 ## Bukti pengujian v39 (2 November 2026)
 

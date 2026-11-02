@@ -41,6 +41,7 @@ bool hasSample = false;
 uint32_t lastSampleMs = 0;
 bool watchdogReady = false;
 bool mqAdcReady = false;
+bool uvAdcReady = false;
 planter::RelayController relayController;
 planter::ControlInput lastControlInput{0, 0, 0, false, false, false, false};
 bool hasControlInput = false;
@@ -49,6 +50,8 @@ planter::LabelLineReader labelLineReader;
 planter::ControlLineReader controlLineReader;
 esp_adc_cal_characteristics_t mqAdcCharacteristics;
 planter::AdcCalibrationMethod mqAdcCalibration = planter::AdcCalibrationMethod::unavailable;
+esp_adc_cal_characteristics_t uvAdcCharacteristics;
+planter::AdcCalibrationMethod uvAdcCalibration = planter::AdcCalibrationMethod::unavailable;
 const IPAddress localAddress(192, 168, 4, 1);
 WiFiServer localServer(localAddress, planter::kLocalTelemetryPort, 1);
 WebServer localHttpServer(80);
@@ -912,6 +915,15 @@ int readMqRaw() {
   return planter::medianAdc([]() { return adc1_get_raw(ADC1_CHANNEL_0); });
 }
 
+// GPIO35 is ADC1 channel 7. Reading the channel explicitly avoids relying on
+// Arduino pin remapping and makes a 0 V output distinguishable from a missing
+// read. A 0 V result is reported as rail_low, never as a valid UV index.
+int readUvRaw() {
+  static_assert(planter::kUvPin == 35, "Update ADC1 channel for UV pin");
+  if (!uvAdcReady) return -1;
+  return planter::medianAdc([]() { return adc1_get_raw(ADC1_CHANNEL_7); });
+}
+
 void lcdLine(uint8_t row, const char* text) {
   char padded[17];
   snprintf(padded, sizeof(padded), "%-16.16s", text);
@@ -942,6 +954,12 @@ void updateLcd(uint32_t nowMs) {
 }
 
 void printSample(uint32_t nowMs) {
+  const int uvRaw = readUvRaw();
+  const int uvPinMillivolts =
+      planter::controlAnalogUsable(uvRaw) &&
+              uvAdcCalibration != planter::AdcCalibrationMethod::unavailable
+          ? static_cast<int>(esp_adc_cal_raw_to_voltage(uvRaw, &uvAdcCharacteristics))
+          : -1;
   const int mqRaw = readMqRaw();
   const int mqPinMillivolts =
       planter::controlAnalogUsable(mqRaw) &&
@@ -954,7 +972,7 @@ void printSample(uint32_t nowMs) {
       planter::kDhtEnabled ? climateSensor.readHumidity() : NAN,
       readSoilRaw(),
       medianAnalogRead(planter::kLightPin),
-      medianAnalogRead(planter::kUvPin),
+      uvRaw,
       planter::kDhtEnabled,
       medianAnalogRead(extra_sensors::kWaterLevelPin),
       true,
@@ -966,6 +984,7 @@ void printSample(uint32_t nowMs) {
       mqRaw >= 0,
       mqPinMillivolts,
       mqAdcCalibration,
+      uvPinMillivolts,
   };
 
   sample.uptimeMs = millis();
@@ -1088,8 +1107,11 @@ void setup() {
   analogReadResolution(12);
   // ADC characterization estimates GPIO36 voltage from the averaged sample.
   // It does not establish the module's supply, divider ratio, or electrical safety.
-  mqAdcReady = adc1_config_width(ADC_WIDTH_BIT_12) == ESP_OK &&
+  const bool adcWidthReady = adc1_config_width(ADC_WIDTH_BIT_12) == ESP_OK;
+  mqAdcReady = adcWidthReady &&
                adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_12) == ESP_OK;
+  uvAdcReady = adcWidthReady &&
+               adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_DB_12) == ESP_OK;
   if (mqAdcReady) {
     const esp_adc_cal_value_t mqCal = esp_adc_cal_characterize(
         ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &mqAdcCharacteristics);
@@ -1107,6 +1129,35 @@ void setup() {
         mqAdcCalibration = planter::AdcCalibrationMethod::unavailable;
     }
   }
+  if (uvAdcReady) {
+    const esp_adc_cal_value_t uvCal = esp_adc_cal_characterize(
+        ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &uvAdcCharacteristics);
+    switch (uvCal) {
+      case ESP_ADC_CAL_VAL_EFUSE_TP:
+        uvAdcCalibration = planter::AdcCalibrationMethod::efuse_two_point;
+        break;
+      case ESP_ADC_CAL_VAL_EFUSE_VREF:
+        uvAdcCalibration = planter::AdcCalibrationMethod::efuse_vref;
+        break;
+      case ESP_ADC_CAL_VAL_DEFAULT_VREF:
+        uvAdcCalibration = planter::AdcCalibrationMethod::default_vref;
+        break;
+      default:
+        uvAdcCalibration = planter::AdcCalibrationMethod::unavailable;
+    }
+  }
+  // One-shot wiring probe: compare all exposed ADC1 inputs. This does not
+  // prove sensor health; it only shows which pin carries a voltage.
+  for (int channel = 0; channel < 8; ++channel) {
+    adc1_config_channel_atten(static_cast<adc1_channel_t>(channel),
+                              ADC_ATTEN_DB_12);
+  }
+  Serial.printf(
+      "{\"type\":\"uv_probe\",\"gpio32\":%d,\"gpio33\":%d,\"gpio34\":%d,"
+      "\"gpio35\":%d,\"gpio36\":%d,\"gpio39\":%d}\n",
+      adc1_get_raw(ADC1_CHANNEL_4), adc1_get_raw(ADC1_CHANNEL_5),
+      adc1_get_raw(ADC1_CHANNEL_6), adc1_get_raw(ADC1_CHANNEL_7),
+      adc1_get_raw(ADC1_CHANNEL_0), adc1_get_raw(ADC1_CHANNEL_3));
   pinMode(extra_sensors::kWaterLevelPin, INPUT);
   pinMode(extra_sensors::kMq135DigitalPin, INPUT);
   ArduinoSoilGpio soilGpio;
