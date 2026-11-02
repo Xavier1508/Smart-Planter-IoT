@@ -956,7 +956,7 @@ void updateLcd(uint32_t nowMs) {
 void printSample(uint32_t nowMs) {
   const int uvRaw = readUvRaw();
   const int uvPinMillivolts =
-      planter::controlAnalogUsable(uvRaw) &&
+      planter::validAdcRaw(uvRaw) &&
               uvAdcCalibration != planter::AdcCalibrationMethod::unavailable
           ? static_cast<int>(esp_adc_cal_raw_to_voltage(uvRaw, &uvAdcCharacteristics))
           : -1;

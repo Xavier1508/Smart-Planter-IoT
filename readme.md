@@ -1391,7 +1391,7 @@ Build v40:
 
 ```text
 Size    : 1.094.912 byte
-SHA-256 : 1228ef09fef7e1f50f3f275b6198be96d9a46d91a07450630124e6d43b38fccb
+SHA-256 : c97292f5532084a072d558b69d8f13e83d0c3c8ea993d8a9b8512ba3fbafdf78
 Flash   : 1.088.329 B (83,0%)
 RAM     : 57.028 B (17,4%)
 ```
