@@ -150,7 +150,7 @@ grafik. Salinan internal ditulis atomik; salinan pengguna masuk
 
 1. Nyalakan ESP32 dan hubungkan ponsel ke AP `Moss` (password di LCD).
 2. Buka `http://192.168.4.1/`. Daftar Wi-Fi diambil saat perangkat boot (sebelum AP aktif) agar scan tidak memutus koneksi ponsel. Pilih SSID dari dropdown; SSID tersembunyi dapat diketik manual. ESP32 hanya mendukung **2,4 GHz** dan WPA2, bukan 5 GHz/WPA3-only.
-3. Masukkan password lalu tekan **Simpan & sambungkan**. Halaman menampilkan status `connecting`, lalu `connected` dengan IP/RSSI, atau `failed` jika password/sinyal bermasalah.
+3. Masukkan password lalu tekan **Simpan & sambungkan**. Halaman menampilkan status `connecting`, lalu `connected` dengan IP/RSSI, atau `failed` jika password/sinyal bermasalah. Jika boot terakhir disebabkan brownout, perangkat masuk **safe mode AP-only** dan tidak mencoba cloud otomatis; scan boot dilewati dan SSID dapat diketik manual. Ini mencegah reset loop akibat daya lemah.
 4. Jika tersambung, perangkat restart otomatis setelah hitungan 8 detik; halaman menjelaskan bahwa koneksi akan terputus sementara. Setelah restart perangkat mengambil NTP dan mendaftar ke cloud.
 5. Kode claim tampil di LCD selama 12 detik pertama; ID perangkat tampil di halaman setup atau `/api/v1/health`. Jika terlewat, restart perangkat.
 6. Di aplikasi, pilih **Mode online** dan masuk/buat akun terlebih dahulu. Setelah akun siap, isi ID perangkat dan kode claim di layar pairing.
@@ -1285,7 +1285,7 @@ Pengujian yang benar-benar dijalankan:
 
 | Pemeriksaan | Hasil |
 |---|---|
-| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 55.512 B (16,9%), flash 895.197 B (68,3%) |
+| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 55.512 B (16,9%), flash 895.273 B (68,3%) |
 | `flutter analyze --no-pub` | Tidak ada issue |
 | `flutter test --no-pub` | 154 lulus, 2 dilewati (fixture loopback tidak dikonfigurasi) |
 | `:app:compileProductionReleaseKotlin` | Sukses (signing release tidak tersedia lokal) |

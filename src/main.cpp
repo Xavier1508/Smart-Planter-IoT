@@ -173,10 +173,13 @@ void startLocalWifi() {
     Serial.println("{\"type\":\"wifi\",\"status\":\"boot_scan_skipped\","
                    "\"reason\":\"previous_brownout\"}");
   }
-  const bool stationRequested = MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0;
+  const bool brownoutBoot = strcmp(bootResetReason, "brownout") == 0;
+  const bool stationRequested =
+      MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0 && !brownoutBoot;
   // Before credentials exist, use AP-only. This removes STA radio activity
-  // and makes the setup network much more stable. After saving credentials the
-  // page switches to AP+STA for the connection attempt.
+  // and makes the setup network much more stable. A brownout boot also stays
+  // AP-only so a power fault cannot create a reset loop while joining a router.
+  // After saving credentials the page switches to AP+STA for the attempt.
   if (!WiFi.mode(stationRequested ? WIFI_AP_STA : WIFI_AP)) {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_mode_failed\"}");
     return;
@@ -604,8 +607,10 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
           cloudReady ? "true" : "false", cloudLink.hardwareId(),
           cloudLink.statusText());
     } else {
-      Serial.println("{\"type\":\"cloud\",\"event\":\"disabled\","
-                     "\"reason\":\"no_sta_credentials\"}");
+      Serial.printf("{\"type\":\"cloud\",\"event\":\"disabled\","
+                    "\"reason\":\"%s\"}\n",
+                    brownoutBoot ? "brownout_safe_mode"
+                                 : "no_sta_credentials");
     }
   }
 }
