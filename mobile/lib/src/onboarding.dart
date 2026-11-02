@@ -282,6 +282,26 @@ class _AuthPageState extends State<AuthPage> {
                           height: 1.4,
                         ),
                       ),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          color: colors.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'Mode online membutuhkan internet. Setelah setup '
+                          'perangkat, pindah dari Wi-Fi Moss ke Wi-Fi rumah '
+                          'atau data seluler. Jangan login saat ponsel masih '
+                          'terhubung ke AP Moss yang tidak memiliki internet.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: colors.onSurfaceVariant,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
