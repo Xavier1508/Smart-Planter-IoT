@@ -1078,7 +1078,22 @@ class _Home extends StatelessWidget {
       localStatus == LocalWifiStatus.waiting ||
       localStatus == LocalWifiStatus.connecting;
 
-  String _percent(int? value) => value == null ? '—' : '$value%';
+  String _percent(int? value) => value == null ? '-' : '$value%';
+
+  /// Display-only estimate when the UV channel is silent. It prefers the real
+  /// source value, then the legacy ADC-to-index formula, then an LDR proxy.
+  /// The proxy is never fed to the ML model or written to the dataset.
+  double? _uvEstimate(PlantState state) {
+    final direct = state.uvIndex;
+    if (direct != null) return direct;
+    final raw = state.uvAdc;
+    if (raw != null && raw > 0 && raw < 4095) {
+      return (raw * 3.3 / 4095.0) / 0.1;
+    }
+    final light = state.lightPercent;
+    if (light != null) return (light / 100.0) * 11.0;
+    return null;
+  }
 
   String _lockoutText(int seconds) {
     final minutes = seconds ~/ 60;
@@ -1489,18 +1504,15 @@ class _Home extends StatelessWidget {
                           child: _Metric(
                             icon: Icons.wb_twilight_rounded,
                             title: 'UV',
-                            value:
-                                state.uvAdcPercent == null ||
-                                    state.uvAdc == 0 ||
-                                    state.uvAdc == 4095
-                                ? (state.uvIndex?.toStringAsFixed(1) ?? '—')
-                                : '~${state.uvAdcPercent}%',
+                            value: state.uvAdc == 4095
+                                ? '—'
+                                : _uvEstimate(state)?.toStringAsFixed(1) ?? '—',
                             detail: state.uvAdc == null
                                 ? state.uvIndex == null
                                       ? 'Menunggu data sensor'
                                       : 'Belum diverifikasi'
                                 : state.uvAdc == 0
-                                ? '0 V - cek catu/sinyal sensor UV'
+                                ? 'Estimasi LDR; sensor UV 0 V'
                                 : state.uvAdc == 4095
                                 ? 'Rail tinggi - cek sinyal sensor UV'
                                 : 'ADC ${state.uvAdc}',

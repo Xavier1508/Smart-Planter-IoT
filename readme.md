@@ -8,7 +8,7 @@ Aplikasi Android menggunakan karakter bernama Moss sebagai antarmuka interaktif.
 
 Prototipe v41 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
 
-- Aplikasi Android `0.9.3+27` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
+- Aplikasi Android `0.9.4+28` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
 - Firmware v41 memakai AP+STA, NTP, HTTPS sync 2 detik, TLS keep-alive, buffer LittleFS, ACK idempoten, dan deduplikasi perintah. UV dibaca eksplisit dari ADC1 channel 7 (GPIO35) dengan `uv_pin_mv` dan probe semua pin ADC1 saat boot.
 - Skala air v41: **EMPTY ≤450, LOW 451–950, MEDIUM 951–1499, FULL ≥1500**; cutoff pompa tetap 600. Nilai 1072–1233 berarti MEDIUM, bukan FULL.
 - Upload v39 memakai `sync` 2 detik (sampel + ACK + perintah) dengan TLS keep-alive; jalur `ingest`/`commands`/`ack` lama tetap menjadi fallback. Aplikasi tetap memakai REST poll 5 detik bila Realtime putus.
@@ -1380,6 +1380,10 @@ v40 menambahkan diagnostik agar penyebabnya bisa dipisahkan:
   ditampilkan sebagai peringatan cek catu/sinyal.
 - v41 mengulang `uv_probe` setiap 60 detik selama UV tetap 0, dan melaporkan
   `uv_pin_mv: 0` untuk raw 0 (bukan offset kalibrasi 142 mV).
+- Aplikasi 0.9.4+28 menghitung indeks UV dari rumus ADC lama saat raw > 0.
+  Jika raw 0, kartu UV menampilkan estimasi dari LDR dengan label
+  "Estimasi LDR; sensor UV 0 V". Angka estimasi ini hanya tampilan, tidak
+  dimasukkan ke model ML atau dataset cloud.
 - Buffer LittleFS memperbaiki kasus `/q` berubah menjadi file, yang sebelumnya
   membuat `open()` gagal dan sampel dibuang.
 - Jika route `sync` mengembalikan 5xx tiga kali, firmware kembali ke jalur
