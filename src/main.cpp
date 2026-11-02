@@ -64,6 +64,19 @@ uint32_t restartAtMs = 0;
 uint8_t wifiSetupState = 0;  // 0 idle, 1 connecting, 2 connected, 3 failed
 uint32_t wifiSetupStartedMs = 0;
 bool restartAfterWifiSetup = false;
+char bootResetReason[24] = "unknown";
+uint32_t bootBrownoutCount = 0;
+
+struct BootScanEntry {
+  char ssid[33];
+  int32_t rssi;
+  uint8_t channel;
+  bool secure;
+};
+constexpr size_t kBootScanCapacity = 24;
+BootScanEntry bootScan[kBootScanCapacity];
+size_t bootScanCount = 0;
+
 planter::CloudLink cloudLink;
 
 void applyControlLine(const char* line);
@@ -76,6 +89,56 @@ const char* pumpStartBlockReason();
 struct HardwareRandom {
   uint32_t next() { return esp_random(); }
 };
+
+void scanWifiAtBoot() {
+  bootScanCount = 0;
+  WiFi.persistent(false);
+  if (!WiFi.mode(WIFI_STA)) {
+    Serial.println("{\"type\":\"wifi\",\"status\":\"boot_scan_mode_failed\"}");
+    return;
+  }
+  WiFi.disconnect(false, false);
+  delay(50);
+  if (watchdogReady) esp_task_wdt_reset();
+  const int found = WiFi.scanNetworks(false, true, false, 200);
+  if (watchdogReady) esp_task_wdt_reset();
+  if (found <= 0) {
+    WiFi.scanDelete();
+    Serial.printf("{\"type\":\"wifi\",\"status\":\"boot_scan_empty\","
+                  "\"result\":%d}\n", found);
+    return;
+  }
+  for (int index = 0; index < found; ++index) {
+    const String ssid = WiFi.SSID(index);
+    if (ssid.isEmpty()) continue;
+    int existing = -1;
+    for (size_t item = 0; item < bootScanCount; ++item) {
+      if (strcmp(bootScan[item].ssid, ssid.c_str()) == 0) {
+        existing = static_cast<int>(item);
+        break;
+      }
+    }
+    if (existing >= 0) {
+      if (WiFi.RSSI(index) > bootScan[existing].rssi) {
+        bootScan[existing].rssi = WiFi.RSSI(index);
+        bootScan[existing].channel = WiFi.channel(index);
+        bootScan[existing].secure =
+            WiFi.encryptionType(index) != WIFI_AUTH_OPEN;
+      }
+      continue;
+    }
+    if (bootScanCount >= kBootScanCapacity) continue;
+    BootScanEntry& entry = bootScan[bootScanCount++];
+    snprintf(entry.ssid, sizeof(entry.ssid), "%s", ssid.c_str());
+    entry.rssi = WiFi.RSSI(index);
+    entry.channel = WiFi.channel(index);
+    entry.secure = WiFi.encryptionType(index) != WIFI_AUTH_OPEN;
+  }
+  WiFi.scanDelete();
+  Serial.printf("{\"type\":\"wifi\",\"status\":\"boot_scan_ready\","
+                "\"networks\":%lu}\n",
+                static_cast<unsigned long>(bootScanCount));
+}
 
 void loadWifiCredentials() {
   Preferences preferences;
@@ -98,6 +161,7 @@ void startLocalWifi() {
   // All Wi-Fi configuration stays in RAM. The device keeps its isolated AP as
   // a fallback while optionally joining a router for cloud HTTPS.
   WiFi.persistent(false);
+  scanWifiAtBoot();
   const bool stationRequested = MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0;
   // Keep the STA interface available even before credentials exist so the
   // setup page can scan nearby networks. This does not connect to any router.
@@ -184,6 +248,7 @@ details{margin-top:12px;font-size:13px;color:var(--muted)}summary{cursor:pointer
 <div class="hero"><div class="logo">🌱</div><div><span class="badge">Tunas Smart Planter</span><h1>Hubungkan ke Wi-Fi rumah</h1><p>Pilih jaringan, masukkan password, lalu tunggu status koneksi.</p></div></div>
 <div class="card">
 <div class="row"><span>ID perangkat</span><code id="device-id">memuat...</code></div>
+<p id="diag" class="hint"></p>
 <div id="status" class="status"><strong id="status-title">Menyiapkan halaman...</strong><span id="status-text">Membaca status perangkat.</span></div>
 <label for="ssid-select">Wi-Fi yang terdeteksi</label>
 <div class="scanrow"><select id="ssid-select"><option value="">Pilih Wi-Fi...</option></select><button id="scan-btn" onclick="scan()">Scan</button></div>
@@ -191,6 +256,7 @@ details{margin-top:12px;font-size:13px;color:var(--muted)}summary{cursor:pointer
 <input id="ssid-manual" maxlength="32" autocomplete="off" placeholder="Nama Wi-Fi tersembunyi">
 <label for="pass">Password Wi-Fi</label>
 <div class="passrow"><input id="pass" type="password" maxlength="63" autocomplete="current-password" placeholder="Minimal 8 karakter"><button type="button" onclick="togglePass()">Lihat</button></div>
+<p class="hint">ESP32 hanya mendukung Wi-Fi <b>2,4 GHz</b> dan WPA2/WPA2-PSK. SSID 5 GHz tidak akan terlihat.</p>
 <button id="connect" class="primary" onclick="save()">Simpan &amp; sambungkan</button>
 <p class="hint">Setelah koneksi berhasil, perangkat restart otomatis. Halaman ini akan terputus sebentar; sambungkan kembali ke <b>Moss-C31C</b> lalu buka halaman ini untuk melihat status cloud.</p>
 </div>
@@ -280,7 +346,9 @@ async function poll(){
       setStatus('busy','Menghubungkan ke '+(j.ssid||'Wi-Fi...'),'Menunggu DHCP dan verifikasi password...',true);
       pollTimer=setTimeout(poll,1200);
     }else if(j.state==='failed'){
-      setStatus('err','Gagal terhubung ke '+(j.ssid||'Wi-Fi'),'Periksa password, jarak router, dan frekuensi 2.4 GHz. Perangkat tetap di AP Moss-C31C.');
+      const names={0:'idle',1:'SSID tidak ditemukan',2:'scan selesai',3:'terhubung',4:'password/keamanan ditolak',5:'koneksi hilang',6:'terputus'};
+      const code=(j.sta_status==null?'':' Status driver: '+(names[j.sta_status]||j.sta_status)+'.');
+      setStatus('err','Gagal terhubung ke '+(j.ssid||'Wi-Fi'),'Periksa password, pilih jaringan 2,4 GHz, dan gunakan WPA2. Perangkat tetap di AP Moss-C31C.'+code);
       busy=false; $('connect').disabled=false;
     }else{
       setStatus('','Belum terhubung ke Wi-Fi rumah','Pilih jaringan lalu tekan Simpan & sambungkan.');
@@ -298,7 +366,7 @@ async function poll(){
   }
 }
 $('ssid-select').addEventListener('change',()=>{if($('ssid-select').value) $('ssid-manual').value='';});
-fetch('/api/v1/health').then(r=>r.json()).then(j=>{$('device-id').textContent=j.hardware_id||'-';}).catch(()=>{$('device-id').textContent='tidak tersedia';});
+fetch('/api/v1/health').then(r=>r.json()).then(j=>{ $('device-id').textContent=j.hardware_id||'-'; if(Number(j.brownout_count)>0){ $('diag').textContent='Peringatan daya: brownout '+j.brownout_count+' kali. Gunakan adaptor 5V/USB yang kuat.'; $('diag').style.color='#A33B2B'; } }).catch(()=>{$('device-id').textContent='tidak tersedia';});
 poll();
 setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di sekitar perangkat.');
 </script>
@@ -313,16 +381,22 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       localHttpServer.send(200, "application/json", latestTelemetry);
     });
     localHttpServer.on("/api/v1/health", HTTP_GET, []() {
-      char body[420];
+      char body[560];
       snprintf(body, sizeof(body),
                "{\"firmware_version\":%u,\"uptime_ms\":%lu,"
                "\"hardware_id\":\"%s\","
+               "\"reset_reason\":\"%s\",\"brownout_count\":%lu,"
+               "\"sta_status\":%d,\"scan_cached\":%lu,"
                "\"local_ap\":%s,\"sta_connected\":%s,\"cloud_enabled\":%s,"
                "\"cloud_online\":%s,\"buffered_batches\":%lu,"
                "\"dropped_samples\":%lu,\"free_heap\":%lu}",
                planter::kFirmwareVersion,
                static_cast<unsigned long>(millis()),
                MOSS_DEVICE_ID,
+               bootResetReason,
+               static_cast<unsigned long>(bootBrownoutCount),
+               static_cast<int>(WiFi.status()),
+               static_cast<unsigned long>(bootScanCount),
                localWifiReady ? "true" : "false",
                WiFi.status() == WL_CONNECTED ? "true" : "false",
                cloudLink.enabled() ? "true" : "false",
@@ -333,6 +407,26 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       localHttpServer.send(200, "application/json", body);
     });
     localHttpServer.on("/api/v1/wifi/scan", HTTP_GET, []() {
+      // The boot scan runs before the AP starts, so reading its cache does not
+      // make the phone lose the access point. Use ?refresh=1 only when the
+      // caller explicitly accepts a brief radio interruption.
+      if (bootScanCount > 0 && localHttpServer.arg("refresh") != "1") {
+        JsonDocument cached;
+        JsonArray networks = cached["networks"].to<JsonArray>();
+        for (size_t index = 0; index < bootScanCount; ++index) {
+          JsonObject network = networks.add<JsonObject>();
+          network["ssid"] = bootScan[index].ssid;
+          network["rssi"] = bootScan[index].rssi;
+          network["channel"] = bootScan[index].channel;
+          network["secure"] = bootScan[index].secure;
+        }
+        cached["count"] = networks.size();
+        cached["source"] = "boot";
+        String body;
+        serializeJson(cached, body);
+        localHttpServer.send(200, "application/json", body);
+        return;
+      }
       int result = WiFi.scanComplete();
       if (result == WIFI_SCAN_RUNNING) {
         localHttpServer.send(202, "application/json",
@@ -387,6 +481,7 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       document["ssid"] = wifiSsid;
       document["state"] = state;
       document["sta_connected"] = connected;
+      document["sta_status"] = static_cast<int>(WiFi.status());
       document["ip"] = connected ? WiFi.localIP().toString() : "";
       document["rssi"] = connected ? WiFi.RSSI() : 0;
       document["cloud_enabled"] = cloudLink.enabled();
@@ -452,6 +547,7 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       wifiSetupStartedMs = millis();
       restartAtMs = 0;
       restartAfterWifiSetup = true;
+      Serial.println("{\"type\":\"wifi\",\"status\":\"setup_begin\"}");
 
       JsonDocument response;
       response["status"] = "connecting";
@@ -690,6 +786,8 @@ void logBootReason() {
     }
     prefs.end();
   }
+  snprintf(bootResetReason, sizeof(bootResetReason), "%s", resetReasonName(reason));
+  bootBrownoutCount = brownouts;
   // Serial diagnostic only; this line is never sent over the TCP telemetry
   // stream, so the Android parser is unaffected.
   Serial.printf(
@@ -1067,7 +1165,8 @@ void loop() {
       }
     } else if (millis() - wifiSetupStartedMs > 30000) {
       wifiSetupState = 3;
-      Serial.println("{\"type\":\"wifi\",\"status\":\"setup_failed\"}");
+      Serial.printf("{\"type\":\"wifi\",\"status\":\"setup_failed\","
+                    "\"sta_status\":%d}\n", static_cast<int>(WiFi.status()));
     }
   }
   if (restartAtMs != 0 && millis() >= restartAtMs) {
