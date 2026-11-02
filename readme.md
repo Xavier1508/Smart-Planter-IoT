@@ -1364,8 +1364,8 @@ Yang **belum** diuji: flash v38 ke papan, koneksi STA ke router nyata, handshake
 
 | Pemeriksaan | Hasil |
 |---|---|
-| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 56.988 B (17,4%), flash 1.087.293 B (83,0%) |
-| Binary firmware | 1.093.872 byte, SHA-256 `b08ca79bdaab566f442f39dc582ca6dbd7610d00e6b808541d1a2f349314ad49` |
+| Build firmware `pio run -e nodemcu-32s` | Sukses; RAM 56.988 B (17,4%), flash 1.087.381 B (83,0%) |
+| Binary firmware | 1.093.952 byte, SHA-256 `0da5f74e1141f931d7f169f778f1784d62874dd634e32f35bc9c72cdaab3a3d6` |
 | `flutter analyze --no-pub` | Tidak ada issue |
 | `flutter test --no-pub` | 155 lulus, 2 dilewati |
 | Host test C++ `sensor-telemetry-test` | Lulus (fixture data only) |

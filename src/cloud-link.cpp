@@ -513,7 +513,12 @@ int CloudLink::syncWithCloud(CloudSample* batch, size_t count) {
 
   applyCommandsJson(response);
   lastSyncMs_ = millis();
-  if (count > 0) lastUploadMs_ = millis();
+  if (count > 0) {
+    lastUploadMs_ = millis();
+    setStatus("Cloud online; telemetry synced.");
+  } else {
+    setStatus("Cloud online; commands synced.");
+  }
   return 1;
 }
 
