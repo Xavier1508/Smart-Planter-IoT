@@ -24,7 +24,7 @@ constexpr size_t kAckQueueLength = 8;
 constexpr size_t kSampleQueueLength = 64;
 constexpr uint32_t kRegisterIntervalMs = 300000;
 constexpr uint32_t kCommandPollIntervalMs = 5000;
-constexpr uint32_t kReconnectIntervalMs = 15000;
+constexpr uint32_t kReconnectIntervalMs = 60000;
 constexpr uint32_t kMaxBackoffMs = 60000;
 
 const char kRootCa[] PROGMEM = R"PEM(-----BEGIN CERTIFICATE-----
@@ -219,6 +219,9 @@ void CloudLink::poll() {
 
 void CloudLink::ensureStationConnection() {
   if (WiFi.status() == WL_CONNECTED) return;
+  // WL_IDLE_STATUS means the station is already attempting a connection.
+  // Calling begin() again would reset that attempt and can disturb the AP.
+  if (WiFi.status() == WL_IDLE_STATUS) return;
   const uint32_t now = millis();
   if (lastReconnectMs_ != 0 && now - lastReconnectMs_ < kReconnectIntervalMs) {
     return;

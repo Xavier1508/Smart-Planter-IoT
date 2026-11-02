@@ -14,7 +14,14 @@ class CloudController extends ChangeNotifier {
       (event) => unawaited(_setUser(event.session?.user.id)),
       onError: (Object _, StackTrace _) => _authUnavailable(),
     );
-    unawaited(_setUser(client.auth.currentSession?.user.id));
+    unawaited(_initialize());
+  }
+
+  Future<void> _initialize() async {
+    await _setUser(client.auth.currentSession?.user.id);
+    if (_disposed) return;
+    authReady = true;
+    notifyListeners();
   }
 
   final SupabaseClient client;
@@ -25,6 +32,8 @@ class CloudController extends ChangeNotifier {
   PlanterDevice? _device;
   int _generation = 0;
   bool _disposed = false;
+  bool loadingDevice = false;
+  bool authReady = false;
   String status = 'Masuk untuk melihat perangkat Anda.';
   Stream<PlantTelemetry>? telemetry;
 
@@ -35,15 +44,22 @@ class CloudController extends ChangeNotifier {
   String? get deviceId => _deviceId;
   String? get hardwareId => _device?.hardwareId;
   String? get deviceName => _device?.name;
+  String? get email => client.auth.currentUser?.email;
   int get sessionGeneration => _generation;
 
   Future<void> _setUser(String? userId, {bool force = false}) async {
     if (_disposed || (!force && userId == _userId)) return;
+    final sameUser = userId == _userId;
+    final preserveDevice = force && sameUser && _device != null;
     _userId = userId;
     final generation = ++_generation;
     telemetry = null;
-    _deviceId = null;
-    _device = null;
+    if (!preserveDevice) {
+      _deviceId = null;
+      _device = null;
+    }
+    loadingDevice = userId != null;
+    authReady = true;
     status = userId == null
         ? 'Masuk untuk melihat perangkat Anda.'
         : 'Mencari perangkat Anda...';
@@ -53,9 +69,9 @@ class CloudController extends ChangeNotifier {
       final device = await _telemetrySource.firstDevice();
       if (_disposed || generation != _generation) return;
       if (device == null) {
-        if (_device == null) {
-          status = 'Belum ada perangkat yang dipasangkan.';
-        }
+        _device = null;
+        _deviceId = null;
+        status = 'Belum ada perangkat yang dipasangkan.';
       } else {
         _bindDevice(device);
       }
@@ -63,6 +79,7 @@ class CloudController extends ChangeNotifier {
       if (_disposed || generation != _generation) return;
       status = 'Perangkat belum dapat dimuat. Periksa koneksi Anda.';
     }
+    loadingDevice = false;
     notifyListeners();
   }
 
@@ -79,6 +96,8 @@ class CloudController extends ChangeNotifier {
     _userId = null;
     _deviceId = null;
     _device = null;
+    loadingDevice = false;
+    authReady = true;
     telemetry = null;
     status = 'Sesi tidak tersedia. Silakan masuk kembali.';
     notifyListeners();

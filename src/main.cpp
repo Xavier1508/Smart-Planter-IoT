@@ -61,6 +61,8 @@ char localWifiPassword[planter::kLocalWifiPasswordLength + 1] = {};
 char wifiSsid[33] = {};
 char wifiPassword[65] = {};
 uint32_t restartAtMs = 0;
+uint8_t wifiSetupState = 0;  // 0 idle, 1 connecting, 2 connected, 3 failed
+uint32_t wifiSetupStartedMs = 0;
 planter::CloudLink cloudLink;
 
 void applyControlLine(const char* line);
@@ -96,7 +98,9 @@ void startLocalWifi() {
   // a fallback while optionally joining a router for cloud HTTPS.
   WiFi.persistent(false);
   const bool stationRequested = MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0;
-  if (!WiFi.mode(stationRequested ? WIFI_AP_STA : WIFI_AP)) {
+  // Keep the STA interface available even before credentials exist so the
+  // setup page can scan nearby networks. This does not connect to any router.
+  if (!WiFi.mode(MOSS_CLOUD_ENABLED ? WIFI_AP_STA : WIFI_AP)) {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_mode_failed\"}");
     return;
   }
@@ -129,7 +133,7 @@ void startLocalWifi() {
   snprintf(localWifiName, sizeof(localWifiName), "Moss-%04X",
            static_cast<unsigned>(ESP.getEfuseMac() & 0xffffU));
   if (!WiFi.softAPConfig(localAddress, localAddress, IPAddress(255, 255, 255, 0)) ||
-      !WiFi.softAP(localWifiName, localWifiPassword, 1, false, 1)) {
+      !WiFi.softAP(localWifiName, localWifiPassword, 6, false, 4)) {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_failed\"}");
     WiFi.softAPdisconnect(true);
     return;
@@ -144,30 +148,159 @@ void startLocalWifi() {
                   localWifiName);
     localHttpServer.on("/", HTTP_GET, []() {
       localHttpServer.send(200, "text/html; charset=utf-8", R"HTML(<!doctype html>
-<html lang="id"><meta name="viewport" content="width=device-width">
-<title>Tunas Cloud Setup</title>
-<style>body{font-family:system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem}label{display:block;margin:1rem 0 .3rem}input{width:100%;padding:.7rem;box-sizing:border-box}button{margin-top:1rem;padding:.8rem 1.2rem}#s{margin-top:1rem}</style>
-<h1>Tunas Cloud Setup</h1>
-<p id="id">ID perangkat: memuat...</p>
-<p>Hubungkan ponsel ke Wi-Fi <b>Moss-xxxx</b> (kata sandi di LCD), lalu isi Wi-Fi rumah yang memiliki internet.</p>
-<label>SSID</label><input id="ssid" autocomplete="off" maxlength="32">
-<label>Kata sandi Wi-Fi</label><input id="pass" type="password" maxlength="63">
-<button onclick="save()">Simpan dan restart</button><p id="s"></p>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tunas Setup</title>
+<style>
+:root{--ink:#213027;--forest:#315E48;--paper:#F7F5EF;--line:#DDE5DA;--muted:#6A756B;--ok:#1F6B45;--err:#A33B2B}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:36rem;margin:auto;padding:24px 16px 48px}.hero{display:flex;gap:14px;align-items:center;margin:8px 0 18px}
+.logo{width:52px;height:52px;border-radius:18px;background:#DDE9DA;display:grid;place-items:center;font-size:28px}
+h1{font-size:24px;margin:0;letter-spacing:-.02em}p{margin:.25rem 0;color:var(--muted)}
+.card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:18px;margin:12px 0;box-shadow:0 8px 28px rgba(33,48,39,.05)}
+.row{display:flex;justify-content:space-between;gap:12px;font-size:13px}code{font-size:12px;background:#F1F4EF;padding:3px 7px;border-radius:7px}
+label{display:block;font-weight:650;font-size:13px;margin:15px 0 6px}
+select,input{width:100%;padding:12px 13px;border:1px solid #CBD7C9;border-radius:12px;background:#fff;color:var(--ink);font:inherit;outline:none}
+select:focus,input:focus{border-color:var(--forest);box-shadow:0 0 0 3px rgba(49,94,72,.12)}
+.scanrow,.passrow{display:flex;gap:8px}.scanrow select{flex:1}.scanrow button,.passrow button{white-space:nowrap;border:1px solid var(--line);background:#F1F4EF;border-radius:12px;padding:0 14px;font-weight:650;color:var(--forest)}
+button{cursor:pointer;font:inherit}button:disabled{opacity:.55;cursor:not-allowed}
+.primary{width:100%;margin-top:18px;padding:14px;border:0;border-radius:13px;background:var(--forest);color:#fff;font-weight:750;font-size:15px}
+.hint{font-size:12px;color:var(--muted);margin-top:10px}
+.status{border-radius:14px;padding:13px 14px;margin:14px 0;background:#F1F4EF;border:1px solid var(--line);display:grid;gap:3px}
+.status strong{font-size:14px}.status span{font-size:12.5px;color:var(--muted)}
+.status.ok{background:#EAF5EC;border-color:#B9D9C2}.status.ok span{color:var(--ok)}
+.status.err{background:#FCEFEB;border-color:#E8C2B8}.status.err span{color:var(--err)}
+.status.busy{background:#FFF8E7;border-color:#E9D7A7}
+.spinner{width:15px;height:15px;border:2px solid #D8E1D5;border-top-color:var(--forest);border-radius:50%;display:inline-block;vertical-align:-2px;margin-right:7px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+details{margin-top:12px;font-size:13px;color:var(--muted)}summary{cursor:pointer;font-weight:650;color:var(--ink)}
+.badge{font-size:11px;font-weight:750;letter-spacing:.04em;color:var(--forest);text-transform:uppercase}
+</style>
+</head>
+<body><main>
+<div class="hero"><div class="logo">🌱</div><div><span class="badge">Tunas Smart Planter</span><h1>Hubungkan ke Wi-Fi rumah</h1><p>Pilih jaringan, masukkan password, lalu tunggu status koneksi.</p></div></div>
+<div class="card">
+<div class="row"><span>ID perangkat</span><code id="device-id">memuat...</code></div>
+<div id="status" class="status"><strong id="status-title">Menyiapkan halaman...</strong><span id="status-text">Membaca status perangkat.</span></div>
+<label for="ssid-select">Wi-Fi yang terdeteksi</label>
+<div class="scanrow"><select id="ssid-select"><option value="">Pilih Wi-Fi...</option></select><button id="scan-btn" onclick="scan()">Scan</button></div>
+<label for="ssid-manual">Atau ketik SSID manual</label>
+<input id="ssid-manual" maxlength="32" autocomplete="off" placeholder="Nama Wi-Fi tersembunyi">
+<label for="pass">Password Wi-Fi</label>
+<div class="passrow"><input id="pass" type="password" maxlength="63" autocomplete="current-password" placeholder="Minimal 8 karakter"><button type="button" onclick="togglePass()">Lihat</button></div>
+<button id="connect" class="primary" onclick="save()">Simpan &amp; sambungkan</button>
+<p class="hint">Setelah koneksi berhasil, perangkat restart otomatis. Halaman ini akan terputus sebentar; sambungkan kembali ke <b>Moss-C31C</b> lalu buka halaman ini untuk melihat status cloud.</p>
+</div>
+<div class="card"><strong>Jika ponsel menolak Wi-Fi ini</strong><p>Android kadang berpindah ke data seluler karena AP belum punya internet. Pilih <b>Tetap terhubung</b>, matikan sementara data seluler, dan matikan auto-switch Wi-Fi.</p></div>
+<details><summary>Wi-Fi tidak muncul saat scan?</summary><p>Jauhkan ponsel 1–2 meter dari perangkat, tekan Scan ulang, atau ketik SSID manual. Scan dapat membuat AP sempat terputus sebentar; tunggu sampai daftar muncul.</p></details>
+</main>
 <script>
-fetch('/api/v1/health').then(r=>r.json()).then(j=>{document.getElementById('id').textContent='ID perangkat: '+j.hardware_id;}).catch(()=>{document.getElementById('id').textContent='ID perangkat tidak tersedia.';});
-async function save(){
- const s=document.getElementById('ssid').value.trim();
- const p=document.getElementById('pass').value;
- const out=document.getElementById('s');
- if(!s){out.textContent='SSID wajib diisi.';return;}
- out.textContent='Menyimpan...';
- try{
-  const r=await fetch('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:s,password:p})});
-  const j=await r.json();
-  out.textContent=r.ok?'Tersimpan. Perangkat restart dan mencoba cloud...':'Gagal: '+j.error;
- }catch(e){out.textContent='Gagal menghubungi perangkat.';}
+const $=id=>document.getElementById(id);
+let busy=false, pollTimer=null, pollFails=0;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function setStatus(kind,title,text,spin){
+  const box=$('status'); box.className='status '+kind;
+  const heading=$('status-title'); heading.textContent='';
+  if(spin){const dot=document.createElement('span');dot.className='spinner';heading.appendChild(dot);}
+  heading.appendChild(document.createTextNode(title));
+  $('status-text').textContent=text||'';
 }
-</script></html>)HTML");
+function togglePass(){const p=$('pass');p.type=p.type==='password'?'text':'password';}
+async function readJson(url,opts){
+  const r=await fetch(url,Object.assign({cache:'no-store'},opts||{}));
+  let j={}; try{j=await r.json();}catch(e){}
+  return {r,j};
+}
+function addNetwork(n){
+  if(!n.ssid) return;
+  const o=document.createElement('option');
+  o.value=n.ssid;
+  o.textContent=n.ssid+'  •  '+n.rssi+' dBm'+(n.secure?'  🔒':'  terbuka');
+  $('ssid-select').appendChild(o);
+}
+async function scan(){
+  if(busy) return;
+  $('scan-btn').disabled=true;
+  setStatus('busy','Memindai Wi-Fi sekitar...','Scan dapat membuat AP terputus sebentar.',true);
+  try{
+    for(let i=0;i<20;i++){
+      const {r,j}=await readJson('/api/v1/wifi/scan');
+      if(r.status===202){await sleep(1200);continue;}
+      if(!r.ok) throw new Error(j.error||'scan_failed');
+      $('ssid-select').innerHTML='<option value="">Pilih Wi-Fi...</option>';
+      (j.networks||[]).forEach(addNetwork);
+      const count=(j.networks||[]).length;
+      if(count===0) setStatus('','Tidak ada Wi-Fi ditemukan','Coba Scan ulang atau ketik SSID manual.');
+      else setStatus('ok','Ditemukan '+count+' Wi-Fi','Pilih jaringan rumah Anda dari daftar.');
+      return;
+    }
+    setStatus('err','Scan terlalu lama','Tekan Scan untuk mencoba lagi.');
+  }catch(e){
+    setStatus('err','Scan gagal','Perangkat mungkin sedang sibuk. Coba lagi.');
+  }finally{$('scan-btn').disabled=false;}
+}
+async function save(){
+  if(busy) return;
+  const manual=$('ssid-manual').value.trim();
+  const ssid=manual || $('ssid-select').value;
+  const pass=$('pass').value;
+  if(!ssid){setStatus('err','Wi-Fi belum dipilih','Pilih dari daftar atau ketik SSID manual.');return;}
+  if(pass.length>0 && pass.length<8){setStatus('err','Password terlalu pendek','Password WPA2 minimal 8 karakter.');return;}
+  busy=true; $('connect').disabled=true;
+  setStatus('busy','Menyimpan dan menghubungkan...','Mengirim kredensial ke perangkat.',true);
+  try{
+    const {r,j}=await readJson('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:ssid,password:pass})});
+    if(!r.ok) throw new Error(j.error||'save_failed');
+    setStatus('busy','Menghubungkan ke '+ssid,'Menunggu hasil dari ESP32...',true);
+    poll();
+  }catch(e){
+    setStatus('busy','Memeriksa status perangkat...','AP bisa terputus sebentar saat mencoba Wi-Fi rumah.',true);
+    pollTimer=setTimeout(poll,1500);
+  }
+}
+async function poll(){
+  clearTimeout(pollTimer);
+  try{
+    const {r,j}=await readJson('/api/v1/wifi/status');
+    if(!r.ok) throw new Error('status');
+    pollFails=0;
+    if(j.state==='connected'){
+      const restart=Number(j.restart_in_ms||0);
+      setStatus('ok','Tersambung ke '+(j.ssid||'Wi-Fi rumah'),'IP '+(j.ip||'-')+' • sinyal '+j.rssi+' dBm');
+      if(restart>0){
+        $('status-text').textContent='IP '+(j.ip||'-')+' • perangkat restart dalam '+Math.ceil(restart/1000)+' detik.';
+      }else if(!j.cloud_enabled){
+        $('status-text').textContent='IP '+(j.ip||'-')+' • setelah restart, cloud aktif otomatis.';
+      }
+      pollTimer=setTimeout(poll,1000);
+    }else if(j.state==='connecting'){
+      setStatus('busy','Menghubungkan ke '+(j.ssid||'Wi-Fi...'),'Menunggu DHCP dan verifikasi password...',true);
+      pollTimer=setTimeout(poll,1200);
+    }else if(j.state==='failed'){
+      setStatus('err','Gagal terhubung ke '+(j.ssid||'Wi-Fi'),'Periksa password, jarak router, dan frekuensi 2.4 GHz. Perangkat tetap di AP Moss-C31C.');
+      busy=false; $('connect').disabled=false;
+    }else{
+      setStatus('','Belum terhubung ke Wi-Fi rumah','Pilih jaringan lalu tekan Simpan & sambungkan.');
+      busy=false; $('connect').disabled=false;
+    }
+  }catch(e){
+    pollFails++;
+    if(pollFails<5){
+      setStatus('busy','Menunggu perangkat...','AP mungkin berpindah kanal atau perangkat sedang restart.',true);
+      pollTimer=setTimeout(poll,1500);
+      return;
+    }
+    setStatus('err','Perangkat sedang restart atau tidak terjangkau','Sambungkan kembali ke Moss-C31C lalu buka http://192.168.4.1/.');
+    busy=false; $('connect').disabled=false;
+  }
+}
+fetch('/api/v1/health').then(r=>r.json()).then(j=>{$('device-id').textContent=j.hardware_id||'-';}).catch(()=>{$('device-id').textContent='tidak tersedia';});
+poll();
+setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di sekitar perangkat.');
+</script>
+</body></html>)HTML");
     });
     localHttpServer.on("/api/v1/telemetry", HTTP_GET, []() {
       if (!latestTelemetryValid) {
@@ -195,6 +328,77 @@ async function save(){
                static_cast<unsigned long>(cloudLink.bufferedBatches()),
                static_cast<unsigned long>(cloudLink.droppedSamples()),
                static_cast<unsigned long>(ESP.getFreeHeap()));
+      localHttpServer.send(200, "application/json", body);
+    });
+    localHttpServer.on("/api/v1/wifi/scan", HTTP_GET, []() {
+      int result = WiFi.scanComplete();
+      if (result == WIFI_SCAN_RUNNING) {
+        localHttpServer.send(202, "application/json",
+                             "{\"status\":\"scanning\"}");
+        return;
+      }
+      if (result == WIFI_SCAN_FAILED) {
+        WiFi.scanDelete();
+        const int started = WiFi.scanNetworks(true, true, false, 120);
+        if (started == WIFI_SCAN_RUNNING) {
+          localHttpServer.send(202, "application/json",
+                               "{\"status\":\"scanning\"}");
+          return;
+        }
+        if (started < 0) {
+          localHttpServer.send(500, "application/json",
+                               "{\"error\":\"scan_failed\"}");
+          return;
+        }
+        result = started;
+      }
+
+      JsonDocument document;
+      JsonArray networks = document["networks"].to<JsonArray>();
+      for (int index = 0; index < result; ++index) {
+        const String ssid = WiFi.SSID(index);
+        if (ssid.isEmpty()) continue;
+        JsonObject network = networks.add<JsonObject>();
+        network["ssid"] = ssid;
+        network["rssi"] = WiFi.RSSI(index);
+        network["channel"] = WiFi.channel(index);
+        network["secure"] = WiFi.encryptionType(index) != WIFI_AUTH_OPEN;
+      }
+      document["count"] = networks.size();
+      String body;
+      serializeJson(document, body);
+      WiFi.scanDelete();
+      localHttpServer.send(200, "application/json", body);
+    });
+    localHttpServer.on("/api/v1/wifi/status", HTTP_GET, []() {
+      const bool connected = WiFi.status() == WL_CONNECTED;
+      const char* state = "idle";
+      if (connected || wifiSetupState == 2) {
+        state = "connected";
+      } else if (wifiSetupState == 1) {
+        state = "connecting";
+      } else if (wifiSetupState == 3) {
+        state = "failed";
+      }
+      JsonDocument document;
+      document["configured"] = strlen(wifiSsid) > 0;
+      document["ssid"] = wifiSsid;
+      document["state"] = state;
+      document["sta_connected"] = connected;
+      document["ip"] = connected ? WiFi.localIP().toString() : "";
+      document["rssi"] = connected ? WiFi.RSSI() : 0;
+      document["cloud_enabled"] = cloudLink.enabled();
+      document["cloud_online"] = cloudLink.cloudOnline();
+      document["restart_in_ms"] =
+          restartAtMs == 0
+              ? 0
+              : static_cast<int32_t>(restartAtMs - millis()) > 0
+                    ? static_cast<uint32_t>(restartAtMs - millis())
+                    : 0;
+      document["attempt_elapsed_ms"] =
+          wifiSetupState == 1 ? millis() - wifiSetupStartedMs : 0;
+      String body;
+      serializeJson(document, body);
       localHttpServer.send(200, "application/json", body);
     });
     localHttpServer.on("/api/v1/wifi", HTTP_POST, []() {
@@ -233,10 +437,25 @@ async function save(){
                              "{\"error\":\"save_failed\"}");
         return;
       }
-      localHttpServer.send(
-          202, "application/json",
-          "{\"status\":\"saved\",\"restart_in_ms\":1500}");
-      restartAtMs = millis() + 1500;
+
+      WiFi.scanDelete();
+      snprintf(wifiSsid, sizeof(wifiSsid), "%s", ssid.c_str());
+      snprintf(wifiPassword, sizeof(wifiPassword), "%s", password.c_str());
+      if (WiFi.getMode() != WIFI_AP_STA) {
+        WiFi.mode(WIFI_AP_STA);
+      }
+      WiFi.disconnect(false, false);
+      WiFi.begin(wifiSsid, wifiPassword);
+      wifiSetupState = 1;
+      wifiSetupStartedMs = millis();
+      restartAtMs = 0;
+
+      JsonDocument response;
+      response["status"] = "connecting";
+      response["ssid"] = ssid;
+      String body;
+      serializeJson(response, body);
+      localHttpServer.send(202, "application/json", body);
     });
     localHttpServer.onNotFound([]() {
       localHttpServer.send(404, "application/json",
@@ -825,6 +1044,17 @@ void setup() {
 }
 
 void loop() {
+  if (wifiSetupState == 1) {
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiSetupState = 2;
+      restartAtMs = millis() + 8000;
+      Serial.println("{\"type\":\"wifi\",\"status\":\"setup_connected\","
+                     "\"restart_in_ms\":8000}");
+    } else if (millis() - wifiSetupStartedMs > 30000) {
+      wifiSetupState = 3;
+      Serial.println("{\"type\":\"wifi\",\"status\":\"setup_failed\"}");
+    }
+  }
   if (restartAtMs != 0 && millis() >= restartAtMs) {
     relayController.inhibit(millis(), "wifi_setup_restart");
     syncRelayCommands(true);

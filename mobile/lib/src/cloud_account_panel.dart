@@ -6,8 +6,13 @@ import 'history_service.dart';
 import 'moss_app.dart';
 
 class CloudAccountPanel extends StatefulWidget {
-  const CloudAccountPanel({super.key, required this.controller});
+  const CloudAccountPanel({
+    super.key,
+    required this.controller,
+    this.onOffline,
+  });
   final CloudController controller;
+  final Future<void> Function()? onOffline;
 
   @override
   State<CloudAccountPanel> createState() => _CloudAccountPanelState();
@@ -269,6 +274,11 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                         : _copyTrainingCsv,
                     child: const Text('Salin CSV ML'),
                   ),
+                  if (widget.onOffline != null)
+                    TextButton(
+                      onPressed: _busy ? null : () => widget.onOffline!(),
+                      child: const Text('Mode offline'),
+                    ),
                   TextButton(
                     onPressed: _busy ? null : _signOut,
                     child: const Text('Keluar'),

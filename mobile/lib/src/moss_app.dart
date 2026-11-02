@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_mode.dart';
 import 'appearance.dart';
 import 'cloud_account_panel.dart';
 import 'cloud_controller.dart';
 import 'dashboard.dart';
 import 'local_wifi.dart';
 import 'moss_gaze.dart';
+import 'onboarding.dart';
 import 'plant_telemetry.dart';
 import 'update_progress.dart';
 
@@ -31,6 +33,8 @@ class MossApp extends StatefulWidget {
     this.cloudSetupNotice,
     this.localWifi,
     this.autoConnectLocal = true,
+    this.initialMode,
+    this.modeStore = const AppModeStore(),
     this.initialAppearance = const AppearanceSettings(),
     this.appearanceStore,
     this.clock,
@@ -53,6 +57,10 @@ class MossApp extends StatefulWidget {
 
   /// Tests may disable the initial connection and inject their own transport.
   final bool autoConnectLocal;
+
+  /// Optional override for widget tests and deterministic starts.
+  final AppMode? initialMode;
+  final AppModeStore modeStore;
   final AppearanceSettings initialAppearance;
   final AppearanceStore? appearanceStore;
 
@@ -69,6 +77,7 @@ class MossApp extends StatefulWidget {
 class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
   late AppearanceSettings _appearance;
   late DateTime _now;
+  AppMode? _mode;
   Timer? _clockTimer;
   bool _storageUnavailable = false;
   final _gaze = MossGaze();
@@ -84,12 +93,35 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
     super.initState();
     _appearance = widget.initialAppearance;
     _now = _readClock();
+    if (widget.cloud == null) {
+      _mode = AppMode.offline;
+    } else if (widget.initialMode != null) {
+      _mode = widget.initialMode;
+    } else {
+      unawaited(_loadMode());
+    }
     WidgetsBinding.instance.addObserver(this);
     _clockTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _refreshClock(),
     );
   }
+
+  Future<void> _loadMode() async {
+    final stored = await widget.modeStore.read();
+    if (!mounted) return;
+    setState(() => _mode = stored ?? AppMode.online);
+  }
+
+  Future<void> _setMode(AppMode mode) async {
+    if (!mounted) return;
+    setState(() => _mode = mode);
+    await widget.modeStore.write(mode);
+  }
+
+  Future<void> _goOnline() => _setMode(AppMode.online);
+
+  Future<void> _goOffline() => _setMode(AppMode.offline);
 
   void _refreshClock() {
     if (mounted) setState(() => _now = _readClock());
@@ -172,16 +204,20 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
       _now,
       manualMinute: _appearance.manualMinute,
     );
-    Widget dashboard(Widget? cloudSettings) => Dashboard(
+    Widget dashboard({
+      required CloudController? cloud,
+      required Widget? settings,
+      required bool autoConnectLocal,
+    }) => Dashboard(
       render3d: widget.render3d,
       gaze: _gaze,
       atmosphere: _atmosphere,
-      telemetry: widget.cloud?.telemetry ?? widget.telemetry,
+      telemetry: cloud?.telemetry ?? widget.telemetry,
       initialSerialJson: widget.initialSerialJson,
-      cloud: widget.cloud,
-      cloudSettings: cloudSettings,
+      cloud: cloud,
+      cloudSettings: settings,
       localWifi: widget.localWifi,
-      autoConnectLocal: widget.autoConnectLocal,
+      autoConnectLocal: autoConnectLocal,
       appearance: _appearance,
       sky: sky,
       storageUnavailable: _storageUnavailable,
@@ -193,6 +229,64 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
         _appearance.copyWith(sky: SkyChoice.custom, manualMinute: value),
       ),
     );
+
+    Widget home() {
+      final cloud = widget.cloud;
+      if (cloud == null) {
+        return dashboard(
+          cloud: null,
+          settings: null,
+          autoConnectLocal: widget.autoConnectLocal,
+        );
+      }
+      if (_mode == null) {
+        return const MossLoadingPage(label: 'Menyiapkan Tunas...');
+      }
+      if (_mode == AppMode.offline) {
+        return ListenableBuilder(
+          listenable: cloud,
+          builder: (context, _) => dashboard(
+            cloud: null,
+            settings: OfflineModePanel(
+              onGoOnline: _goOnline,
+              onSignOut: cloud.signOut,
+              signedIn: cloud.signedIn,
+            ),
+            autoConnectLocal: widget.autoConnectLocal,
+          ),
+        );
+      }
+      return ListenableBuilder(
+        listenable: cloud,
+        builder: (context, _) {
+          if (!cloud.authReady) {
+            return const MossLoadingPage(label: 'Memeriksa sesi...');
+          }
+          if (!cloud.signedIn) {
+            return AuthPage(controller: cloud, onOffline: _goOffline);
+          }
+          if (cloud.loadingDevice && !cloud.hasDevice) {
+            return const MossLoadingPage(label: 'Mencari perangkat Anda...');
+          }
+          if (!cloud.hasDevice) {
+            return PairingPage(
+              controller: cloud,
+              onOffline: _goOffline,
+              onSignOut: cloud.signOut,
+            );
+          }
+          return dashboard(
+            cloud: cloud,
+            settings: CloudAccountPanel(
+              controller: cloud,
+              onOffline: _goOffline,
+            ),
+            autoConnectLocal: false,
+          );
+        },
+      );
+    }
+
     return MaterialApp(
       title: 'Tunas · Smart Planter',
       debugShowCheckedModeBanner: false,
@@ -206,13 +300,7 @@ class _MossAppState extends State<MossApp> with WidgetsBindingObserver {
           child: child ?? const SizedBox.shrink(),
         ),
       ),
-      home: widget.cloud == null
-          ? dashboard(null)
-          : ListenableBuilder(
-              listenable: widget.cloud!,
-              builder: (context, _) =>
-                  dashboard(CloudAccountPanel(controller: widget.cloud!)),
-            ),
+      home: home(),
     );
   }
 }
