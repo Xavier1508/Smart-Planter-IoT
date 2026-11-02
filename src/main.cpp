@@ -63,6 +63,7 @@ char wifiPassword[65] = {};
 uint32_t restartAtMs = 0;
 uint8_t wifiSetupState = 0;  // 0 idle, 1 connecting, 2 connected, 3 failed
 uint32_t wifiSetupStartedMs = 0;
+bool restartAfterWifiSetup = false;
 planter::CloudLink cloudLink;
 
 void applyControlLine(const char* line);
@@ -373,9 +374,9 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
     localHttpServer.on("/api/v1/wifi/status", HTTP_GET, []() {
       const bool connected = WiFi.status() == WL_CONNECTED;
       const char* state = "idle";
-      if (connected || wifiSetupState == 2) {
+      if (connected) {
         state = "connected";
-      } else if (wifiSetupState == 1) {
+      } else if (wifiSetupState == 1 || wifiSetupState == 2) {
         state = "connecting";
       } else if (wifiSetupState == 3) {
         state = "failed";
@@ -449,6 +450,7 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       wifiSetupState = 1;
       wifiSetupStartedMs = millis();
       restartAtMs = 0;
+      restartAfterWifiSetup = true;
 
       JsonDocument response;
       response["status"] = "connecting";
@@ -464,6 +466,8 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
     localHttpServer.begin();
     if (stationRequested) {
       WiFi.begin(wifiSsid, wifiPassword);
+      wifiSetupState = 1;
+      wifiSetupStartedMs = millis();
       const bool cloudReady = cloudLink.begin(
           MOSS_SUPABASE_URL, MOSS_DEVICE_ID, MOSS_DEVICE_TOKEN, wifiSsid,
           wifiPassword);
@@ -1044,12 +1048,22 @@ void setup() {
 }
 
 void loop() {
+  if (wifiSetupState == 2 && WiFi.status() != WL_CONNECTED) {
+    // The link dropped after a boot/setup connection. Keep the AP available
+    // and show an honest reconnecting state instead of a stale "connected".
+    wifiSetupState = 1;
+    wifiSetupStartedMs = millis();
+    restartAtMs = 0;
+    restartAfterWifiSetup = false;
+  }
   if (wifiSetupState == 1) {
     if (WiFi.status() == WL_CONNECTED) {
       wifiSetupState = 2;
-      restartAtMs = millis() + 8000;
-      Serial.println("{\"type\":\"wifi\",\"status\":\"setup_connected\","
-                     "\"restart_in_ms\":8000}");
+      if (restartAfterWifiSetup) {
+        restartAtMs = millis() + 8000;
+        Serial.println("{\"type\":\"wifi\",\"status\":\"setup_connected\","
+                       "\"restart_in_ms\":8000}");
+      }
     } else if (millis() - wifiSetupStartedMs > 30000) {
       wifiSetupState = 3;
       Serial.println("{\"type\":\"wifi\",\"status\":\"setup_failed\"}");
