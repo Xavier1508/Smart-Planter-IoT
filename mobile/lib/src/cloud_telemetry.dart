@@ -175,41 +175,38 @@ class CloudTelemetry {
     );
   }
 
-  /// Subscribe before the first snapshot; reload it on every reconnect. The
-  /// dashboard ignores older snapshots if an event arrives during the fetch.
+  /// Realtime is used for the fast path, but a REST poll runs regardless of
+  /// the websocket state. A blocked Realtime channel must not make the app
+  /// report the whole device as offline.
   Stream<PlantTelemetry> watchDevice(String deviceId) {
     late final StreamController<PlantTelemetry> output;
     RealtimeChannel? channel;
-    Timer? fallback;
+    Timer? poll;
     var cancelled = false;
     var connected = false;
-    // A snapshot started before a disconnect must not restore stale live data.
     var generation = 0;
+    var fetching = false;
 
-    void sendRow(Map<String, dynamic> row) {
+    void sendRow(Map<String, dynamic> row, {bool fromRealtime = false}) {
       if (cancelled ||
-          !connected ||
           output.isClosed ||
+          (fromRealtime && !connected) ||
           row['device_id'] != deviceId) {
         return;
       }
       try {
         output.add(decodeReading(row));
       } on FormatException {
-        output.addError(const CloudReadException());
+        // One malformed row must not terminate the stream or hide later rows.
       }
     }
 
-    bool isCurrentConnection(int requestedGeneration) =>
-        !cancelled &&
-        connected &&
-        !output.isClosed &&
-        generation == requestedGeneration;
+    bool active(int requestedGeneration) =>
+        !cancelled && !output.isClosed && generation == requestedGeneration;
 
-    Future<void> fetchLatest(
-      int requestedGeneration, {
-      bool silent = false,
-    }) async {
+    Future<void> fetchLatest(int requestedGeneration) async {
+      if (fetching) return;
+      fetching = true;
       try {
         final rows = await client
             .from('planter_readings')
@@ -219,13 +216,14 @@ class CloudTelemetry {
             .order('id', ascending: false)
             .limit(1)
             .timeout(const Duration(seconds: 15));
-        if (isCurrentConnection(requestedGeneration) && rows.isNotEmpty) {
+        if (active(requestedGeneration) && rows.isNotEmpty) {
           sendRow(rows.first);
         }
       } catch (_) {
-        if (!silent && isCurrentConnection(requestedGeneration)) {
-          output.addError(const CloudReadException());
-        }
+        // Keep the last good reading and retry on the next poll. The dashboard
+        // has its own age indicator, so a REST hiccup is not a hard disconnect.
+      } finally {
+        fetching = false;
       }
     }
 
@@ -245,7 +243,8 @@ class CloudTelemetry {
                 column: 'device_id',
                 value: deviceId,
               ),
-              callback: (payload) => sendRow(payload.newRecord),
+              callback: (payload) =>
+                  sendRow(payload.newRecord, fromRealtime: true),
             )
             .onSystemEvents((payload) {
               if (!cancelled &&
@@ -268,24 +267,27 @@ class CloudTelemetry {
                   status == RealtimeSubscribeStatus.closed) {
                 connected = false;
                 ++generation;
-                output.addError(const CloudReadException());
+                // Do not surface this as a device-offline error. REST polling
+                // below remains the fallback and will recover the latest row.
               }
             });
-        // Realtime should recover by itself, but a periodic REST reconciliation
-        // also closes the gap if a socket stays half-open without an error.
-        fallback = Timer.periodic(const Duration(seconds: 20), (_) {
-          if (!cancelled && connected && !output.isClosed) {
-            unawaited(fetchLatest(generation, silent: true));
+        poll = Timer.periodic(const Duration(seconds: 5), (_) {
+          if (!cancelled && !output.isClosed) {
+            unawaited(fetchLatest(generation));
           }
         });
+        // Do not wait for the initial websocket handshake before showing data.
+        unawaited(fetchLatest(generation));
       },
       onCancel: () async {
         cancelled = true;
         connected = false;
         ++generation;
-        fallback?.cancel();
-        final active = channel;
-        if (active != null) await client.removeChannel(active);
+        poll?.cancel();
+        final activeChannel = channel;
+        if (activeChannel != null) {
+          await client.removeChannel(activeChannel);
+        }
       },
     );
     return output.stream;

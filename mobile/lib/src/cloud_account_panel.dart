@@ -246,7 +246,7 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                 children: [
                   OutlinedButton(
                     onPressed: _busy ? null : widget.controller.refreshDevice,
-                    child: const Text('Periksa perangkat'),
+                    child: const Text('Segarkan info perangkat'),
                   ),
                   TextButton(
                     onPressed: _busy ? null : _signOut,
@@ -260,7 +260,7 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                 children: [
                   OutlinedButton(
                     onPressed: _busy ? null : widget.controller.refreshDevice,
-                    child: const Text('Periksa perangkat'),
+                    child: const Text('Segarkan info perangkat'),
                   ),
                   FilledButton(
                     onPressed: _busy || !widget.controller.canExportCsv

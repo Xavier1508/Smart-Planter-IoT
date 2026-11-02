@@ -17,6 +17,7 @@ import 'moss_app.dart';
 import 'moss_avatar.dart';
 import 'moss_gaze.dart';
 import 'moss_sky.dart';
+import 'mq_gas_index.dart';
 import 'notification_service.dart';
 import 'plant_emotion.dart';
 import 'plant_health.dart';
@@ -95,6 +96,7 @@ class _DashboardState extends State<Dashboard> {
   final ProfileStore _profileStore = const ProfileStore();
   ProfileSettings _profiles = ProfileSettings.defaults;
   PlantHealthModel? _emotionModel;
+  final MqGasIndex _cloudMqGas = MqGasIndex();
   List<HistoryPoint> _history = [];
   int? _lastHistoryUptime;
   int? _lastHistorySequence;
@@ -637,6 +639,7 @@ class _DashboardState extends State<Dashboard> {
     _lastRecordedAt = null;
     _lastSequence = null;
     _lastHistorySequence = null;
+    _cloudMqGas.reset();
     _liveState = const PlantState.waiting();
     final source = widget.telemetry;
     _sourceNotice = source == null
@@ -673,7 +676,12 @@ class _DashboardState extends State<Dashboard> {
             (reading.sequence == _lastSequence && _liveState.isLive))) {
       return;
     }
-    final next = PlantState.fromTelemetry(reading);
+    _cloudMqGas.update(reading.mqPinMv);
+    final next = PlantState.fromTelemetry(
+      reading,
+      mqGasIndex: _cloudMqGas.index,
+      mqGasStatus: _cloudMqGas.status,
+    );
     if (!next.hasSensorData) {
       _expiry?.cancel();
       _lastRecordedAt = reading.recordedAt;

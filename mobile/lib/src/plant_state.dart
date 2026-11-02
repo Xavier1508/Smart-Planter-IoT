@@ -55,7 +55,11 @@ class PlantState {
 
   /// Invalid sensor values are omitted instead of being clamped or presented
   /// as real measurements. Uninstalled sensors stay unavailable.
-  factory PlantState.fromTelemetry(PlantTelemetry reading) {
+  factory PlantState.fromTelemetry(
+    PlantTelemetry reading, {
+    int? mqGasIndex,
+    String mqGasStatus = 'unavailable',
+  }) {
     int? percent(int? value) =>
         value != null && value >= 0 && value <= 100 ? value : null;
     final temperature = reading.temperatureC;
@@ -85,6 +89,8 @@ class PlantState {
       uvAdc: reading.uvAdc,
       mqAdc: reading.mqAdc,
       mqPinMillivolts: reading.mqPinMv,
+      mqGasIndex: mqGasIndex,
+      mqGasStatus: mqGasStatus,
       pumpCommand: reading.pumpCommand,
       pumpReason: reading.pumpReason,
       pumpCooldownSeconds: reading.pumpCooldownSeconds,
@@ -227,7 +233,7 @@ class PlantState {
 
   /// Raw-ADC display buckets from the device's reported water span. The
   /// sensor is a level strip, not a calibrated tank-volume gauge: EMPTY at or
-  /// below 450, LOW through 950, MEDIUM 951-1349, and FULL at 1350 or above.
+  /// below 450, LOW through 950, MEDIUM 951-1499, and FULL at 1500 or above.
   /// The firmware's own `low` flag stays authoritative so a flagged low tank
   /// can never be shown as full.
   WaterLevel? get waterLevel {
@@ -238,7 +244,7 @@ class PlantState {
     if (raw <= 450) return WaterLevel.empty;
     if (waterLow == true) return WaterLevel.low;
     if (raw <= 950) return WaterLevel.low;
-    if (raw < 1350) return WaterLevel.medium;
+    if (raw < 1500) return WaterLevel.medium;
     return WaterLevel.full;
   }
 

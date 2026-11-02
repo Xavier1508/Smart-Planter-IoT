@@ -61,6 +61,9 @@ class CloudLink {
   bool storageReady() const { return storageReady_; }
   uint32_t bufferedBatches() const { return buffered_; }
   uint32_t droppedSamples() const { return dropped_; }
+  uint32_t queuedSamples() const;
+  uint32_t lastUploadAgeSeconds() const;
+  void requestFlush();
   const char* hardwareId() const { return deviceId_.c_str(); }
 
   /// Called once per sample from the main loop. This copies the struct into a
@@ -122,6 +125,8 @@ class CloudLink {
   TaskHandle_t task_ = nullptr;
   volatile bool enabled_ = false;
   volatile bool online_ = false;
+  volatile bool flushRequested_ = false;
+  volatile uint32_t lastUploadMs_ = 0;
   bool storageReady_ = false;
   volatile uint32_t buffered_ = 0;
   volatile uint32_t dropped_ = 0;

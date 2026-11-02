@@ -1175,6 +1175,7 @@ class _ManualControlsState extends State<_ManualControls> {
   String _message = 'Pilih mode. Tombol ON akan menanyakan durasi dulu.';
   Timer? _pumpTimer;
   Timer? _lightTimer;
+  DateTime? _ignoreRemoteModeUntil;
 
   int get _lampTotalSeconds {
     final total = _lampMinutes * 60 + _lampSeconds;
@@ -1191,6 +1192,10 @@ class _ManualControlsState extends State<_ManualControls> {
   @override
   void didUpdateWidget(covariant _ManualControls oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Telemetry from before the local command may still arrive while the
+    // command is in flight. Do not let a stale reason snap the button back.
+    final holdUntil = _ignoreRemoteModeUntil;
+    if (holdUntil != null && DateTime.now().isBefore(holdUntil)) return;
     final pump = _manualPumpMode(widget.state.pumpReason);
     final light = _manualLightMode(widget.state.lightReason);
     if (pump != null) _pumpMode = pump;
@@ -1236,6 +1241,7 @@ class _ManualControlsState extends State<_ManualControls> {
     setState(() {
       _busy = true;
       _message = 'Mengirim…';
+      _ignoreRemoteModeUntil = DateTime.now().add(const Duration(seconds: 15));
       if (pump) {
         _pumpMode = mode;
       } else {
@@ -1247,12 +1253,13 @@ class _ManualControlsState extends State<_ManualControls> {
     setState(() {
       _busy = false;
       if (!ok) {
+        _ignoreRemoteModeUntil = null;
         if (pump) {
           _pumpMode = previousPump;
         } else {
           _lightMode = previousLight;
         }
-        _message = 'Perintah gagal; sambungkan Wi-Fi perangkat.';
+        _message = 'Perintah gagal; periksa koneksi cloud.';
       } else if (pump) {
         _message = mode == _ManualMode.on
             ? 'Pompa ON · ${durationSeconds ?? _pumpSeconds} detik.'

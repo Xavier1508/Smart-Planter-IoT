@@ -24,7 +24,7 @@ constexpr size_t kCommandQueueLength = 8;
 constexpr size_t kAckQueueLength = 8;
 constexpr size_t kSampleQueueLength = 64;
 constexpr uint32_t kRegisterIntervalMs = 300000;
-constexpr uint32_t kCommandPollIntervalMs = 5000;
+constexpr uint32_t kCommandPollIntervalMs = 3000;
 constexpr uint32_t kReconnectIntervalMs = 60000;
 constexpr uint32_t kMaxBackoffMs = 60000;
 
@@ -177,6 +177,12 @@ bool CloudLink::begin(const char* baseUrl, const char* deviceId,
   bootId_ = hexBootId();
 
   storageReady_ = LittleFS.begin(true);
+  if (!storageReady_) {
+    // Some boards have a stale/foreign filesystem on the SPIFFS partition.
+    // Try one explicit repair pass; cloud still starts if this fails.
+    LittleFS.end();
+    storageReady_ = LittleFS.format() && LittleFS.begin(false);
+  }
   if (storageReady_) {
     LittleFS.mkdir("/q");
     buffered_ = countBufferedBatches();
@@ -305,15 +311,20 @@ void CloudLink::run() {
     // waiting for NTP, samples are packed and persisted to LittleFS.
     CloudSample sample;
     if (xQueueReceive(sampleQueue_, &sample,
-                      pdMS_TO_TICKS(online_ ? 200 : 800)) == pdTRUE) {
+                      pdMS_TO_TICKS(online_ ? 300 : 800)) == pdTRUE) {
       if (batchCount == 0) batchStartedMs = millis();
       batch[batchCount++] = sample;
     }
-    const uint32_t flushAfterMs = online_ ? 8000 : 30000;
-    if (batchCount >= 6 ||
+    const bool forced = online_ && flushRequested_ && batchCount > 0;
+    // Twenty seconds gives the uploader a sustainable cadence. The previous
+    // eight-second partial batches created a queue backlog because each HTTPS
+    // request costs more than the samples it carried.
+    const uint32_t flushAfterMs = online_ ? 20000 : 30000;
+    if (forced || batchCount >= 6 ||
         (batchCount > 0 && millis() - batchStartedMs >= flushAfterMs)) {
       flushBatch(batch, batchCount);
       batchCount = 0;
+      flushRequested_ = false;
     }
   }
 }
@@ -644,6 +655,7 @@ bool CloudLink::uploadFile(const String& path, bool replay) {
   }
   const int result = postJson("ingest", body, replay);
   if (result == 1) {
+    lastUploadMs_ = millis();
     if (LittleFS.remove(path) && buffered_ > 0) --buffered_;
     setStatus("Cloud online; telemetry uploaded.");
     return true;
@@ -691,12 +703,26 @@ void CloudLink::flushBatch(CloudSample* batch, size_t count) {
   // counted but cannot be replayed after reset.
   const int result = postJson("ingest", body, false);
   if (result == 1) {
+    lastUploadMs_ = millis();
     setStatus("Cloud online; telemetry uploaded without buffer.");
   } else {
     dropped_ += count;
     setStatus("Cloud upload failed; no buffer available.");
   }
 }
+
+uint32_t CloudLink::queuedSamples() const {
+  return sampleQueue_ == nullptr
+             ? 0
+             : static_cast<uint32_t>(uxQueueMessagesWaiting(sampleQueue_));
+}
+
+uint32_t CloudLink::lastUploadAgeSeconds() const {
+  if (lastUploadMs_ == 0) return 0;
+  return (millis() - lastUploadMs_) / 1000U;
+}
+
+void CloudLink::requestFlush() { flushRequested_ = true; }
 
 bool CloudLink::enqueueSample(const CloudSample& sample) {
   if (!enabled_ || sampleQueue_ == nullptr) return false;

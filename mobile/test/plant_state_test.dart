@@ -219,8 +219,8 @@ void main() {
       (950, WaterLevel.low),
       (951, WaterLevel.medium),
       (1040, WaterLevel.medium),
-      (1349, WaterLevel.medium),
-      (1350, WaterLevel.full),
+      (1499, WaterLevel.medium),
+      (1500, WaterLevel.full),
       (1555, WaterLevel.full),
       (2000, WaterLevel.full),
     ]) {

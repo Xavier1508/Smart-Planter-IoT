@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_planter/src/cloud_command.dart';
 import 'package:smart_planter/src/cloud_telemetry.dart';
+import 'package:smart_planter/src/mq_gas_index.dart';
 import 'package:smart_planter/src/plant_state.dart';
 
 void main() {
@@ -91,6 +92,28 @@ void main() {
       'water_adc': 900,
     });
     expect(reading.isFreshAt(DateTime.utc(2026, 11, 2, 10, 0, 10)), isFalse);
+  });
+
+  test('cloud MQ pin voltage produces a relative gas index', () async {
+    final reading = CloudTelemetry.decodeReading({
+      'id': 101,
+      'recorded_at': '2026-11-02T10:00:00Z',
+      'captured_at': '2026-11-02T10:00:00Z',
+      'time_quality': 'ntp',
+      'mq_adc': 575,
+      'mq_pin_mv': 602,
+    });
+    final index = MqGasIndex()..update(reading.mqPinMv);
+    expect(index.index, isNotNull);
+    expect(index.status, 'baseline');
+    final state = PlantState.fromTelemetry(
+      reading,
+      mqGasIndex: index.index,
+      mqGasStatus: index.status,
+    );
+    expect(state.mqGasIndex, index.index);
+    expect(state.mqGasStatus, 'baseline');
+    expect(state.mqAdc, 575);
   });
 
   test('dataset CSV has one header, nulls, booleans, and all columns', () {

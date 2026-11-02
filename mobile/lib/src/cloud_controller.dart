@@ -103,7 +103,35 @@ class CloudController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> refreshDevice() => _setUser(_userId, force: true);
+  Future<void> refreshDevice() async {
+    if (_disposed || _userId == null) return;
+    if (_deviceId == null) {
+      await _setUser(_userId, force: true);
+      return;
+    }
+    final generation = _generation;
+    try {
+      final device = await _telemetrySource.firstDevice();
+      if (_disposed || generation != _generation) return;
+      if (device == null) {
+        _device = null;
+        _deviceId = null;
+        telemetry = null;
+        status = 'Belum ada perangkat yang dipasangkan.';
+      } else if (device.id == _deviceId) {
+        // Keep the existing realtime stream and the last good reading. Only
+        // metadata is refreshed; pressing "refresh" must not blank the UI.
+        _device = device;
+        status = 'Perangkat: ${device.name}';
+      } else {
+        _bindDevice(device);
+      }
+    } catch (_) {
+      if (_disposed || generation != _generation) return;
+      status = 'Perangkat belum dapat dimuat. Periksa koneksi Anda.';
+    }
+    notifyListeners();
+  }
 
   /// Physical possession is proved with the claim code shown on the LCD. The
   /// database performs an atomic claim so two users cannot both succeed.

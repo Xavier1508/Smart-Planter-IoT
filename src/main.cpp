@@ -413,6 +413,7 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
                "\"local_ap\":%s,\"sta_connected\":%s,\"cloud_enabled\":%s,"
                "\"cloud_online\":%s,\"storage_ready\":%s,"
                "\"cloud_status\":\"%s\",\"buffered_batches\":%lu,"
+               "\"queued_samples\":%lu,\"last_upload_age_s\":%lu,"
                "\"dropped_samples\":%lu,\"free_heap\":%lu}",
                planter::kFirmwareVersion,
                static_cast<unsigned long>(millis()),
@@ -430,6 +431,8 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
                cloudLink.storageReady() ? "true" : "false",
                cloudLink.statusText(),
                static_cast<unsigned long>(cloudLink.bufferedBatches()),
+               static_cast<unsigned long>(cloudLink.queuedSamples()),
+               static_cast<unsigned long>(cloudLink.lastUploadAgeSeconds()),
                static_cast<unsigned long>(cloudLink.droppedSamples()),
                static_cast<unsigned long>(ESP.getFreeHeap()));
       localHttpServer.send(200, "application/json", body);
@@ -779,6 +782,9 @@ void applyCloudCommand(const planter::CloudCommand& command) {
   }
   applyControlCommand(local, false);
   cloudLink.enqueueAck(command, true, nullptr);
+  // The next 5-second sample will include the new relay state and be uploaded
+  // immediately instead of waiting for the normal batch window.
+  cloudLink.requestFlush();
 }
 
 void sendLocalSample(char* output, size_t capacity) {
