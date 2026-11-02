@@ -122,7 +122,7 @@ class LocalWifiController {
     } catch (_) {
       _fail(
         generation,
-        'Tidak terhubung. Pilih Wi-Fi Moss-xxxx di ponsel; mencoba lagi.',
+        'Tidak terhubung. Pilih Wi-Fi Moss di ponsel; mencoba lagi.',
       );
     }
   }

@@ -3,7 +3,7 @@
 Dashboard Flutter Moss menyiapkan pemantauan ESP32 melalui Wi-Fi lokal; koneksi
 dan tampilan pada ponsel fisik masih perlu diuji.
 
-> **Status v34:** dokumen ini memuat riwayat pengembangan. Bagian yang menyebut
+> **Status v35:** dokumen ini memuat riwayat pengembangan. Bagian yang menyebut
 > aplikasi read-only, tidak mengirim perintah, riwayat kosong, atau cloud belum
 > menerima data sudah **tidak berlaku**. Jalur cloud-first, pairing, kontrol
 > relay, dan ekspor dataset dijelaskan di [readme utama](../readme.md).
@@ -13,7 +13,7 @@ dan tampilan pada ponsel fisik masih perlu diuji.
 Sumber aplikasi dan firmware disiapkan untuk pemantauan langsung tanpa cloud.
 ESP32 membuat Wi-Fi WPA2 sendiri, bukan bergabung ke router; jaringan itu tidak
 menyediakan internet. Setelah rangkaian diperiksa dan pengguna meng-upload
-firmware sendiri, LCD bergiliran menampilkan nama `Moss-xxxx` dan sandi acak
+firmware sendiri, LCD bergiliran menampilkan nama `Moss` dan sandi acak
 yang berubah setiap boot. Pada ponsel, pilih Wi-Fi tersebut dan jika diminta
 pilih tetap terhubung tanpa internet. Aplikasi mencoba terhubung secara otomatis;
 tombol hubung ulang tersedia di Pengaturan. Jangan membagikan

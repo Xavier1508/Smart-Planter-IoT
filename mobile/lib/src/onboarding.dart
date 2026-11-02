@@ -447,7 +447,7 @@ class _PairingPageState extends State<PairingPage> {
                           ),
                           children: [
                             Text(
-                              'Sambungkan ponsel ke Wi-Fi Moss-C31C, buka '
+                              'Sambungkan ponsel ke Wi-Fi Moss, buka '
                               'http://192.168.4.1/ untuk melihat ID perangkat. '
                               'Kode claim tampil di LCD selama 12 detik '
                               'pertama setelah perangkat menyala. Restart '

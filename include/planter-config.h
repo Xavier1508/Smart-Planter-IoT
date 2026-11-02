@@ -46,7 +46,7 @@
 
 namespace planter {
 
-constexpr unsigned kFirmwareVersion = 34;
+constexpr unsigned kFirmwareVersion = 35;
 
 // Historical project assignments, not a verified wiring diagram.
 constexpr int kDhtPin = 4;

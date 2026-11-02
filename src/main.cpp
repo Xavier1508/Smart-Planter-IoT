@@ -97,6 +97,7 @@ void scanWifiAtBoot() {
     Serial.println("{\"type\":\"wifi\",\"status\":\"boot_scan_mode_failed\"}");
     return;
   }
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.disconnect(false, false);
   delay(50);
   if (watchdogReady) esp_task_wdt_reset();
@@ -161,14 +162,28 @@ void startLocalWifi() {
   // All Wi-Fi configuration stays in RAM. The device keeps its isolated AP as
   // a fallback while optionally joining a router for cloud HTTPS.
   WiFi.persistent(false);
-  scanWifiAtBoot();
+  // A reset caused by brownout is a strong signal that the radio cannot take
+  // the extra scan current. Skip the boot scan on that boot and leave the AP
+  // running; the user can still type the SSID manually.
+  const bool scanAllowed = strcmp(bootResetReason, "brownout") != 0;
+  if (scanAllowed) {
+    scanWifiAtBoot();
+  } else {
+    bootScanCount = 0;
+    Serial.println("{\"type\":\"wifi\",\"status\":\"boot_scan_skipped\","
+                   "\"reason\":\"previous_brownout\"}");
+  }
   const bool stationRequested = MOSS_CLOUD_ENABLED && strlen(wifiSsid) > 0;
-  // Keep the STA interface available even before credentials exist so the
-  // setup page can scan nearby networks. This does not connect to any router.
-  if (!WiFi.mode(MOSS_CLOUD_ENABLED ? WIFI_AP_STA : WIFI_AP)) {
+  // Before credentials exist, use AP-only. This removes STA radio activity
+  // and makes the setup network much more stable. After saving credentials the
+  // page switches to AP+STA for the connection attempt.
+  if (!WiFi.mode(stationRequested ? WIFI_AP_STA : WIFI_AP)) {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_mode_failed\"}");
     return;
   }
+  // 11 dBm is enough for a phone a few metres away and draws much less peak
+  // current than the default 19.5 dBm. This is a stability/range tradeoff.
+  WiFi.setTxPower(WIFI_POWER_11dBm);
   // The planter is mains-powered. Disable modem sleep so the first command
   // after a long idle does not wait for a Wi-Fi wake-up interval.
   WiFi.setSleep(false);
@@ -195,8 +210,7 @@ void startLocalWifi() {
       return;
     }
   }
-  snprintf(localWifiName, sizeof(localWifiName), "Moss-%04X",
-           static_cast<unsigned>(ESP.getEfuseMac() & 0xffffU));
+  snprintf(localWifiName, sizeof(localWifiName), "Moss");
   if (!WiFi.softAPConfig(localAddress, localAddress, IPAddress(255, 255, 255, 0)) ||
       !WiFi.softAP(localWifiName, localWifiPassword, 6, false, 4)) {
     Serial.println("{\"type\":\"wifi\",\"status\":\"ap_failed\"}");
@@ -258,7 +272,7 @@ details{margin-top:12px;font-size:13px;color:var(--muted)}summary{cursor:pointer
 <div class="passrow"><input id="pass" type="password" maxlength="63" autocomplete="current-password" placeholder="Minimal 8 karakter"><button type="button" onclick="togglePass()">Lihat</button></div>
 <p class="hint">ESP32 hanya mendukung Wi-Fi <b>2,4 GHz</b> dan WPA2/WPA2-PSK. SSID 5 GHz tidak akan terlihat.</p>
 <button id="connect" class="primary" onclick="save()">Simpan &amp; sambungkan</button>
-<p class="hint">Setelah koneksi berhasil, perangkat restart otomatis. Halaman ini akan terputus sebentar; sambungkan kembali ke <b>Moss-C31C</b> lalu buka halaman ini untuk melihat status cloud.</p>
+<p class="hint">Setelah koneksi berhasil, perangkat restart otomatis. Halaman ini akan terputus sebentar; sambungkan kembali ke <b>Moss</b> lalu buka halaman ini untuk melihat status cloud.</p>
 </div>
 <div class="card"><strong>Jika ponsel menolak Wi-Fi ini</strong><p>Android kadang berpindah ke data seluler karena AP belum punya internet. Pilih <b>Tetap terhubung</b>, matikan sementara data seluler, dan matikan auto-switch Wi-Fi.</p></div>
 <details><summary>Wi-Fi tidak muncul saat scan?</summary><p>Jauhkan ponsel 1–2 meter dari perangkat, tekan Scan ulang, atau ketik SSID manual. Scan dapat membuat AP sempat terputus sebentar; tunggu sampai daftar muncul.</p></details>
@@ -305,7 +319,12 @@ async function scan(){
     }
     setStatus('err','Scan terlalu lama','Tekan Scan untuk mencoba lagi.');
   }catch(e){
-    setStatus('err','Scan gagal','Perangkat mungkin sedang sibuk. Coba lagi.');
+    const msg=String(e&&e.message||'');
+    if(msg.includes('scan_unavailable')){
+      setStatus('err','Scan tidak tersedia','Ketik SSID rumah secara manual di kolom bawah. Ini lebih stabil saat daya/radio terbatas.');
+    }else{
+      setStatus('err','Scan gagal','Perangkat mungkin sedang sibuk atau AP terputus. Coba lagi atau ketik SSID manual.');
+    }
   }finally{$('scan-btn').disabled=false;}
 }
 async function save(){
@@ -348,7 +367,7 @@ async function poll(){
     }else if(j.state==='failed'){
       const names={0:'idle',1:'SSID tidak ditemukan',2:'scan selesai',3:'terhubung',4:'password/keamanan ditolak',5:'koneksi hilang',6:'terputus'};
       const code=(j.sta_status==null?'':' Status driver: '+(names[j.sta_status]||j.sta_status)+'.');
-      setStatus('err','Gagal terhubung ke '+(j.ssid||'Wi-Fi'),'Periksa password, pilih jaringan 2,4 GHz, dan gunakan WPA2. Perangkat tetap di AP Moss-C31C.'+code);
+      setStatus('err','Gagal terhubung ke '+(j.ssid||'Wi-Fi'),'Periksa password, pilih jaringan 2,4 GHz, dan gunakan WPA2. Perangkat tetap di AP Moss.'+code);
       busy=false; $('connect').disabled=false;
     }else{
       setStatus('','Belum terhubung ke Wi-Fi rumah','Pilih jaringan lalu tekan Simpan & sambungkan.');
@@ -361,7 +380,7 @@ async function poll(){
       pollTimer=setTimeout(poll,1500);
       return;
     }
-    setStatus('err','Perangkat sedang restart atau tidak terjangkau','Sambungkan kembali ke Moss-C31C lalu buka http://192.168.4.1/.');
+    setStatus('err','Perangkat sedang restart atau tidak terjangkau','Sambungkan kembali ke Moss lalu buka http://192.168.4.1/.');
     busy=false; $('connect').disabled=false;
   }
 }
@@ -381,12 +400,13 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       localHttpServer.send(200, "application/json", latestTelemetry);
     });
     localHttpServer.on("/api/v1/health", HTTP_GET, []() {
-      char body[560];
+      char body[640];
       snprintf(body, sizeof(body),
                "{\"firmware_version\":%u,\"uptime_ms\":%lu,"
                "\"hardware_id\":\"%s\","
                "\"reset_reason\":\"%s\",\"brownout_count\":%lu,"
                "\"sta_status\":%d,\"scan_cached\":%lu,"
+               "\"ap_clients\":%d,\"tx_power\":%d,"
                "\"local_ap\":%s,\"sta_connected\":%s,\"cloud_enabled\":%s,"
                "\"cloud_online\":%s,\"buffered_batches\":%lu,"
                "\"dropped_samples\":%lu,\"free_heap\":%lu}",
@@ -397,6 +417,8 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
                static_cast<unsigned long>(bootBrownoutCount),
                static_cast<int>(WiFi.status()),
                static_cast<unsigned long>(bootScanCount),
+               static_cast<int>(WiFi.softAPgetStationNum()),
+               static_cast<int>(WiFi.getTxPower()),
                localWifiReady ? "true" : "false",
                WiFi.status() == WL_CONNECTED ? "true" : "false",
                cloudLink.enabled() ? "true" : "false",
@@ -425,6 +447,13 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
         String body;
         serializeJson(cached, body);
         localHttpServer.send(200, "application/json", body);
+        return;
+      }
+      if (bootScanCount == 0) {
+        localHttpServer.send(
+            503, "application/json",
+            "{\"error\":\"scan_unavailable\","
+            "\"message\":\"Scan boot tidak tersedia; ketik SSID manual.\"}");
         return;
       }
       int result = WiFi.scanComplete();
@@ -541,6 +570,7 @@ setStatus('','Siap memindai Wi-Fi','Tekan tombol Scan untuk melihat jaringan di 
       if (WiFi.getMode() != WIFI_AP_STA) {
         WiFi.mode(WIFI_AP_STA);
       }
+      WiFi.setTxPower(WIFI_POWER_11dBm);
       WiFi.disconnect(false, false);
       WiFi.begin(wifiSsid, wifiPassword);
       wifiSetupState = 1;
