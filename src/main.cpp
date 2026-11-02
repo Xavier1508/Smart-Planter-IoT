@@ -918,6 +918,15 @@ int readMqRaw() {
 // GPIO35 is ADC1 channel 7. Reading the channel explicitly avoids relying on
 // Arduino pin remapping and makes a 0 V output distinguishable from a missing
 // read. A 0 V result is reported as rail_low, never as a valid UV index.
+void logUvProbe() {
+  Serial.printf(
+      "{\"type\":\"uv_probe\",\"gpio32\":%d,\"gpio33\":%d,\"gpio34\":%d,"
+      "\"gpio35\":%d,\"gpio36\":%d,\"gpio39\":%d}\n",
+      adc1_get_raw(ADC1_CHANNEL_4), adc1_get_raw(ADC1_CHANNEL_5),
+      adc1_get_raw(ADC1_CHANNEL_6), adc1_get_raw(ADC1_CHANNEL_7),
+      adc1_get_raw(ADC1_CHANNEL_0), adc1_get_raw(ADC1_CHANNEL_3));
+}
+
 int readUvRaw() {
   static_assert(planter::kUvPin == 35, "Update ADC1 channel for UV pin");
   if (!uvAdcReady) return -1;
@@ -955,11 +964,16 @@ void updateLcd(uint32_t nowMs) {
 
 void printSample(uint32_t nowMs) {
   const int uvRaw = readUvRaw();
+  // esp_adc_cal returns a non-zero intercept for raw 0. Report 0 mV
+  // explicitly so a 0 V rail is not mistaken for a live 142 mV signal.
   const int uvPinMillivolts =
-      planter::validAdcRaw(uvRaw) &&
-              uvAdcCalibration != planter::AdcCalibrationMethod::unavailable
-          ? static_cast<int>(esp_adc_cal_raw_to_voltage(uvRaw, &uvAdcCharacteristics))
-          : -1;
+      uvRaw == 0
+          ? 0
+          : (uvRaw > 0 &&
+                     uvAdcCalibration != planter::AdcCalibrationMethod::unavailable
+                 ? static_cast<int>(
+                       esp_adc_cal_raw_to_voltage(uvRaw, &uvAdcCharacteristics))
+                 : -1);
   const int mqRaw = readMqRaw();
   const int mqPinMillivolts =
       planter::controlAnalogUsable(mqRaw) &&
@@ -988,6 +1002,13 @@ void printSample(uint32_t nowMs) {
   };
 
   sample.uptimeMs = millis();
+  if (uvRaw == 0) {
+    static uint32_t lastUvProbeMs = 0;
+    if (lastUvProbeMs == 0 || sample.uptimeMs - lastUvProbeMs >= 60000) {
+      lastUvProbeMs = sample.uptimeMs;
+      logUvProbe();
+    }
+  }
   const planter::RulePreview preview = planter::previewRules(sample);
   // A rail can be a real extreme or a disconnected signal. For actuator
   // control, reject the ambiguity rather than interpreting it as darkness or
@@ -1146,18 +1167,11 @@ void setup() {
         uvAdcCalibration = planter::AdcCalibrationMethod::unavailable;
     }
   }
-  // One-shot wiring probe: compare all exposed ADC1 inputs. This does not
-  // prove sensor health; it only shows which pin carries a voltage.
   for (int channel = 0; channel < 8; ++channel) {
     adc1_config_channel_atten(static_cast<adc1_channel_t>(channel),
                               ADC_ATTEN_DB_12);
   }
-  Serial.printf(
-      "{\"type\":\"uv_probe\",\"gpio32\":%d,\"gpio33\":%d,\"gpio34\":%d,"
-      "\"gpio35\":%d,\"gpio36\":%d,\"gpio39\":%d}\n",
-      adc1_get_raw(ADC1_CHANNEL_4), adc1_get_raw(ADC1_CHANNEL_5),
-      adc1_get_raw(ADC1_CHANNEL_6), adc1_get_raw(ADC1_CHANNEL_7),
-      adc1_get_raw(ADC1_CHANNEL_0), adc1_get_raw(ADC1_CHANNEL_3));
+  logUvProbe();
   pinMode(extra_sensors::kWaterLevelPin, INPUT);
   pinMode(extra_sensors::kMq135DigitalPin, INPUT);
   ArduinoSoilGpio soilGpio;

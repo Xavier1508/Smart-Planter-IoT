@@ -6,11 +6,11 @@ Aplikasi Android menggunakan karakter bernama Moss sebagai antarmuka interaktif.
 
 ## Status proyek
 
-Prototipe v40 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
+Prototipe v41 sudah memiliki jalur cloud lengkap di sumber, tetapi pengujian pada tanaman dan beban relay fisik masih harus dilakukan oleh operator.
 
 - Aplikasi Android `0.9.3+27` mendukung login, pairing perangkat, Realtime Supabase, kontrol relay cloud, riwayat, dan ekspor dataset penuh.
-- Firmware v40 memakai AP+STA, NTP, HTTPS sync 2 detik, TLS keep-alive, buffer LittleFS, ACK idempoten, dan deduplikasi perintah. UV dibaca eksplisit dari ADC1 channel 7 (GPIO35) dengan `uv_pin_mv` dan probe semua pin ADC1 saat boot.
-- Skala air v40: **EMPTY ≤450, LOW 451–950, MEDIUM 951–1499, FULL ≥1500**; cutoff pompa tetap 600. Nilai 1072–1233 berarti MEDIUM, bukan FULL.
+- Firmware v41 memakai AP+STA, NTP, HTTPS sync 2 detik, TLS keep-alive, buffer LittleFS, ACK idempoten, dan deduplikasi perintah. UV dibaca eksplisit dari ADC1 channel 7 (GPIO35) dengan `uv_pin_mv` dan probe semua pin ADC1 saat boot.
+- Skala air v41: **EMPTY ≤450, LOW 451–950, MEDIUM 951–1499, FULL ≥1500**; cutoff pompa tetap 600. Nilai 1072–1233 berarti MEDIUM, bukan FULL.
 - Upload v39 memakai `sync` 2 detik (sampel + ACK + perintah) dengan TLS keep-alive; jalur `ingest`/`commands`/`ack` lama tetap menjadi fallback. Aplikasi tetap memakai REST poll 5 detik bila Realtime putus.
 - Indeks gas MQ135 dihitung dari `mq_pin_mv` cloud; ini indeks relatif 0–100, bukan ppm/CO₂.
 - Supabase sudah berisi migrasi skema, RLS, RPC perintah atomik, dan Edge Function `device-api`.
@@ -1361,7 +1361,7 @@ Pengujian yang benar-benar dijalankan:
 
 Yang **belum** diuji: flash v38 ke papan, koneksi STA ke router nyata, handshake TLS ke Supabase dari ESP32, buffer saat kabel internet dicabut, eksekusi relay cloud pada beban, dan dataset 1.000 baris dari tanaman nyata. Semua klaim di atas tidak boleh dibaca sebagai bukti pengujian fisik tersebut.
 
-## Perubahan v40: UV, buffer, dan model 5 kelas
+## Perubahan v40/v41: UV, buffer, dan model 5 kelas
 
 Log serial v39 menunjukkan `uv_raw` selalu **0** sementara LDR bergerak
 525-947. Kualitas sinyal UV tercatat `rail_low_unverified`, jadi ini bukan
@@ -1378,6 +1378,8 @@ v40 menambahkan diagnostik agar penyebabnya bisa dipisahkan:
   sinyal UV ternyata ada di pin lain, probe akan menunjukkan pin yang hidup.
 - Aplikasi tidak lagi menampilkan `~0%` seolah UV nol terukur; nilai 0 V
   ditampilkan sebagai peringatan cek catu/sinyal.
+- v41 mengulang `uv_probe` setiap 60 detik selama UV tetap 0, dan melaporkan
+  `uv_pin_mv: 0` untuk raw 0 (bukan offset kalibrasi 142 mV).
 - Buffer LittleFS memperbaiki kasus `/q` berubah menjadi file, yang sebelumnya
   membuat `open()` gagal dan sampel dibuang.
 - Jika route `sync` mengembalikan 5xx tiga kali, firmware kembali ke jalur
@@ -1390,10 +1392,10 @@ normal, dan 90% atau lebih sebagai watch "sangat lembap", bukan alert.
 Build v40:
 
 ```text
-Size    : 1.094.912 byte
-SHA-256 : c97292f5532084a072d558b69d8f13e83d0c3c8ea993d8a9b8512ba3fbafdf78
-Flash   : 1.088.329 B (83,0%)
-RAM     : 57.028 B (17,4%)
+Size    : 1.094.928 byte
+SHA-256 : 761f6d248d6b07f78d05e7db533b3f44e2d71fe844223fb740269ae1edda5ee
+Flash   : 1.088.353 B (83,0%)
+RAM     : 57.036 B (17,4%)
 ```
 
 ## Bukti pengujian v39 (2 November 2026)
