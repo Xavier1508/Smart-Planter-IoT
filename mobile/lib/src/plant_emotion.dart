@@ -269,8 +269,6 @@ class PlantEmotionEngine {
           score -= 35;
         } else if (soil < 45) {
           score -= 15;
-        } else if (soil >= 85) {
-          score -= 8;
         }
       }
       if (water != null) {
@@ -311,7 +309,9 @@ class PlantEmotionEngine {
       // healthy. It must not be presented as an optimal result.
       score = math.min(score, 68);
     }
-    if (state.pumpRuntimeLockout == true) score -= 5;
+    if (state.pumpRuntimeLockout == true && state.pumpCommand != true) {
+      score -= 5;
+    }
     if (sensorCount < 3) {
       score -= 6 * (3 - sensorCount);
       // A partial readout must not be presented as a confident "optimal".
@@ -366,27 +366,14 @@ class PlantEmotionEngine {
           severity: ConditionSeverity.watch,
         ),
       );
-    } else if (soil >= 90) {
-      factors.add(
-        ConditionFactor(
-          label: 'Tanah',
-          detail: 'Tanah sangat lembap ($soil%).',
-          severity: ConditionSeverity.watch,
-        ),
-      );
-    } else if (soil >= 85) {
-      factors.add(
-        ConditionFactor(
-          label: 'Tanah',
-          detail: 'Tanah lembap ($soil%), masih dalam rentang.',
-          severity: ConditionSeverity.good,
-        ),
-      );
     } else {
+      // The probe is a relative ADC scale, not a volumetric water sensor.
+      // Wet soil (including the user's ~1900 ADC) is normal; do not turn a
+      // high reading into an overwatering warning.
       factors.add(
         ConditionFactor(
           label: 'Tanah',
-          detail: 'Kelembapan tanah optimal ($soil%).',
+          detail: 'Tanah lembap ($soil%).',
           severity: ConditionSeverity.good,
         ),
       );
@@ -520,7 +507,7 @@ class PlantEmotionEngine {
       );
     }
 
-    if (state.pumpRuntimeLockout == true) {
+    if (state.pumpRuntimeLockout == true && state.pumpCommand != true) {
       final seconds = state.pumpCooldownSeconds ?? 0;
       final minutes = (seconds / 60).ceil();
       factors.add(
@@ -610,8 +597,6 @@ class PlantEmotionEngine {
     }
     if (soil != null && soil < 35) {
       actions.add('Nyalakan pompa atau siram tanah.');
-    } else if (soil != null && soil >= 90) {
-      actions.add('Pantau kelembapan; jangan menambah air dulu.');
     }
     if (temperature != null && temperature >= 35) {
       actions.add('Naikkan naungan atau ventilasi.');
@@ -621,8 +606,8 @@ class PlantEmotionEngine {
     if (gas != null && gas >= 70) {
       actions.add('Ventilasi udara di sekitar sensor MQ135.');
     }
-    if (state.pumpRuntimeLockout == true) {
-      actions.add('Tunggu lockout pompa, atau pakai manual ON 1–30 detik.');
+    if (state.pumpRuntimeLockout == true && state.pumpCommand != true) {
+      actions.add('Tunggu lockout pompa, atau pakai manual ON 1-30 detik.');
     }
     if (actions.isEmpty) {
       actions.add('Tidak ada tindakan mendesak; lanjutkan pemantauan.');

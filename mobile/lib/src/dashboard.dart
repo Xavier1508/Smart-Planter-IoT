@@ -8,7 +8,6 @@ import 'appearance_panel.dart';
 import 'app_version_panel.dart';
 import 'character_look.dart';
 import 'character_picker.dart';
-import 'cloud_controller.dart';
 import 'devices_page.dart';
 import 'history_service.dart';
 import 'journal_page.dart';
@@ -28,6 +27,7 @@ import 'profile_panel.dart';
 import 'profile_store.dart';
 import 'schedule.dart';
 import 'top_notice.dart';
+import 'wifi_provisioning.dart';
 
 class Dashboard extends StatefulWidget {
   const Dashboard({
@@ -37,9 +37,8 @@ class Dashboard extends StatefulWidget {
     required this.atmosphere,
     this.telemetry,
     this.initialSerialJson = '',
-    this.cloud,
-    this.cloudSettings,
     this.localWifi,
+    this.localOnly = false,
     this.autoConnectLocal = true,
     required this.appearance,
     required this.sky,
@@ -54,9 +53,8 @@ class Dashboard extends StatefulWidget {
   final MossAtmosphere atmosphere;
   final Stream<PlantTelemetry>? telemetry;
   final String initialSerialJson;
-  final CloudController? cloud;
-  final Widget? cloudSettings;
   final LocalWifiController? localWifi;
+  final bool localOnly;
   final bool autoConnectLocal;
   final AppearanceSettings appearance;
   final SkyAppearance sky;
@@ -77,31 +75,32 @@ class _DashboardState extends State<Dashboard> {
   PlantState? _serialSnapshot;
   String? _serialMessage;
   var _sourceNotice = 'Menunggu data sensor.';
+  String? _networkNotice;
   DateTime? _lastRecordedAt;
   int? _lastSequence;
   StreamSubscription<PlantTelemetry>? _subscription;
   Timer? _expiry;
-  Timer? _cloudRetry;
   late LocalWifiController _localWifi;
   late bool _ownsLocalWifi;
   String get _historyDeviceId =>
-      widget.cloud?.hardwareId ?? _profiles.active.id;
+      widget.localOnly ? 'moss-local-v4' : _profiles.active.id;
   StreamSubscription<void>? _localWifiChanges;
   bool _useLocalWifi = false;
   final ScheduleStore _scheduleStore = const ScheduleStore();
   List<ScheduleEntry> _schedules = const [];
   List<RunningSchedule> _runningSchedules = const [];
   Timer? _scheduleTimer;
+  Timer? _networkProbe;
+  bool _probingNetwork = false;
   bool _scheduleBusy = false;
   final ProfileStore _profileStore = const ProfileStore();
   ProfileSettings _profiles = ProfileSettings.defaults;
   PlantHealthModel? _emotionModel;
-  final MqGasIndex _cloudMqGas = MqGasIndex();
+  final MqGasIndex _streamMqGas = MqGasIndex();
   List<HistoryPoint> _history = [];
+  int _historyTotal = 0;
   int? _lastHistoryUptime;
   int? _lastHistorySequence;
-  VoidCallback? _cloudListener;
-  String? _historyLoadedFor;
   final HistoryService _historyService = const HistoryService();
   final NotificationService _notifications = const NotificationService();
   LocalWifiStatus _lastNoticeStatus = LocalWifiStatus.disconnected;
@@ -114,7 +113,6 @@ class _DashboardState extends State<Dashboard> {
   void initState() {
     super.initState();
     _attachLocalWifi(widget.localWifi);
-    _attachCloud();
     _listenToTelemetry();
     _loadSchedules();
     _loadProfiles();
@@ -131,6 +129,13 @@ class _DashboardState extends State<Dashboard> {
       const Duration(seconds: 1),
       (_) => unawaited(_runSchedules()),
     );
+    if (widget.localWifi == null && widget.autoConnectLocal) {
+      _networkProbe = Timer.periodic(
+        const Duration(seconds: 12),
+        (_) => unawaited(_probeNetworkSource()),
+      );
+      unawaited(_probeNetworkSource());
+    }
     if (widget.initialSerialJson.isNotEmpty) {
       try {
         _serialSnapshot = PlantState.fromSerial(
@@ -139,7 +144,7 @@ class _DashboardState extends State<Dashboard> {
       } catch (_) {
         _sourceNotice = 'Snapshot serial tidak valid; menunggu sumber data.';
       }
-    } else if (widget.autoConnectLocal && widget.cloud == null) {
+    } else if (widget.autoConnectLocal) {
       _useLocalWifi = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _useLocalWifi) unawaited(_localWifi.connect());
@@ -147,44 +152,29 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  void _attachCloud() {
-    final cloud = widget.cloud;
-    if (cloud == null) return;
-    _cloudListener = () {
-      if (!mounted || !cloud.hasDevice) return;
-      final id = cloud.deviceId;
-      if (id == null || id == _historyLoadedFor) return;
-      _historyLoadedFor = id;
-      unawaited(_loadCloudHistory());
-    };
-    cloud.addListener(_cloudListener!);
-    _cloudListener!();
-  }
-
-  Future<void> _loadCloudHistory() async {
-    final cloud = widget.cloud;
-    if (cloud == null || !cloud.hasDevice) return;
+  Future<void> _probeNetworkSource() async {
+    if (!mounted || _probingNetwork) return;
+    _probingNetwork = true;
     try {
-      final readings = await cloud.recentReadings();
-      if (!mounted || readings.isEmpty) return;
-      final points = readings
-          .map(
-            (reading) => HistoryPoint(
-              reading.recordedAt,
-              PlantState.fromTelemetry(reading),
-            ),
-          )
-          .toList(growable: false);
-      final merged = <int, HistoryPoint>{
-        for (final point in _history) point.at.microsecondsSinceEpoch: point,
-        for (final point in points) point.at.microsecondsSinceEpoch: point,
-      }.values.toList()..sort((a, b) => a.at.compareTo(b.at));
-      final tail = merged.length > 240
-          ? merged.sublist(merged.length - 240)
-          : merged;
-      setState(() => _history = tail);
-    } catch (_) {
-      // Realtime readings still arrive; a failed history read is not fatal.
+      final active = _profiles.active;
+      final local = await LocalWifiController.probe(
+        address: active.host,
+        port: active.port,
+      );
+      if (!mounted) return;
+      if (local && !_useLocalWifi) {
+        _connectLocalWifi();
+      }
+      if (!_useLocalWifi) {
+        final nextNotice = local
+            ? 'Sumber: Wi-Fi lokal ESP32.'
+            : 'Wi-Fi Moss belum terjangkau.';
+        if (nextNotice != _networkNotice) {
+          setState(() => _networkNotice = nextNotice);
+        }
+      }
+    } finally {
+      _probingNetwork = false;
     }
   }
 
@@ -192,13 +182,6 @@ class _DashboardState extends State<Dashboard> {
   void didUpdateWidget(covariant Dashboard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.telemetry != widget.telemetry) _listenToTelemetry();
-    if (oldWidget.cloud != widget.cloud) {
-      final previous = _cloudListener;
-      if (previous != null) oldWidget.cloud?.removeListener(previous);
-      _cloudListener = null;
-      _historyLoadedFor = null;
-      _attachCloud();
-    }
     if (oldWidget.localWifi != widget.localWifi) {
       final previous = _localWifiChanges;
       if (previous != null) unawaited(previous.cancel());
@@ -238,8 +221,9 @@ class _DashboardState extends State<Dashboard> {
   Future<void> _loadHistory() async {
     final rows = await _historyService.readTail(
       deviceId: _historyDeviceId,
-      limit: 240,
+      limit: 5000,
     );
+    final total = await _historyService.count(deviceId: _historyDeviceId);
     if (!mounted) return;
     final stored = rows
         .map(HistoryCsv.parse)
@@ -251,10 +235,13 @@ class _DashboardState extends State<Dashboard> {
       for (final point in _history) point.at.toIso8601String(): point,
       for (final point in stored) point.at.toIso8601String(): point,
     }.values.toList()..sort((a, b) => a.at.compareTo(b.at));
-    final tail = merged.length > 240
-        ? merged.sublist(merged.length - 240)
+    final tail = merged.length > 5000
+        ? merged.sublist(merged.length - 1000)
         : merged;
-    setState(() => _history = tail);
+    setState(() {
+      _history = tail;
+      _historyTotal = total > merged.length ? total : merged.length;
+    });
   }
 
   Future<void> _loadEmotionModel() async {
@@ -277,6 +264,7 @@ class _DashboardState extends State<Dashboard> {
     _localWifi = LocalWifiController(address: active.host, port: active.port);
     _localWifiChanges = _localWifi.changes.listen((_) => _onLocalWifiChanged());
     _history.clear();
+    _historyTotal = 0;
     _lastHistoryUptime = null;
     _runningSchedules = const [];
   }
@@ -323,7 +311,8 @@ class _DashboardState extends State<Dashboard> {
         mqGasBaselineMv: _localWifi.mqGasBaselineMv,
       );
       _history.add(HistoryPoint(now, state));
-      if (_history.length > 240) _history.removeAt(0);
+      _historyTotal = _historyTotal > 0 ? _historyTotal + 1 : _history.length;
+      if (_history.length > 5000) _history.removeAt(0);
       final emotion = PlantEmotionEngine(_emotionModel)
           .evaluate(state, recent: _recentStates());
       _maybeNotifyLowWater(state, now);
@@ -477,6 +466,7 @@ class _DashboardState extends State<Dashboard> {
       _profiles = _profiles.copyWith(activeId: id);
       _serialSnapshot = null;
       _history.clear();
+      _historyTotal = 0;
       _lastHistoryUptime = null;
     });
     await _profileStore.write(_profiles);
@@ -534,45 +524,6 @@ class _DashboardState extends State<Dashboard> {
   }
 
   Future<void> _exportHistory() async {
-    final cloud = widget.cloud;
-    if (cloud != null && !_useLocalWifi && cloud.hasDevice) {
-      try {
-        final result = await cloud.exportDatasetCsv();
-        if (!mounted) return;
-        if (result.rows == 0) {
-          showTopNotice(
-            context,
-            title: 'Dataset kosong',
-            message: 'Belum ada pembacaan cloud untuk diekspor.',
-            icon: Icons.error_outline_rounded,
-          );
-          return;
-        }
-        final path = await HistoryService().saveDataset(
-          deviceId: result.hardwareId,
-          csv: result.csv,
-        );
-        if (!mounted) return;
-        showTopNotice(
-          context,
-          title: 'Dataset lengkap tersimpan',
-          message: path == null
-              ? '${result.rows} baris diunduh; file belum dapat disimpan.'
-              : '${result.rows} baris tersimpan utuh: $path',
-          icon: Icons.file_download_done_rounded,
-        );
-      } catch (_) {
-        if (mounted) {
-          showTopNotice(
-            context,
-            title: 'Export cloud gagal',
-            message: 'Periksa koneksi lalu coba lagi.',
-            icon: Icons.error_outline_rounded,
-          );
-        }
-      }
-      return;
-    }
     final path = await _historyService.export(deviceId: _historyDeviceId);
     if (!mounted) return;
     if (path == null || path.isEmpty) {
@@ -585,8 +536,13 @@ class _DashboardState extends State<Dashboard> {
     } else {
       showTopNotice(
         context,
-        title: 'CSV tersimpan',
-        message: path,
+        title: widget.localOnly
+            ? 'CSV lokal tersimpan'
+            : 'CSV riwayat lokal tersimpan',
+        message: widget.localOnly
+            ? '$path\nSatu CSV berisi seluruh sampel lokal, sensor, '
+                  'aktuator, dan hasil analisis ML offline.'
+            : '$path\nCSV riwayat lokal perangkat ini.',
         icon: Icons.file_download_done_rounded,
       );
     }
@@ -605,25 +561,28 @@ class _DashboardState extends State<Dashboard> {
     _localWifi.disconnect();
   }
 
+  Future<void> _reconnectLocal() async {
+    try {
+      await const WifiProvisioning().connect();
+    } on WifiProvisioningException {
+      // The dashboard remains usable; the local status shows the failure.
+    }
+    _connectLocalWifi();
+    await _localWifi.connect();
+    if (mounted) setState(() {});
+  }
+
   int _nextControlId = 1;
 
   int _controlId() => _nextControlId++;
 
   Future<bool> _sendControl(String line) {
-    final cloud = widget.cloud;
-    if (!_useLocalWifi && cloud != null) {
-      return cloud.sendControlLine(line);
-    }
     if (!_useLocalWifi) return Future<bool>.value(false);
     return _localWifi.sendControlCommand(line);
   }
 
   Future<void> _refresh() async {
-    final cloud = widget.cloud;
-    if (!_useLocalWifi && cloud != null) {
-      await cloud.refreshDevice();
-      await _loadCloudHistory();
-    } else if (_useLocalWifi) {
+    if (_useLocalWifi) {
       await _localWifi.connect();
     } else if (widget.telemetry == null && _serialSnapshot == null) {
       _listenToTelemetry();
@@ -639,7 +598,7 @@ class _DashboardState extends State<Dashboard> {
     _lastRecordedAt = null;
     _lastSequence = null;
     _lastHistorySequence = null;
-    _cloudMqGas.reset();
+    _streamMqGas.reset();
     _liveState = const PlantState.waiting();
     final source = widget.telemetry;
     _sourceNotice = source == null
@@ -655,8 +614,6 @@ class _DashboardState extends State<Dashboard> {
 
   void _acceptReading(PlantTelemetry reading) {
     if (!mounted) return;
-    _cloudRetry?.cancel();
-    _cloudRetry = null;
     final now = DateTime.now();
     if (!reading.isFreshAt(now, maxAge: _readingMaxAge)) {
       if (!_liveState.isLive) {
@@ -676,11 +633,11 @@ class _DashboardState extends State<Dashboard> {
             (reading.sequence == _lastSequence && _liveState.isLive))) {
       return;
     }
-    _cloudMqGas.update(reading.mqPinMv);
+    _streamMqGas.update(reading.mqPinMv);
     final next = PlantState.fromTelemetry(
       reading,
-      mqGasIndex: _cloudMqGas.index,
-      mqGasStatus: _cloudMqGas.status,
+      mqGasIndex: _streamMqGas.index,
+      mqGasStatus: _streamMqGas.status,
     );
     if (!next.hasSensorData) {
       _expiry?.cancel();
@@ -703,20 +660,21 @@ class _DashboardState extends State<Dashboard> {
     if (_lastHistorySequence != reading.sequence) {
       _lastHistorySequence = reading.sequence;
       _history.add(HistoryPoint(reading.recordedAt.toLocal(), next));
-      if (_history.length > 240) _history.removeAt(0);
+      _historyTotal = _historyTotal > 0 ? _historyTotal + 1 : _history.length;
+      if (_history.length > 5000) _history.removeAt(0);
       final emotion = PlantEmotionEngine(_emotionModel)
           .evaluate(next, recent: _recentStates());
       _maybeNotifyLowWater(next, now);
       _maybeShowInsight(now, emotion);
       unawaited(
         _historyService.append(
-          deviceId: widget.cloud?.hardwareId ?? _profiles.active.id,
+          deviceId: _profiles.active.id,
           header: HistoryCsv.header,
           line: HistoryCsv.line(
             now: reading.recordedAt,
-            deviceId: widget.cloud?.hardwareId ?? _profiles.active.id,
-            firmwareVersion: null,
-            uptimeMs: null,
+            deviceId: _profiles.active.id,
+            firmwareVersion: reading.firmwareVersion,
+            uptimeMs: reading.uptimeMs,
             state: next,
             emotion: emotion,
           ),
@@ -741,16 +699,6 @@ class _DashboardState extends State<Dashboard> {
       _liveState = const PlantState.waiting();
       _sourceNotice = 'Koneksi data terputus; mencoba menyambung ulang.';
     });
-    final cloud = widget.cloud;
-    if (cloud != null && !_useLocalWifi && cloud.hasDevice) {
-      _cloudRetry?.cancel();
-      _cloudRetry = Timer(const Duration(seconds: 15), () {
-        if (!mounted || _useLocalWifi || widget.cloud?.hasDevice != true) {
-          return;
-        }
-        unawaited(widget.cloud!.refreshDevice());
-      });
-    }
   }
 
   Future<void> _importSerialSnapshot() async {
@@ -863,9 +811,8 @@ class _DashboardState extends State<Dashboard> {
       await _deleteSchedule(entry.id);
       return;
     }
-    if (!_useLocalWifi) {
-      if (widget.cloud?.hasDevice != true) return;
-    } else if (_localWifi.status != LocalWifiStatus.live ||
+    if (!_useLocalWifi) return;
+    if (_localWifi.status != LocalWifiStatus.live ||
         _localWifi.snapshot == null) {
       return;
     }
@@ -894,12 +841,10 @@ class _DashboardState extends State<Dashboard> {
   void dispose() {
     dismissTopNotice();
     _expiry?.cancel();
-    _cloudRetry?.cancel();
     _scheduleTimer?.cancel();
+    _networkProbe?.cancel();
     final localChanges = _localWifiChanges;
     if (localChanges != null) unawaited(localChanges.cancel());
-    final cloudListener = _cloudListener;
-    if (cloudListener != null) widget.cloud?.removeListener(cloudListener);
     if (_ownsLocalWifi) _localWifi.dispose();
     final subscription = _subscription;
     if (subscription != null) unawaited(subscription.cancel());
@@ -945,10 +890,11 @@ class _DashboardState extends State<Dashboard> {
             sourceNotice: state.isSerialSnapshot
                 ? 'Data serial tersimpan; waktu ukur tidak diketahui. Bukan live.'
                 : _useLocalWifi
-                ? _localWifi.message
-                : widget.cloud != null
-                ? (state.isLive ? _sourceNotice : widget.cloud!.status)
+                ? (state.relayTransient
+                      ? 'Pompa/relay aktif: nilai analog bisa sementara tergeser.'
+                      : _localWifi.message)
                 : _sourceNotice,
+            networkNotice: _networkNotice,
             localSelected: _useLocalWifi,
             localStatus: _localWifi.status,
             sky: widget.sky,
@@ -962,6 +908,7 @@ class _DashboardState extends State<Dashboard> {
           ),
           1 => JournalPage(
             history: List<HistoryPoint>.unmodifiable(_history),
+            totalSamples: _historyTotal,
             profile: active,
             emotion: emotion,
             onExport: _exportHistory,
@@ -970,9 +917,7 @@ class _DashboardState extends State<Dashboard> {
             state: state,
             localSelected: _useLocalWifi,
             localStatus: _localWifi.status,
-            onCommand: (_useLocalWifi || widget.cloud?.hasDevice == true)
-                ? _sendControl
-                : null,
+            onCommand: _useLocalWifi ? _sendControl : null,
             controlId: _controlId,
             schedules: _schedules,
             runningSchedules: _runningSchedules,
@@ -981,7 +926,10 @@ class _DashboardState extends State<Dashboard> {
             onStopRunningSchedule: _stopRunningSchedule,
           ),
           _ => _SettingsPage(
-            cloudSettings: widget.cloudSettings,
+            localOnly: widget.localOnly,
+            onReconnectLocal: _reconnectLocal,
+            onExportCsv: _exportHistory,
+            firmwareVersion: _localWifi.snapshot?.firmwareVersion,
             serialMessage: _serialMessage,
             hasSerialSnapshot: _serialSnapshot != null,
             onImportSerial: _importSerialSnapshot,
@@ -1043,6 +991,7 @@ class _Home extends StatelessWidget {
     required this.gaze,
     required this.atmosphere,
     required this.sourceNotice,
+    required this.networkNotice,
     required this.localSelected,
     required this.localStatus,
     required this.sky,
@@ -1060,6 +1009,7 @@ class _Home extends StatelessWidget {
   final MossGaze gaze;
   final MossAtmosphere atmosphere;
   final String sourceNotice;
+  final String? networkNotice;
   final bool localSelected;
   final LocalWifiStatus localStatus;
   final SkyAppearance sky;
@@ -1080,18 +1030,15 @@ class _Home extends StatelessWidget {
 
   String _percent(int? value) => value == null ? '-' : '$value%';
 
-  /// Display-only estimate when the UV channel is silent. It prefers the real
-  /// source value, then the legacy ADC-to-index formula, then an LDR proxy.
-  /// The proxy is never fed to the ML model or written to the dataset.
-  double? _uvEstimate(PlantState state) {
+  /// UV display value. It never substitutes an LDR estimate for the UV channel:
+  /// an uncalibrated proxy is still labelled by the firmware/CSV as a proxy.
+  double? _uvValue(PlantState state) {
     final direct = state.uvIndex;
     if (direct != null) return direct;
     final raw = state.uvAdc;
-    if (raw != null && raw > 0 && raw < 4095) {
-      return (raw * 3.3 / 4095.0) / 0.1;
+    if (raw != null && raw >= 0 && raw < 4095) {
+      return (raw * 14.0 / 4095.0 * 10).round() / 10;
     }
-    final light = state.lightPercent;
-    if (light != null) return (light / 100.0) * 11.0;
     return null;
   }
 
@@ -1177,8 +1124,15 @@ class _Home extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 14),
-                _Notice(live: state.isLive, sourceNotice: sourceNotice),
-                if ((state.pumpCooldownSeconds ?? 0) > 0) ...[
+                _Notice(
+                  live: state.isLive,
+                  sourceNotice: sourceNotice,
+                  networkNotice: networkNotice,
+                ),
+                if ((state.pumpCooldownSeconds ?? 0) > 0 &&
+                    state.pumpCommand != true &&
+                    state.pumpReason != 'water_low' &&
+                    state.pumpReason != 'water_unavailable') ...[
                   const SizedBox(height: 10),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -1505,17 +1459,17 @@ class _Home extends StatelessWidget {
                             icon: Icons.wb_twilight_rounded,
                             title: 'UV',
                             value: state.uvAdc == 4095
-                                ? '—'
-                                : _uvEstimate(state)?.toStringAsFixed(1) ?? '—',
+                                ? '-'
+                                : _uvValue(state)?.toStringAsFixed(1) ?? '-',
                             detail: state.uvAdc == null
                                 ? state.uvIndex == null
                                       ? 'Menunggu data sensor'
                                       : 'Belum diverifikasi'
                                 : state.uvAdc == 0
-                                ? 'Estimasi LDR; sensor UV 0 V'
+                                ? 'ADC 0 - UV 0 V'
                                 : state.uvAdc == 4095
                                 ? 'Rail tinggi - cek sinyal sensor UV'
-                                : 'ADC ${state.uvAdc}',
+                                : 'ADC ${state.uvAdc} - proxy 0-14',
                             color: const Color(0xFF967144),
                           ),
                         ),
@@ -1577,9 +1531,14 @@ class _StatusPill extends StatelessWidget {
 }
 
 class _Notice extends StatelessWidget {
-  const _Notice({required this.live, required this.sourceNotice});
+  const _Notice({
+    required this.live,
+    required this.sourceNotice,
+    this.networkNotice,
+  });
   final bool live;
   final String sourceNotice;
+  final String? networkNotice;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1598,9 +1557,28 @@ class _Notice extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: Text(
-            sourceNotice,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                sourceNotice,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (networkNotice case final notice?) ...[
+                const SizedBox(height: 3),
+                Text(
+                  notice,
+                  style: TextStyle(
+                    fontSize: 10,
+                    height: 1.3,
+                    color: context.mossColors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ],
@@ -1817,7 +1795,10 @@ class _AirRow extends StatelessWidget {
 
 class _SettingsPage extends StatelessWidget {
   const _SettingsPage({
-    required this.cloudSettings,
+    required this.localOnly,
+    required this.onReconnectLocal,
+    required this.onExportCsv,
+    required this.firmwareVersion,
     required this.serialMessage,
     required this.hasSerialSnapshot,
     required this.onImportSerial,
@@ -1840,7 +1821,10 @@ class _SettingsPage extends StatelessWidget {
     required this.onTestNotification,
     required this.onRequestNotificationPermission,
   });
-  final Widget? cloudSettings;
+  final bool localOnly;
+  final Future<void> Function() onReconnectLocal;
+  final Future<void> Function() onExportCsv;
+  final int? firmwareVersion;
   final String? serialMessage;
   final bool hasSerialSnapshot;
   final VoidCallback onImportSerial;
@@ -1894,72 +1878,125 @@ class _SettingsPage extends StatelessWidget {
         onManualTimeChanged: onManualTimeChanged,
       ),
       const Divider(height: 32),
-      ?cloudSettings,
-      ProfilePanel(
-        settings: profiles,
-        localSelected: localSelected,
-        localStatus: localStatus,
-        localMessage: localMessage,
-        onConnect: onConnectLocal,
-        onDisconnect: onDisconnectLocal,
-        onSave: onSaveProfile,
-        onSelect: onSelectProfile,
-        onDelete: onDeleteProfile,
-        render3d: render3d,
-      ),
-      const Divider(height: 32),
-      const Text(
-        'Wi-Fi lokal ESP32',
-        style: TextStyle(fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 5),
-      const Text(
-        'Pilih Wi-Fi Moss pada ponsel menggunakan sandi di LCD ESP32, '
-        'lalu hubungkan di sini. Data tetap di jaringan lokal; jaringan ini '
-        'tidak menyediakan internet.',
-        style: TextStyle(fontSize: 12, height: 1.4),
-      ),
-      Text(localMessage, style: const TextStyle(fontSize: 12)),
-      Wrap(
-        spacing: 8,
-        children: [
-          OutlinedButton(
-            onPressed: localStatus == LocalWifiStatus.connecting
-                ? null
-                : onConnectLocal,
-            child: const Text('Hubungkan Wi-Fi lokal'),
+      if (localOnly) ...[
+        const Text(
+          'Koneksi lokal',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 5),
+        Text(localMessage, style: const TextStyle(fontSize: 12, height: 1.4)),
+        const SizedBox(height: 6),
+        Text(
+          firmwareVersion == null
+              ? 'Firmware ESP32: belum terhubung'
+              : firmwareVersion! >= 51
+              ? 'Firmware ESP32: v$firmwareVersion (mendukung pengaman relay v51)'
+              : 'Firmware ESP32: v$firmwareVersion — lebih lama dari v51; '
+                    'pengaman transient relay belum aktif.',
+          style: TextStyle(
+            fontSize: 11.5,
+            height: 1.4,
+            color: firmwareVersion != null && firmwareVersion! < 51
+                ? Theme.of(context).colorScheme.error
+                : null,
           ),
-          if (localSelected)
-            TextButton(
-              onPressed: onDisconnectLocal,
-              child: const Text('Putuskan Wi-Fi lokal'),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: onReconnectLocal,
+              icon: const Icon(Icons.wifi_rounded, size: 18),
+              label: const Text('Sambungkan & Segarkan'),
             ),
-        ],
-      ),
-      const Divider(height: 32),
-      const Text('Data serial', style: TextStyle(fontWeight: FontWeight.w700)),
-      const SizedBox(height: 5),
-      const Text(
-        'Salin satu baris JSON sample dari ESP32, lalu tempel di sini. '
-        'Snapshot bukan live. Data tempel hanya di memori; data bawaan APK dapat muncul kembali saat dibuka.',
-        style: TextStyle(fontSize: 12, height: 1.4),
-      ),
-      Wrap(
-        spacing: 8,
-        children: [
-          OutlinedButton(
-            onPressed: onImportSerial,
-            child: const Text('Tempel data serial'),
-          ),
-          if (hasSerialSnapshot)
-            TextButton(
-              onPressed: onClearSerial,
-              child: const Text('Hapus snapshot'),
+            OutlinedButton.icon(
+              onPressed: onExportCsv,
+              icon: const Icon(Icons.download_rounded, size: 18),
+              label: const Text('Unduh CSV'),
             ),
-        ],
-      ),
-      if (serialMessage != null)
-        Text(serialMessage!, style: const TextStyle(fontSize: 12)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Satu CSV berisi seluruh sampel lokal: timestamp HP, uptime ESP32, '
+          'semua sensor mentah/turunan, perintah pompa/lampu, dan hasil model '
+          'ML yang dihitung di HP. Tidak ada cloud. Riwayat internal hilang '
+          'jika app di-uninstall; unduh CSV sebelum menghapus app.',
+          style: TextStyle(fontSize: 11, height: 1.45),
+        ),
+      ] else ...[
+        ProfilePanel(
+          settings: profiles,
+          localSelected: localSelected,
+          localStatus: localStatus,
+          localMessage: localMessage,
+          onConnect: onConnectLocal,
+          onDisconnect: onDisconnectLocal,
+          onSave: onSaveProfile,
+          onSelect: onSelectProfile,
+          onDelete: onDeleteProfile,
+          render3d: render3d,
+        ),
+        const Divider(height: 32),
+        const Text(
+          'Wi-Fi lokal ESP32',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 5),
+        const Text(
+          'Pilih Wi-Fi Moss pada ponsel menggunakan sandi di LCD ESP32, '
+          'lalu hubungkan di sini. Data tetap di jaringan lokal; jaringan ini '
+          'tidak menyediakan internet.',
+          style: TextStyle(fontSize: 12, height: 1.4),
+        ),
+        Text(localMessage, style: const TextStyle(fontSize: 12)),
+        Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton(
+              onPressed: localStatus == LocalWifiStatus.connecting
+                  ? null
+                  : onConnectLocal,
+              child: const Text('Hubungkan Wi-Fi lokal'),
+            ),
+            if (localSelected)
+              TextButton(
+                onPressed: onDisconnectLocal,
+                child: const Text('Putuskan Wi-Fi lokal'),
+              ),
+          ],
+        ),
+        const Divider(height: 32),
+        const Text(
+          'Data serial',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 5),
+        const Text(
+          'Salin satu baris JSON sample dari ESP32, lalu tempel di sini. '
+          'Snapshot bukan live. Data tempel hanya di memori; data bawaan APK '
+          'dapat muncul kembali saat dibuka.',
+          style: TextStyle(fontSize: 12, height: 1.4),
+        ),
+        Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton(
+              onPressed: onImportSerial,
+              child: const Text('Tempel data serial'),
+            ),
+            if (hasSerialSnapshot)
+              TextButton(
+                onPressed: onClearSerial,
+                child: const Text('Hapus snapshot'),
+              ),
+          ],
+        ),
+        if (serialMessage != null)
+          Text(serialMessage!, style: const TextStyle(fontSize: 12)),
+      ],
       const Divider(height: 32),
       const Text(
         'Notifikasi HP',

@@ -43,6 +43,9 @@ struct SensorSnapshot {
   AdcCalibrationMethod mqAdcCalibration;
   // GPIO35 UV output voltage estimate. Diagnostic only; -1 means unavailable.
   int uvAdcPinMillivolts;
+  // True while a pump run or a recent relay edge can corrupt the analog rail.
+  // Raw values are still reported; consumers can exclude these rows from ML.
+  bool relayTransient;
 };
 
 inline bool sampleDue(uint32_t nowMs, uint32_t lastMs, uint32_t intervalMs) {
@@ -87,8 +90,8 @@ inline const char* waterRawReferenceBand(int raw) {
   return "above_reference";
 }
 
-// Approximate relative scale only; a plausible value does not prove that a
-// sensor is connected, calibrated, or safe to use for an actuator.
+// Relative scale only; it does not prove sensor presence or calibration.
+// zeroAdc = 0% endpoint, fullAdc = 100% endpoint (descending scales allowed).
 inline int relativePercent(int raw, int zeroAdc, int fullAdc) {
   if (!validAdcRaw(raw) || !validAdcRaw(zeroAdc) || !validAdcRaw(fullAdc) ||
       zeroAdc == fullAdc) {
@@ -423,13 +426,14 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
   const int written = std::snprintf(
       output, capacity,
       "{\"type\":\"sample\",\"firmware_version\":%u,"
+      "\"dataset_schema\":%u,"
       "\"schema\":\"serial_observation_2\",\"uptime_ms\":%lu,"
       "\"recorded_at_utc\":null,"
       "\"dht\":{\"model\":\"DHT11_assumed\",\"temperature_c\":%s,"
       "\"humidity_percent\":%s,\"status\":\"%s\"},"
        "\"adc_sampling\":{\"method\":\"median_5\",\"samples_per_cycle\":%u,"
        "\"mixed_rail\":\"unavailable\",\"failed_read\":\"unavailable\"},"
-       "\"adc\":{\"soil_raw\":%s,\"soil_status\":\"%s\","
+       "\"adc\":{\"relay_transient\":%s,\"soil_raw\":%s,\"soil_status\":\"%s\","
       "\"light_raw\":%s,\"uv_raw\":%s,\"uv_pin_mv\":%s,"
       "\"soil_relative_percent\":%s,\"light_relative_percent\":%s,"
       "\"status\":\"unverified\",\"soil_signal_quality\":\"%s\","
@@ -439,6 +443,8 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
        "\"soil_scale_basis\":\"%s\","
        "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d,"
        "\"light_calibration\":\"relative_unverified\","
+       "\"light_direction\":\"adc_high_is_dark\","
+       "\"light_dark_adc\":%d,\"light_bright_adc\":%d,"
        "\"uv_calibration\":\"not_available\"},"
        "\"water_level\":%s,\"mq135\":%s,"
        "\"observation_label\":%s,"
@@ -460,8 +466,11 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
       "\"pump_gpio_level_requested\":%s,\"growlight_gpio_level_requested\":%s,"
       "\"pump_state\":null,"
       "\"growlight_state\":null}",
-      kFirmwareVersion, static_cast<unsigned long>(sample.uptimeMs), temperature, humidity,
-       climateStatus, kAdcSamplesPerCycle, soil, soilStatus, light, uv, uvPinMv,
+      kFirmwareVersion, kDatasetSchemaVersion,
+      static_cast<unsigned long>(sample.uptimeMs), temperature, humidity,
+       climateStatus, kAdcSamplesPerCycle,
+       sample.relayTransient ? "true" : "false",
+       soil, soilStatus, light, uv, uvPinMv,
        soilRelative, lightRelative,
       adcSignalQuality(sample.soilAdcRaw, sample.soilEnabled),
       kSoilPowerWiringVerified ? "gpio25_switched_operator_configured"
@@ -472,6 +481,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
        kDisplayUsesOperatorReferences ? "reported_dry_and_immersed_means"
                                      : "generic_display_references",
        kSoilRelativeZeroAdc, kSoilRelativeFullAdc,
+       kLightRelativeZeroAdc, kLightRelativeFullAdc,
        waterLevel, mq135, labelJson,
         lightDecisionName(ldrLightDecision(
             validAdcRaw(sample.lightAdcRaw) ? preview.lightPercent : -1)), uvProxy,

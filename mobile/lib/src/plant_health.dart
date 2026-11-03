@@ -1,9 +1,6 @@
 import 'dart:convert';
 
-/// A compact holistic decision tree trained offline by
-/// `tools/ml/train-plant-health.py`. It combines agronomic scenarios with
-/// observed sensor patterns. It is a presentation model, not a validated
-/// plant-health diagnosis or an actuator command.
+/// Offline decision tree for presentation only, not a validated diagnosis.
 class PlantHealthModel {
   PlantHealthModel._(this._tree);
 

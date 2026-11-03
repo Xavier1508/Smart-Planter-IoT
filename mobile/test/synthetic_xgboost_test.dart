@@ -103,7 +103,7 @@ void main() {
       expect(state.explanation, contains('belum diverifikasi'));
       expect(state.pumpCommand, isFalse);
       expect(state.lightCommand, isFalse);
-      expect(state.uvIndex, isNull);
+      expect(state.uvIndex, 0.0);
       expect(state.uvAdc, 0);
     },
   );

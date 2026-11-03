@@ -19,10 +19,24 @@ import org.json.JSONObject
 class MainActivity : FlutterActivity() {
     private var notificationSink: EventChannel.EventSink? = null
     private var notificationListening = false
+    private var wifiProvisioning: WifiProvisioning? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleNotificationIntent(intent)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        wifiProvisioning?.onRequestPermissionsResult(
+            requestCode,
+            permissions,
+            grantResults,
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -65,6 +79,10 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         NotificationHelper.createChannels(this)
+        wifiProvisioning = WifiProvisioning(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/update_progress")
             .setStreamHandler(UpdateProgressEvents)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "moss/notification_taps")
@@ -303,8 +321,15 @@ class MainActivity : FlutterActivity() {
                         if (deviceId == null) {
                             result.error("invalid", "Device id is missing.", null)
                         } else {
-                            val limit = call.argument<Int>("limit") ?: 240
+                            val limit = call.argument<Int>("limit") ?: 1000
                             result.success(HistoryStore.readTail(this, deviceId, limit))
+                        }
+                    }
+                    "count" -> {
+                        if (deviceId == null) {
+                            result.error("invalid", "Device id is missing.", null)
+                        } else {
+                            result.success(HistoryStore.count(this, deviceId))
                         }
                     }
                     "export" -> {
@@ -320,11 +345,19 @@ class MainActivity : FlutterActivity() {
                     }
                     "saveDataset" -> {
                         val csv = call.argument<String>("csv")
-                        if (deviceId == null || csv == null) {
+                        val kind = call.argument<String>("kind") ?: "full"
+                        if (deviceId == null || csv == null ||
+                            (kind != "full" && kind != "ml")
+                        ) {
                             result.error("invalid", "Dataset payload is invalid.", null)
                         } else {
                             try {
-                                val path = HistoryStore.saveDataset(this, deviceId, csv)
+                                val path = HistoryStore.saveDataset(
+                                    this,
+                                    deviceId,
+                                    csv,
+                                    kind,
+                                )
                                 if (path == null) {
                                     result.error("write_failed", "Dataset could not be saved.", null)
                                 } else {

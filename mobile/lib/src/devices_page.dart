@@ -215,7 +215,10 @@ class DevicesPage extends StatelessWidget {
           Text('Pompa: ${_commandText(state.pumpCommand)}'),
           if (state.pumpReason != null)
             Text('Alasan pompa: ${_pumpReasonText(state.pumpReason)}'),
-          if ((state.pumpCooldownSeconds ?? 0) > 0)
+          if ((state.pumpCooldownSeconds ?? 0) > 0 &&
+              state.pumpCommand != true &&
+              state.pumpReason != 'water_low' &&
+              state.pumpReason != 'water_unavailable')
             Text(
               state.pumpRuntimeLockout == true
                   ? 'Jeda otomatis: ${_cooldownText(state.pumpCooldownSeconds!)} '
@@ -254,6 +257,10 @@ class DevicesPage extends StatelessWidget {
     'watering' => 'siklus penyiraman berjalan',
     'cooldown' => 'jeda antarsiklus',
     'dry_confirm' => 'menunggu tanah kering terkonfirmasi',
+    'manual_on' => 'ON manual',
+    'manual_off' => 'OFF manual',
+    'manual_released' => 'manual dilepas ke AUTO',
+    'manual_expired' => 'durasi manual selesai',
     'water_low' => 'air di bawah batas relatif',
     'water_unavailable' => 'data air belum tersedia',
     'soil_unverified' => 'skala tanah belum diizinkan',
@@ -277,6 +284,11 @@ class DevicesPage extends StatelessWidget {
     'light_inhibited' => 'otomasi lampu belum diaktifkan',
     'minimum_hold' => 'menunggu jeda perpindahan',
     'hysteresis' => 'mempertahankan keadaan di zona jeda',
+    'pump_hold' => 'lampu ditahan saat pompa menyala',
+    'pump_settle' => 'menunggu pompa stabil',
+    'manual_on' => 'ON manual',
+    'manual_off' => 'OFF manual',
+    'manual_expired' => 'durasi manual selesai',
     'watchdog_unavailable' => 'pengawas perangkat belum tersedia',
     'sample_stale' => 'data sensor terlambat',
     _ => 'belum diketahui',
@@ -1261,7 +1273,7 @@ class _ManualControlsState extends State<_ManualControls> {
         } else {
           _lightMode = previousLight;
         }
-        _message = 'Perintah gagal; periksa koneksi cloud.';
+        _message = 'Perintah gagal; periksa koneksi Wi-Fi Moss.';
       } else if (pump) {
         _message = mode == _ManualMode.on
             ? 'Pompa ON · ${durationSeconds ?? _pumpSeconds} detik.'

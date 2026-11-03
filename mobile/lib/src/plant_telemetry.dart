@@ -1,15 +1,17 @@
 import 'dart:convert';
 
-/// A sensor sample supplied by the device data source.
-///
-/// [recordedAt] must be a trusted server timestamp, not the ESP32 clock. The
-/// additional water-level and MQ135 sensors are deliberately not represented
-/// here until their readings have been verified and calibrated.
+/// One sensor sample supplied by the device source. Missing values stay null;
+/// commands are requested outputs, not measured relay states.
 class PlantTelemetry {
   const PlantTelemetry({
     required this.recordedAt,
     this.capturedAt,
     this.timeQuality,
+    this.deviceUuid,
+    this.firmwareVersion,
+    this.uptimeMs,
+    this.bootId,
+    this.ingestSource,
     this.sequence,
     this.soilPercent,
     this.temperatureC,
@@ -39,6 +41,16 @@ class PlantTelemetry {
   /// Device NTP time, present only when the firmware had a trustworthy clock.
   final DateTime? capturedAt;
   final String? timeQuality;
+
+  /// Cloud device UUID. The human-readable hardware ID is supplied by the
+  /// caller that owns the device row, so exports can use a stable identifier.
+  final String? deviceUuid;
+  final int? firmwareVersion;
+  final int? uptimeMs;
+  final String? bootId;
+
+  /// `live` or `buffer_replay` from the device API.
+  final String? ingestSource;
 
   /// Database row ID, used to break ties between equal server timestamps.
   final int? sequence;
@@ -101,6 +113,7 @@ class SerialSensorSnapshot {
     this.waterLow,
     this.waterEmpty,
     this.waterClassificationInputsValid = false,
+    this.relayTransient = false,
     this.mqAdc,
     this.mqDigital,
     this.mqAdcStatus,
@@ -143,6 +156,10 @@ class SerialSensorSnapshot {
 
   /// Malformed classification inputs must not be mistaken for missing fields.
   final bool waterClassificationInputsValid;
+
+  /// True while the firmware saw a pump run or a recent relay edge. Raw analog
+  /// values are still delivered; this flag says they may be shifted.
+  final bool relayTransient;
   final int? mqAdc;
   final int? mqDigital;
   final String? mqAdcStatus;
@@ -308,6 +325,7 @@ class SerialSensorSnapshot {
           ? water['empty'] as bool
           : null,
       waterClassificationInputsValid: waterInputsValid,
+      relayTransient: adc['relay_transient'] == true,
       mqAdc: mqRaw,
       mqDigital: readable(mq['status'])
           ? integer(mq['digital_raw'], 0, 1)
@@ -327,7 +345,7 @@ class SerialSensorSnapshot {
           : null,
       pumpRulePreview: preview('pump_on', soilPercent, pumpThreshold),
       pumpRuleThreshold: pumpThreshold,
-      lightRulePreview: preview('growlight_on', lightPercent, 60),
+      lightRulePreview: preview('growlight_on', lightPercent, 65),
       waterLowPreview: preview('water_low', waterPercent, 20),
       pumpCommand: decoded['pump_cmd'] is bool
           ? decoded['pump_cmd'] as bool
@@ -338,6 +356,7 @@ class SerialSensorSnapshot {
                 'boot_grace',
                 'soil_not_dry',
                 'soil_moist',
+                'soil_no_response',
                 'soil_dry',
                 'watering',
                 'cooldown',
@@ -349,6 +368,12 @@ class SerialSensorSnapshot {
                 'watchdog_unavailable',
                 'sample_stale',
                 'runtime_limit',
+                'manual_on',
+                'manual_off',
+                'manual_released',
+                'manual_expired',
+                'relay_settle',
+                'brownout_hold',
               }.contains(decoded['pump_reason'])
           ? decoded['pump_reason'] as String
           : null,
@@ -374,6 +399,13 @@ class SerialSensorSnapshot {
                 'hysteresis',
                 'watchdog_unavailable',
                 'sample_stale',
+                'manual_on',
+                'manual_off',
+                'manual_released',
+                'manual_expired',
+                'relay_settle',
+                'light_confirm',
+                'brownout_hold',
               }.contains(decoded['growlight_reason'])
           ? decoded['growlight_reason'] as String
           : null,

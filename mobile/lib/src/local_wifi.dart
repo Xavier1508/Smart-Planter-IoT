@@ -79,6 +79,24 @@ class LocalWifiController {
     if (!_disposed) _changes.add(null);
   }
 
+  /// Lightweight reachability check used by the dashboard to distinguish
+  /// "phone is on the Moss AP" from "phone is on home Wi-Fi/cloud".
+  static Future<bool> probe({
+    String address = '192.168.4.1',
+    int port = 3333,
+    Duration timeout = const Duration(milliseconds: 900),
+  }) async {
+    Socket? socket;
+    try {
+      socket = await Socket.connect(address, port, timeout: timeout);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      socket?.destroy();
+    }
+  }
+
   Future<void> connect() async {
     if (_disposed) return;
     // Pull-to-refresh and the settings button must not tear down a healthy

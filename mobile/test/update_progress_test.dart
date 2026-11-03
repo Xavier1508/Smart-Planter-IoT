@@ -46,13 +46,18 @@ void main() {
     events.add({'status': 'CHECKING'});
     await tester.pump();
     await tester.pump();
-    expect(find.text('Memeriksa pembaruan Moss…'), findsOneWidget);
+    // A background check is not user-visible; only real download state is.
+    expect(find.text('Memeriksa pembaruan Moss…'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+
+    events.add({'status': 'NEW_RELEASE_CHECK_FAILED'});
+    await tester.pump();
+    await tester.pump();
     expect(
-      tester
-          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
-          .value,
-      isNull,
+      find.text('Pembaruan belum dapat diperiksa. Coba lagi nanti.'),
+      findsNothing,
     );
+    expect(find.byType(LinearProgressIndicator), findsNothing);
 
     events.add({'status': 'DOWNLOADING', 'downloaded': 25, 'total': 100});
     await tester.pump();

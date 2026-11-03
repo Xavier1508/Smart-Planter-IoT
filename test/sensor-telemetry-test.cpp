@@ -7,6 +7,11 @@
 #include <limits>
 #include <vector>
 
+// Host fixtures use short one-sample transitions; production requires five
+// consecutive dry samples to reject relay/load transients.
+#define MOSS_PUMP_DRY_CONFIRM_SAMPLES 1
+#define MOSS_LIGHT_CONFIRM_SAMPLES 1
+
 #include "control-command.h"
 #include "extra-sensors.h"
 #include "local-wifi.h"
@@ -83,8 +88,8 @@ int main() {
   assert(commandGpio.calls[3].pin == 26 && commandGpio.calls[3].high);
 
   // Relay staging: both coils start inactive, stay inactive for the 2-second
-  // settle window, and two ON transitions are 150 milliseconds apart. OFF is
-  // always immediate. 150 is milliseconds, not seconds.
+  // settle window, and two ON transitions are 500 milliseconds apart. OFF is
+  // always immediate. 500 is milliseconds, not seconds.
   planter::RelayStager<LevelGpio> staged;
   LevelGpio stagedLevel;
   staged.begin(0, stagedLevel);
@@ -95,20 +100,20 @@ int main() {
   staged.update(2000, true, true, stagedLevel);
   assert(staged.pumpOn());
   assert(!staged.lightOn());
-  staged.update(2149, true, true, stagedLevel);
+  staged.update(2499, true, true, stagedLevel);
   assert(!staged.lightOn());
-  staged.update(2150, true, true, stagedLevel);
+  staged.update(2500, true, true, stagedLevel);
   assert(staged.lightOn());
-  staged.update(2151, false, false, stagedLevel);
+  staged.update(2501, false, false, stagedLevel);
   assert(!staged.pumpOn() && !staged.lightOn());
   assert(stagedLevel.pumpHigh && !stagedLevel.lightHigh);
-  staged.update(3000, false, true, stagedLevel);
+  staged.update(3001, false, true, stagedLevel);
   assert(staged.lightOn() && !staged.pumpOn());
   staged.update(4000, true, false, stagedLevel);
   assert(!staged.lightOn() && !staged.pumpOn());
-  staged.update(4149, true, false, stagedLevel);
+  staged.update(4499, true, false, stagedLevel);
   assert(!staged.pumpOn());
-  staged.update(4150, true, false, stagedLevel);
+  staged.update(4500, true, false, stagedLevel);
   assert(staged.pumpOn());
   planter::RelayStager<LevelGpio> freshStaged;
   LevelGpio freshLevel;
@@ -248,7 +253,7 @@ int main() {
   assert(planter::kSoilAdcReadEnabled);
   assert(planter::kLightAutomationEnabled);
   assert(planter::kPumpAllowEstimatedSoil);
-  assert(planter::kFirmwareVersion == 41);
+  assert(planter::kFirmwareVersion == 52);
 
   // Bounded manual-control protocol.
   auto control = planter::parseControlLine("CTRL pump=on dur=5 id=12");
@@ -365,6 +370,16 @@ int main() {
   assert(planter::ldrLightDecision(65) == LightDecision::off);
   assert(planter::ldrLightDecision(100) == LightDecision::off);
   assert(planter::ldrLightDecision(101) == LightDecision::unavailable);
+
+  // LDR direction contract: 0 ADC is the brightest reading, ~2100 ADC is fully
+  // dark. A higher raw value must produce a lower brightness percentage.
+  // Test vectors are intentionally independent of the local calibration file.
+  assert(planter::kLightRelativeZeroAdc > planter::kLightRelativeFullAdc);
+  assert(planter::relativePercent(0, 2100, 0) == 100);
+  assert(planter::relativePercent(1050, 2100, 0) == 50);
+  assert(planter::relativePercent(2100, 2100, 0) == 0);
+  assert(planter::relativePercent(2360, 2100, 0) == 0);
+  assert(planter::relativePercent(4095, 2100, 0) == 0);
   assert(planter::uvAdcProxyTenths(-1) == -1);
   assert(planter::uvAdcProxyTenths(0) == 0);
   assert(planter::uvAdcProxyTenths(1) == 0);
@@ -405,7 +420,7 @@ int main() {
       (planter::kWaterEmptyAdc + planter::kWaterFullAdc) / 2,
       true, true, false, -1, 1, true, false, -1,
       planter::AdcCalibrationMethod::unavailable};
-  // LDR rails follow the local 0(dark)..2360(bright) calibration.
+  // LDR rails follow the local 0(bright)..2100(dark) calibration.
   // A raw 4095 is above the bright endpoint and maps to 100% brightness.
   SensorSnapshot ldrRail = trialSample;
   ldrRail.lightAdcRaw = planter::kLightRelativeZeroAdc;
@@ -973,7 +988,7 @@ int main() {
                              "\"adc_calibration_source\":\"efuse_vref\"") != nullptr);
   assert(std::strstr(output, "\"environment_compensation\":\"not_applied\"") != nullptr);
   assert(std::strstr(output, "\"observation_label\":null") != nullptr);
-  assert(std::strstr(output, "\"firmware_version\":41") != nullptr);
+  assert(std::strstr(output, "\"firmware_version\":52") != nullptr);
   char expectedSoilScale[96];
   std::snprintf(expectedSoilScale, sizeof(expectedSoilScale),
                 "\"soil_dry_mean_adc\":%d,\"soil_immersed_mean_adc\":%d",

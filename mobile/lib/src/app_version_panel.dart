@@ -26,7 +26,7 @@ class AppBuildInfo {
           !RegExp(r'^[A-Za-z0-9.+-]{1,40}$').hasMatch(version) ||
           build is! int ||
           build < 0 ||
-          (channel != 'production' && channel != 'beta')) {
+          (channel != 'local')) {
         return null;
       }
       return AppBuildInfo(version: version, build: build, channel: channel);
@@ -91,9 +91,8 @@ class _AppVersionPanelState extends State<AppVersionPanel> {
                       ),
                     );
                   }
-                  final description = info.channel == 'beta'
-                      ? 'Beta privat dapat memeriksa pembaruan saat dibuka jika layanan dan akun tester siap. Instalasi memerlukan persetujuan.'
-                      : 'Varian ini tidak memeriksa pembaruan Firebase secara otomatis.';
+                  final description =
+                      'Pembaruan aplikasi dilakukan manual dengan memasang APK baru.';
                   return Text(
                     'Versi ${info.version} · build ${info.build}\n$description',
                     style: TextStyle(

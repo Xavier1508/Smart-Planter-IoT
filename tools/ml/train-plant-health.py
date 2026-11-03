@@ -40,12 +40,10 @@ def candidate_row(rng: random.Random) -> tuple[list[float], int]:
     )[0]
     if scenario == "watch":
         target = rng.choice(
-            ["soil_low", "soil_high", "water_low", "temp", "humidity", "gas", "light", "trend"]
+            ["soil_low", "water_low", "temp", "humidity", "gas", "light", "trend"]
         )
         if target == "soil_low":
             soil = rng.uniform(29.0, 38.0)
-        elif target == "soil_high":
-            soil = rng.uniform(85.0, 90.0)
         elif target == "water_low":
             water = rng.uniform(18.0, 32.0)
         elif target == "temp":
@@ -131,10 +129,10 @@ def load_observed(path: Path) -> list[tuple[list[float], int]]:
             and all(isinstance(value, (int, float)) for value in features)
             and isinstance(label, str)
         ):
-            # The old six-class dataset used "wet". Keep those observed rows as
-            # watch samples instead of discarding real sensor patterns.
+            # The old six-class dataset used "wet". On this probe, high soil
+            # ADC is normal wet soil, so keep those real patterns as healthy.
             if label == "wet":
-                label = "watch"
+                label = "healthy"
             if label in CLASSES:
                 rows.append(([float(value) for value in features], CLASSES.index(label)))
     return rows

@@ -2,10 +2,7 @@
 
 #include <stdint.h>
 
-// Optional device-specific display references stay local and are ignored by
-// Git. The checked-in defaults below are generic, unverified placeholders.
-// Host tests can also exercise generic references without modifying the local
-// file. Production builds use local references whenever they are present.
+// Device-specific calibration is optional and Git-ignored; defaults are generic.
 #if !defined(MOSS_DISABLE_LOCAL_CALIBRATION) && __has_include("planter-calibration.local.h")
 #include "planter-calibration.local.h"
 #endif
@@ -19,7 +16,7 @@
 #define MOSS_SOIL_RELATIVE_FULL_ADC 1900
 #endif
 #ifndef MOSS_LIGHT_RELATIVE_DARK_ADC
-#define MOSS_LIGHT_RELATIVE_DARK_ADC 4095
+#define MOSS_LIGHT_RELATIVE_DARK_ADC 2100
 #endif
 #ifndef MOSS_LIGHT_RELATIVE_BRIGHT_ADC
 #define MOSS_LIGHT_RELATIVE_BRIGHT_ADC 0
@@ -46,7 +43,10 @@
 
 namespace planter {
 
-constexpr unsigned kFirmwareVersion = 41;
+constexpr unsigned kFirmwareVersion = 52;
+// Kept for older tooling that still reads the serial JSON. The active local
+// CSV is the fixed 25-column HistoryCsv in the app.
+constexpr unsigned kDatasetSchemaVersion = 2;
 
 // Historical project assignments, not a verified wiring diagram.
 constexpr int kDhtPin = 4;
@@ -74,79 +74,80 @@ constexpr uint32_t kSoilPowerSettleMs = 300;
 constexpr bool kPumpActiveLow = true;
 constexpr bool kLightActiveLow = false;
 constexpr bool kLightAutomationEnabled = true;
+// The I2C LCD backpack exposes the backlight as a single PCF8574 bit, not a
+// PWM channel. Firmware can only turn it off after this idle window; 50% dim
+// requires a hardware PWM/MOSFET or a series resistor.
+constexpr uint32_t kLcdBacklightIdleMs = 0;
 constexpr bool relayLevel(bool activeLow, bool on) {
   return activeLow ? !on : on;
 }
 
-// Relay output staging. Both coils are held inactive for a short settle window
-// after boot, and two ON transitions are separated by 150 milliseconds so the
-// coil inrush events do not coincide. OFF is always immediate. These values are
-// milliseconds, not seconds.
+// Relay staging: hold both coils inactive after boot and space ON transitions
+// by 500 ms. OFF is always immediate.
 constexpr uint32_t kRelayEnableDelayMs = 2000;
-constexpr uint32_t kRelaySwitchGapMs = 150;
-
-// The original project used DHT11; the actual sensor model is still unverified.
-// A successful protocol read is not proof that the selected model is correct.
+constexpr uint32_t kRelaySwitchGapMs = 500;
+// Freeze automatic pump/lamp decisions for 3 s after a relay edge; raw values
+// are still logged. Hardware separation remains the real transient fix.
+constexpr uint32_t kRelaySettleMs = 3000;
+// DHT11 is assumed; a successful read does not verify the model.
 constexpr bool kDhtEnabled = true;
 constexpr bool kDhtModelVerified = false;
 
-// Unverified relative references; local values override generic placeholders.
-// They are not measured 0/100% soil water content.
+// Relative display references, not measured volumetric values.
 constexpr bool kDisplayUsesOperatorReferences = MOSS_DISPLAY_CALIBRATION_OBSERVED == 1;
 constexpr int kSoilRelativeZeroAdc = MOSS_SOIL_RELATIVE_ZERO_ADC;
 constexpr int kSoilRelativeFullAdc = MOSS_SOIL_RELATIVE_FULL_ADC;
-// Device-specific: the user verified a truly dry stem reads a stable 0 ADC.
-// A disconnected probe can also read 0, so water/runtime/cooldown guards stay.
+// A disconnected probe can also read 0; pump guards still apply.
 constexpr bool kSoilZeroIsDry = MOSS_SOIL_ZERO_IS_DRY == 1;
 
-// Brightness scale: 0 = reported darkness, 100 = reported light. The default
-// endpoints are generic; local references are estimates, not measured lux.
+// Brightness scale: 0% at the dark endpoint, 100% at the bright endpoint.
+// This LDR is descending: ~2100 ADC dark, 0 ADC bright.
 constexpr int kLightRelativeZeroAdc = MOSS_LIGHT_RELATIVE_DARK_ADC;
 constexpr int kLightRelativeFullAdc = MOSS_LIGHT_RELATIVE_BRIGHT_ADC;
 
 // Hysteresis for the pump. ON below 1000, OFF at/above 1200. The gap keeps a
 // just-lifted, still-wet probe from starting the pump on a transient drop.
-// ADC 4095 remains unavailable.
+// A single 0/rail-like soil sample (for example a relay/load transient) must
+// not start the pump; require five consecutive dry samples = ~10 s at 2 s.
+// Host tests may override this to keep their short fixtures.
 constexpr int kPumpOnBelowRawAdc = 1000;
 constexpr int kPumpOffAtOrAboveRawAdc = 1200;
-constexpr int kPumpDryConfirmSamples = 1;
+#ifndef MOSS_PUMP_DRY_CONFIRM_SAMPLES
+#define MOSS_PUMP_DRY_CONFIRM_SAMPLES 5
+#endif
+constexpr int kPumpDryConfirmSamples = MOSS_PUMP_DRY_CONFIRM_SAMPLES;
+// A lamp ON request must also persist. One dark reading during a relay edge is
+// not enough to click the lamp relay.
+#ifndef MOSS_LIGHT_CONFIRM_SAMPLES
+#define MOSS_LIGHT_CONFIRM_SAMPLES 3
+#endif
+constexpr int kLightConfirmSamples = MOSS_LIGHT_CONFIRM_SAMPLES;
 // User-requested single LDR edge: below 65% relative brightness requests ON,
 // 65% or more requests OFF. UV remains monitoring only and never controls it.
 constexpr int kLightOnBelowPercent = 65;
 constexpr int kLightOffAtOrAbovePercent = 65;
 constexpr int kWaterLowBelowPercent = 20;
-// The display can warn at the 826 ADC low reference, but the pump guard is
-// intentionally lower so a tilted or partly empty tank can still water. The
-// user observed ~400 ADC only when the level sensor was completely dry.
+// Pump cutoff is lower than the display warning so a tilted tank can still water.
 constexpr int kPumpWaterLowRawAdc = 600;
-// The pump's own load pulls the water-level reading down while it runs, so a
-// single low sample is not proof of an empty reservoir. A running pump stops
-// only after this many consecutive low samples (6 x 5 s = 30 s). While the
-// pump is idle, one low sample is enough to block the next start.
+// While running, require six consecutive low samples (12 s) before stopping.
 constexpr int kWaterLowRunningConfirmSamples = 6;
 
-// Dedicated, read-only, password-protected local Wi-Fi access point. No router
-// credentials are read or stored; the application connects to this endpoint.
+// Local-only WPA2 access point; no router credentials are stored.
 constexpr uint16_t kLocalTelemetryPort = 3333;
 
 constexpr uint32_t kBootGraceMs = 5000;
-// Automatic watering may run continuously until the soil sensor reaches the
-// upper threshold. The hard cap prevents an endless run if the sensor or
-// water path fails; manual commands remain capped separately at 30 seconds.
+// Hard cap for automatic watering; manual runs are capped separately.
 constexpr uint32_t kPumpMaxOnMs = 300000;
 constexpr uint32_t kPumpManualMaxOnMs = 30000;
 constexpr uint32_t kLightManualMaxOnMs = 1800000;  // 30 minutes
 constexpr uint32_t kPumpCooldownMs = 30000;
-// After hitting the hard cap, lock out automatic watering for 10 minutes so a
-// failed sensor cannot flood the pot. A manual command can still be used.
+// Ten-minute lockout after hitting the runtime cap.
 constexpr uint32_t kPumpRuntimeSoakMs = 600000;
-// If the soil reading does not move after two minutes of automatic watering,
-// stop and retry later instead of running the full five-minute cap.
+// Stop if the soil reading does not move within two minutes.
 constexpr uint32_t kPumpEffectCheckMs = 120000;
 constexpr int kPumpEffectMinDelta = 20;
 constexpr uint32_t kPumpNoResponseCooldownMs = 300000;
-// A brownout boot keeps the cloud reachable but holds automatic watering for
-// one minute so the pump cannot immediately repeat the power event.
+// Hold automatic watering for one minute after a brownout boot.
 constexpr uint32_t kBrownoutPumpHoldMs = 60000;
 constexpr uint32_t kLightMinStateMs = 5000;
 constexpr uint32_t kSampleStaleMs = 15000;
@@ -178,7 +179,17 @@ constexpr int kWaterEmptyRawReferenceAdc = 450;
 constexpr int kWaterObservedLowMeanAdc = MOSS_WATER_OBSERVED_LOW_ADC;
 constexpr int kWaterObservedNearFullMeanAdc = MOSS_WATER_OBSERVED_NEAR_FULL_ADC;
 
-// DHT11 requires at least 2 seconds between samples; use 5 seconds here.
-constexpr uint32_t kSampleIntervalMs = 5000;
+// Two-second cadence is the DHT11 minimum and keeps dataset rows uniform.
+constexpr uint32_t kSampleIntervalMs = 2000;
+
+// Local AP power profile; this does not replace a supply sized for Wi-Fi peaks.
+#ifndef MOSS_CPU_MHZ
+#define MOSS_CPU_MHZ 240
+#endif
+constexpr uint32_t kCpuFrequencyMhz = MOSS_CPU_MHZ;
+constexpr uint16_t kLocalApBeaconIntervalTu = 100;          // 102.4 ms
+constexpr uint8_t kLocalApMaxClients = 4;
+// Settling delay after an ADC channel switch.
+constexpr uint32_t kAdcSettleUs = 200;
 
 }  // namespace planter

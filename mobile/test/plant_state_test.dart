@@ -51,6 +51,36 @@ void main() {
     expect(state.explanation, contains('waktu pembacaan tidak diketahui'));
   });
 
+  test('relay transient and new safety reasons survive parsing', () {
+    final snapshot = SerialSensorSnapshot.parse(
+      jsonEncode({
+        'type': 'sample',
+        'uptime_ms': 9000,
+        'adc': {
+          'relay_transient': true,
+          'soil_raw': 900,
+          'soil_status': 'unverified',
+          'soil_relative_percent': 50,
+          'light_raw': 1000,
+          'light_relative_percent': 44,
+          'uv_raw': 0,
+          'status': 'unverified',
+        },
+        'pump_cmd': false,
+        'pump_reason': 'relay_settle',
+        'growlight_cmd': false,
+        'growlight_reason': 'light_confirm',
+      }),
+    );
+    expect(snapshot.relayTransient, isTrue);
+    expect(snapshot.pumpCommand, isFalse);
+    expect(snapshot.pumpReason, 'relay_settle');
+    expect(snapshot.lightCommand, isFalse);
+    expect(snapshot.lightReason, 'light_confirm');
+    final state = PlantState.fromSerial(snapshot);
+    expect(state.relayTransient, isTrue);
+  });
+
   test('ADC rails stay raw; LDR rails remain bright/dark extremes', () {
     final snapshot = SerialSensorSnapshot.parse('''
       {"type":"sample",
@@ -324,7 +354,7 @@ void main() {
     final sample = SerialSensorSnapshot.parse('''
       {"type":"sample",
        "adc":{"soil_raw":1225,"soil_status":"unverified","soil_relative_percent":50,
-              "light_raw":1638,"light_relative_percent":60,"status":"unverified"},
+              "light_raw":1638,"light_relative_percent":65,"status":"unverified"},
        "water_level":{"adc_raw":400,"relative_percent":20,"status":"unverified"},
        "control_preview":{"mode":"diagnostic_only","basis":"relative_unverified",
                           "pump_on":false,"growlight_on":false,"water_low":false}}
@@ -336,7 +366,7 @@ void main() {
     final inconsistent = SerialSensorSnapshot.parse('''
       {"type":"sample",
        "adc":{"soil_raw":1225,"soil_status":"unverified","soil_relative_percent":50,
-              "light_raw":1638,"light_relative_percent":60,"status":"unverified"},
+              "light_raw":1638,"light_relative_percent":65,"status":"unverified"},
        "water_level":{"adc_raw":null,"relative_percent":19,"status":"unverified"},
        "control_preview":{"mode":"diagnostic_only","basis":"relative_unverified",
                           "pump_on":true,"growlight_on":true,"water_low":true}}

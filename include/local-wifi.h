@@ -5,10 +5,8 @@
 
 namespace planter {
 
-// Optional fixed WPA2 password from an ignored local header, or a boot-random
-// fallback. The password is displayed on the LCD and never logged. Ten random
-// base-32 symbols retain 50 bits of boot-specific entropy while fitting the
-// 16-character LCD.
+// Fixed password from the ignored local header, or a boot-random 10-character
+// fallback shown on the LCD (50 bits of entropy).
 constexpr size_t kLocalWifiPasswordLength = 10;
 constexpr char kLocalWifiPasswordAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 static_assert(sizeof(kLocalWifiPasswordAlphabet) == 33, "Expected 32 symbols");

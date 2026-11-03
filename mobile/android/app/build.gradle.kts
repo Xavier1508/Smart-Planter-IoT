@@ -2,14 +2,6 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
-    id("com.google.gms.google-services") apply false
-}
-
-// Only the private tester variant needs Firebase. A production build can be
-// built without a Firebase configuration or the App Distribution SDK.
-val firebaseConfig = file("google-services.json")
-if (firebaseConfig.isFile) {
-    apply(plugin = "com.google.gms.google-services")
 }
 
 val releaseStoreFile = System.getenv("MOSS_KEYSTORE_FILE")
@@ -49,12 +41,6 @@ android {
         versionName = flutter.versionName
     }
 
-    flavorDimensions += "distribution"
-    productFlavors {
-        create("production") { dimension = "distribution" }
-        create("beta") { dimension = "distribution" }
-    }
-
     signingConfigs {
         create("mossRelease") {
             if (hasReleaseSigning) {
@@ -69,10 +55,9 @@ android {
 
     buildTypes {
         debug {
-            // A disposable local preview must not replace the signed beta app.
-            applicationIdSuffix = ".preview"
-            versionNameSuffix = "-preview"
-            manifestPlaceholders["appLabel"] = "Tunas · Pratinjau"
+            // Development builds keep the same application id as release so the
+            // local-only app has one identity. A debug APK cannot replace a
+            // release build signed with the stable key (signature mismatch).
         }
         release {
             // Never sign a distributable APK with an ephemeral debug key.
@@ -90,31 +75,16 @@ val verifyReleaseSigning = tasks.register("verifyMossReleaseSigning") {
     }
 }
 
-val verifyTesterFirebase = tasks.register("verifyMossTesterFirebase") {
-    doLast {
-        check(firebaseConfig.isFile) {
-            "The tester variant requires android/app/google-services.json for the registered Android app."
-        }
-    }
-}
-
 tasks.configureEach {
     if (name.startsWith("pre") && name.endsWith("ReleaseBuild")) {
         dependsOn(verifyReleaseSigning)
-    }
-    if (name.startsWith("preBeta") && name.endsWith("Build")) {
-        dependsOn(verifyTesterFirebase)
     }
 }
 
 dependencies {
     // NotificationCompat and ContextCompat are used by the local notification
-    // channels in every flavor, not only by the beta updater.
+    // channels (no Firebase or cloud SDK).
     implementation("androidx.core:core-ktx:1.13.1")
-    // The self-update SDK must never be included in a Google Play build.
-    add("betaImplementation", "com.google.firebase:firebase-appdistribution:16.0.0-beta21")
-    // Its installer activity inherits the application theme and needs AppCompat.
-    add("betaImplementation", "androidx.appcompat:appcompat:1.7.1")
 }
 
 kotlin {

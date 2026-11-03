@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- The only cleartext endpoint used by the app is the ESP32 AP at
+         192.168.4.1. There is no cloud traffic. A base config avoids
+         OEM-specific domain/IP matching failures during local provisioning. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

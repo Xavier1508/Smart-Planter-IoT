@@ -1,10 +1,5 @@
-/// Converts the MQ135 pin voltage into a relative gas index.
-///
-/// MQ135 responses overlap many reducing gases, so this is deliberately not a
-/// ppm or CO2 value. The index compares the datasheet resistance term
-/// `(Vc / VRL - 1)` with a slowly adapting baseline from the same session:
-/// 0 means at/below the cleanest observed signal, 100 means the strongest
-/// relative change. Vc is assumed to be the common 5.0 V module supply.
+/// Relative MQ135 gas index from pin voltage, not ppm or CO2.
+/// 0 = at/below the session baseline; 100 = strongest relative change.
 class MqGasIndex {
   static const int supplyMillivolts = 5000;
   static const int minimumMillivolts = 100;

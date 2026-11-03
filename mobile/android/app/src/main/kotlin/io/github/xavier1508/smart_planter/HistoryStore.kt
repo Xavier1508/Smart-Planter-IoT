@@ -61,7 +61,7 @@ object HistoryStore {
     }
 
     fun readTail(context: Context, deviceId: String, limit: Int): List<String> {
-        val max = limit.coerceIn(1, 1000)
+        val max = limit.coerceIn(1, 10000)
         val rows = ArrayDeque<String>()
         val files = filesFor(context, deviceId).sortedByDescending { it.name }
         for (file in files) {
@@ -76,6 +76,22 @@ object HistoryStore {
             }
         }
         return rows.toList()
+    }
+
+    /** Total appended data rows across every day for one device. */
+    fun count(context: Context, deviceId: String): Int {
+        var total = 0
+        for (file in filesFor(context, deviceId)) {
+            if (!file.exists()) continue
+            file.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                lines.forEach { line ->
+                    if (line.isNotBlank() && !line.startsWith(HEADER_PREFIX)) {
+                        total++
+                    }
+                }
+            }
+        }
+        return total
     }
 
     fun export(context: Context, deviceId: String): String? {
@@ -111,17 +127,26 @@ object HistoryStore {
         return target.absolutePath
     }
 
-    fun saveDataset(context: Context, deviceId: String, csv: String): String? {
-        if (!csv.startsWith("recorded_at_utc,") ||
+    fun saveDataset(
+        context: Context,
+        deviceId: String,
+        csv: String,
+        kind: String = "full",
+    ): String? {
+        val hasCanonicalHeader = csv.startsWith("schema_version,") &&
+            csv.lineSequence().firstOrNull()?.contains("recorded_at_utc") == true
+        val hasLegacyHeader = csv.startsWith("recorded_at_utc,")
+        if ((!hasCanonicalHeader && !hasLegacyHeader) ||
             csv.length > 64 * 1024 * 1024 ||
             !csv.endsWith("\n")
         ) {
             return null
         }
+        val suffix = if (kind == "ml") "ml" else "full"
         val safe = safeDeviceId(deviceId)
         val canonicalDirectory = File(context.filesDir, "datasets").apply { mkdirs() }
-        val canonical = File(canonicalDirectory, "tunas-$safe-full.csv")
-        val temporary = File(canonicalDirectory, "tunas-$safe-full.csv.tmp")
+        val canonical = File(canonicalDirectory, "tunas-$safe-$suffix.csv")
+        val temporary = File(canonicalDirectory, "tunas-$safe-$suffix.csv.tmp")
         temporary.writeText(csv, Charsets.UTF_8)
         if (canonical.exists() && !canonical.delete()) {
             temporary.delete()
@@ -132,7 +157,7 @@ object HistoryStore {
             return null
         }
 
-        val name = "tunas-$safe-full-${stampTime()}.csv"
+        val name = "tunas-$safe-$suffix-${stampTime()}.csv"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, name)

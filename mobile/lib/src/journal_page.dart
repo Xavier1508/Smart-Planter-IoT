@@ -15,9 +15,16 @@ class HistoryPoint {
   final PlantState state;
 }
 
-/// CSV schema shared by the append-only phone history and the export file. The
-/// columns are intentionally flat so the file can be used directly for ML
-/// training after a quick import.
+/// The 25-column CSV used by the append-only phone history and the single
+/// local-only export. `emotion`/`confidence` are model outputs; they stay at
+/// the end so a training script can drop them without touching the features.
+String _sampleCountLabel(int count) {
+  if (count >= 1000) {
+    return '${(count / 1000).toStringAsFixed(1)}k';
+  }
+  return '$count';
+}
+
 class HistoryCsv {
   const HistoryCsv._();
 
@@ -144,18 +151,20 @@ class HistoryCsv {
   }
 }
 
-/// Session history. It is intentionally not presented as a permanent archive:
-/// persistence is a separate feature and must not be implied by this page.
+/// Append-only local history. The CSV export is the full archive; the page
+/// renders a bounded latest window so a long recording does not freeze the UI.
 class JournalPage extends StatelessWidget {
   const JournalPage({
     super.key,
     required this.history,
+    this.totalSamples = 0,
     required this.profile,
     required this.emotion,
     required this.onExport,
   });
 
   final List<HistoryPoint> history;
+  final int totalSamples;
   final DeviceProfile profile;
   final EmotionReading emotion;
   final Future<void> Function() onExport;
@@ -215,7 +224,7 @@ class JournalPage extends StatelessWidget {
               _LegendDot(color: const Color(0xFFB8862E), label: 'Cahaya'),
               const Spacer(),
               Text(
-                '${history.length} sampel',
+                '${_sampleCountLabel(totalSamples > 0 ? totalSamples : history.length)} sampel tersimpan',
                 style: TextStyle(fontSize: 10, color: colors.onSurfaceVariant),
               ),
             ],
@@ -235,15 +244,91 @@ class JournalPage extends StatelessWidget {
             _HistoryRow(point: point),
           const SizedBox(height: 8),
           Text(
-            'Riwayat tersimpan sebagai CSV perangkat. Tombol ekspor di kanan atas menyimpan seluruh data ke Downloads/Tunas.',
+            'Riwayat internal tetap saat app di-update, tetapi hilang jika app '
+            'di-uninstall. Grafik menampilkan jendela sampel terbaru; total '
+            'sampel terus bertambah dan CSV menyimpan seluruh data ke '
+            'Downloads/Tunas.',
             style: TextStyle(
               fontSize: 10,
               height: 1.4,
               color: colors.onSurfaceVariant,
             ),
           ),
+          const SizedBox(height: 18),
+          const _NumberGuide(),
         ],
       ],
+    );
+  }
+}
+
+class _NumberGuide extends StatelessWidget {
+  const _NumberGuide();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mossColors;
+    Widget line(String title, String body) => Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: RichText(
+        text: TextSpan(
+          style: TextStyle(
+            fontSize: 10.5,
+            height: 1.4,
+            color: colors.onSurfaceVariant,
+          ),
+          children: [
+            TextSpan(
+              text: '$title: ',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            TextSpan(text: body),
+          ],
+        ),
+      ),
+    );
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'CARA BACA ANGKA',
+            style: TextStyle(
+              fontSize: 9,
+              letterSpacing: 1.4,
+              fontWeight: FontWeight.w800,
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 9),
+          line(
+            'Cahaya',
+            'angka besar = kecerahan; baris kecil = ADC mentah. '
+                '0 ADC = terang, 2100 ADC = gelap.',
+          ),
+          line(
+            'UV',
+            'angka besar = proxy 0-14 dari ADC; baris kecil = ADC mentah. '
+                'Ini bukan UV index terkalibrasi.',
+          ),
+          line(
+            'MQ135',
+            'angka besar = indeks gas relatif 0-100 terhadap baseline; '
+                'baris kecil = ADC dan tegangan pin.',
+          ),
+          line(
+            'Riwayat',
+            'total sampel terus bertambah; CSV menyimpan semua baris untuk '
+                'analisis ML offline.',
+          ),
+        ],
+      ),
     );
   }
 }

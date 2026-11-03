@@ -1,7 +1,7 @@
 name: smart_planter
 description: "Dashboard Android Tunas untuk smart planter, karakter 3D, dan prediksi demo."
 publish_to: 'none'
-version: 0.9.4+28
+version: 0.9.4+52
 
 environment:
   sdk: ^3.13.7
@@ -10,7 +10,6 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_scene: 0.24.3
-  supabase_flutter: 2.18.3
   shared_preferences: ^2.5.6
   vector_math: ^2.2.0
 
@@ -20,7 +19,6 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 flutter:
-  default-flavor: production
   uses-material-design: true
   assets:
     - assets/ml/plant-health.json

@@ -28,7 +28,7 @@ class HistoryService {
 
   Future<List<String>> readTail({
     required String deviceId,
-    int limit = 240,
+    int limit = 1000,
   }) async {
     try {
       final rows = await _channel.invokeMethod<List<Object?>>('readTail', {
@@ -44,6 +44,20 @@ class HistoryService {
     }
   }
 
+  /// Total number of appended samples for this device across all daily files.
+  Future<int> count({required String deviceId}) async {
+    try {
+      final value = await _channel.invokeMethod<int>('count', {
+        'deviceId': deviceId,
+      });
+      return value ?? 0;
+    } on PlatformException {
+      return 0;
+    } on MissingPluginException {
+      return 0;
+    }
+  }
+
   Future<String?> export({required String deviceId}) async {
     try {
       return await _channel.invokeMethod<String>('export', {
@@ -56,16 +70,19 @@ class HistoryService {
     }
   }
 
-  /// Saves one complete cloud dataset atomically: an internal canonical copy
-  /// for the app and a user-visible copy under Downloads/Tunas.
+  /// Saves one complete dataset atomically: an internal canonical copy for the
+  /// app and a user-visible copy under Downloads/Tunas. `kind` is `full` for
+  /// the assignment schema or `ml` for the canonical schema plus ML features.
   Future<String?> saveDataset({
     required String deviceId,
     required String csv,
+    String kind = 'full',
   }) async {
     try {
       return await _channel.invokeMethod<String>('saveDataset', {
         'deviceId': deviceId,
         'csv': csv,
+        'kind': kind,
       });
     } on PlatformException {
       return null;

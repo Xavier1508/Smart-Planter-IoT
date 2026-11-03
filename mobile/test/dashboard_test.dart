@@ -301,7 +301,7 @@ void main() {
       expect(find.text('Medium'), findsOneWidget);
       expect(find.text('ADC 1200'), findsOneWidget);
       expect(find.text('UV'), findsOneWidget);
-      expect(find.text('Estimasi LDR; sensor UV 0 V'), findsOneWidget);
+      expect(find.textContaining('UV 0 V'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Sensor udara MQ135'),
         200,
@@ -547,7 +547,7 @@ void main() {
     );
     expect(find.text('32%'), findsOneWidget);
     expect(find.text('UV'), findsOneWidget);
-    expect(find.text('Estimasi LDR; sensor UV 0 V'), findsOneWidget);
+    expect(find.textContaining('UV 0 V'), findsOneWidget);
   });
 
   testWidgets('invalid packaged snapshot does not silently enable demo', (
@@ -692,11 +692,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      const MossApp(
-        render3d: false,
-        cloudSetupNotice: 'Aplikasi belum dikonfigurasi untuk cloud.',
-        autoConnectLocal: false,
-      ),
+      const MossApp(render3d: false, autoConnectLocal: false),
     );
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();

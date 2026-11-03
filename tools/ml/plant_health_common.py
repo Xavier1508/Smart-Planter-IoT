@@ -65,9 +65,9 @@ def label_for(
 ) -> str:
     """Holistic class used by the presentation layer.
 
-    There is no separate overwatering class. Very moist soil stays a watch
-    condition, never an automatic "too wet" emergency. This keeps normal wet
-    soil from being presented as a fault while still asking the user to watch.
+    There is no separate overwatering class. A high relative soil reading is
+    normal wet soil on this inexpensive probe, not an automatic "too wet"
+    condition. This avoids overclaiming a volumetric water measurement.
     """
     if sensor_count < 2:
         return "watch"
@@ -79,7 +79,6 @@ def label_for(
         return "air"
     if (
         soil < 48.0
-        or soil >= 88.0
         or water < 22.0
         or water >= 92.0
         or temp >= 32.0

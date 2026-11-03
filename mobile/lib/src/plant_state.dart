@@ -17,6 +17,7 @@ class PlantState {
     this.waterLow,
     this.waterEmpty,
     this.waterClassificationInputsValid = true,
+    this.relayTransient = false,
     this.temperatureC,
     this.humidityPercent,
     this.lightPercent,
@@ -110,6 +111,7 @@ class PlantState {
     waterLow: reading.waterLow,
     waterEmpty: reading.waterEmpty,
     waterClassificationInputsValid: reading.waterClassificationInputsValid,
+    relayTransient: reading.relayTransient,
     temperatureC: reading.temperatureC,
     humidityPercent: reading.humidityPercent,
     lightPercent: reading.lightRelativePercent,
@@ -155,9 +157,13 @@ class PlantState {
     waterLow: reading.waterLow,
     waterEmpty: reading.waterEmpty,
     waterClassificationInputsValid: reading.waterClassificationInputsValid,
+    relayTransient: reading.relayTransient,
     temperatureC: reading.temperatureC,
     humidityPercent: reading.humidityPercent,
     lightPercent: reading.lightRelativePercent,
+    uvIndex: reading.uvAdc == null
+        ? null
+        : (reading.uvAdc! * 14.0 / 4095.0 * 10).round() / 10,
     soilAdc: reading.soilAdc,
     lightAdc: reading.lightAdc,
     uvAdc: reading.uvAdc,
@@ -191,6 +197,10 @@ class PlantState {
   final bool? waterLow;
   final bool? waterEmpty;
   final bool waterClassificationInputsValid;
+
+  /// A pump run or recent relay edge can shift the analog rail. The raw values
+  /// are still shown/logged, but this flag prevents treating them as clean.
+  final bool relayTransient;
   final double? temperatureC;
   final num? humidityPercent;
   final int? lightPercent;
@@ -231,11 +241,7 @@ class PlantState {
   int? get uvAdcPercent => adcDisplayPercent(uvAdc);
   int? get mqAdcPercent => adcDisplayPercent(mqAdc);
 
-  /// Raw-ADC display buckets from the device's reported water span. The
-  /// sensor is a level strip, not a calibrated tank-volume gauge: EMPTY at or
-  /// below 450, LOW through 950, MEDIUM 951-1499, and FULL at 1500 or above.
-  /// The firmware's own `low` flag stays authoritative so a flagged low tank
-  /// can never be shown as full.
+  /// Display buckets from the reported water span; not calibrated tank volume.
   WaterLevel? get waterLevel {
     if (waterEmpty == true) return WaterLevel.empty;
     if (!waterClassificationInputsValid) return null;

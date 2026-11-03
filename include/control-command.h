@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The ESP32/newlib toolchain provides strtok_r. MSVC exposes the same function
+// as strtok_s; the shim keeps the host test buildable on Windows.
+#if defined(_MSC_VER) && !defined(strtok_r)
+#define strtok_r strtok_s
+#endif
+
 namespace planter {
 
 constexpr size_t kControlLineCapacity = 96;
@@ -22,13 +28,8 @@ struct ControlCommand {
   bool hasId = false;
 };
 
-// One bounded, whitespace-separated command line:
-//   CTRL pump=on dur=5 id=12
-//   CTRL pump=off id=13
-//   CTRL pump=auto
-//   CTRL light=on id=14
-//   CTRL light=auto
-// Unknown keys, malformed values or an empty command are rejected.
+// Accepted lines: CTRL pump=on|off|auto, CTRL light=on|off|auto, optional dur/id.
+// Unknown keys and malformed values are rejected.
 inline ControlCommand parseControlLine(const char* line) {
   ControlCommand command;
   if (line == nullptr) return command;

@@ -7,13 +7,8 @@
 
 namespace planter {
 
-// Stages relay output changes so two coils never switch in the same instant.
-// OFF requests are applied immediately; ON requests are separated by at least
-// kRelaySwitchGapMs. Output changes are also held inactive for
-// kRelayEnableDelayMs after begin() so the supply can settle.
-//
-// This only reduces simultaneous inrush. It cannot fix a weak 5V supply, a
-// floating relay input during the boot ROM, or a shared ground.
+// Spaces relay ON transitions so coil inrush does not coincide; OFF is immediate.
+// This does not fix a weak supply or a shared ground.
 template <typename Gpio>
 class RelayStager {
  public:
@@ -74,16 +69,35 @@ class RelayStager {
   bool initialized() const { return initialized_; }
   bool pumpOn() const { return pumpOn_; }
   bool lightOn() const { return lightOn_; }
+  uint32_t lastChangeMs() const { return lastChangeMs_; }
+
+  /// Rewrite the requested levels every loop to recover from a relay glitch.
+  void reassert(Gpio& gpio) {
+    if (!initialized_) return;
+    writePumpState(gpio, pumpOn_);
+    writeLightState(gpio, lightOn_);
+  }
 
  private:
   void writePump(Gpio& gpio, bool on) {
-    gpio.write(kLegacyPumpRelayPin, relayLevel(kPumpActiveLow, on));
+    writePumpState(gpio, on);
     pumpOn_ = on;
   }
 
   void writeLight(Gpio& gpio, bool on) {
-    gpio.write(kLegacyLightRelayPin, relayLevel(kLightActiveLow, on));
+    writeLightState(gpio, on);
     lightOn_ = on;
+  }
+
+  // These only drive the output; they never change the tracked state. The
+  // stager owns pumpOn_/lightOn_ so a re-assert cannot silently claim a relay
+  // actually switched.
+  void writePumpState(Gpio& gpio, bool on) {
+    gpio.write(kLegacyPumpRelayPin, relayLevel(kPumpActiveLow, on));
+  }
+
+  void writeLightState(Gpio& gpio, bool on) {
+    gpio.write(kLegacyLightRelayPin, relayLevel(kLightActiveLow, on));
   }
 
   bool initialized_ = false;

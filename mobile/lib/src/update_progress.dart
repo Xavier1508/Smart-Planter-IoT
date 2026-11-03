@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Status reported by the Android beta updater, not a simulated percentage.
+/// Status reported by the Android update bridge, not a simulated percentage.
 class UpdateProgress {
   const UpdateProgress({
     required this.status,
@@ -31,12 +31,10 @@ class UpdateProgress {
   }
 
   bool get isVisible => switch (status) {
-    'CHECKING' ||
     'PENDING' ||
     'DOWNLOADING' ||
     'DOWNLOADED' ||
     'DOWNLOAD_FAILED' ||
-    'NEW_RELEASE_CHECK_FAILED' ||
     'INSTALL_CANCELED' ||
     'INSTALL_FAILED' ||
     'UPDATE_FAILED' ||
@@ -46,7 +44,6 @@ class UpdateProgress {
 
   bool get isError => switch (status) {
     'DOWNLOAD_FAILED' ||
-    'NEW_RELEASE_CHECK_FAILED' ||
     'INSTALL_CANCELED' ||
     'INSTALL_FAILED' ||
     'UPDATE_FAILED' => true,

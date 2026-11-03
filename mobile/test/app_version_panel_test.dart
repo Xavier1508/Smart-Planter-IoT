@@ -17,12 +17,12 @@ void main() {
     () async {
       messenger.setMockMethodCallHandler(
         channel,
-        (_) async => {'version': '0.2.0', 'build': 17, 'channel': 'beta'},
+        (_) async => {'version': '0.2.0', 'build': 17, 'channel': 'local'},
       );
       final info = await AppBuildInfo.read();
       expect(info?.version, '0.2.0');
       expect(info?.build, 17);
-      expect(info?.channel, 'beta');
+      expect(info?.channel, 'local');
 
       messenger.setMockMethodCallHandler(
         channel,
@@ -32,12 +32,10 @@ void main() {
     },
   );
 
-  testWidgets('settings distinguish local builds from beta updates', (
-    tester,
-  ) async {
+  testWidgets('settings show the local manual update notice', (tester) async {
     messenger.setMockMethodCallHandler(
       channel,
-      (_) async => {'version': '0.2.0', 'build': 2, 'channel': 'production'},
+      (_) async => {'version': '0.2.0', 'build': 2, 'channel': 'local'},
     );
     await tester.pumpWidget(
       const MossApp(render3d: false, autoConnectLocal: false),
@@ -51,31 +49,7 @@ void main() {
     );
     expect(find.textContaining('Versi 0.2.0 · build 2'), findsOneWidget);
     expect(
-      find.textContaining('Varian ini tidak memeriksa pembaruan Firebase'),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('beta update information still requires tester approval', (
-    tester,
-  ) async {
-    messenger.setMockMethodCallHandler(
-      channel,
-      (_) async => {'version': '0.2.0', 'build': 18, 'channel': 'beta'},
-    );
-    await tester.pumpWidget(
-      const MossApp(render3d: false, autoConnectLocal: false),
-    );
-    await tester.tap(find.text('Pengaturan'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('Versi & pembaruan'),
-      150,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.textContaining('Versi 0.2.0 · build 18'), findsOneWidget);
-    expect(
-      find.textContaining('Instalasi memerlukan persetujuan'),
+      find.textContaining('Pembaruan aplikasi dilakukan manual'),
       findsOneWidget,
     );
   });

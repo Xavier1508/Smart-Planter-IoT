@@ -44,7 +44,7 @@ struct ControlInput {
   ControlInput(int soilAdcRaw_, int lightPercent_, int waterPercent_,
                bool soilControlAllowed_, bool waterScaleEnabled_,
                bool watchdogReady_, bool lightAutomationEnabled_,
-               int waterAdcRaw_ = -1)
+               int waterAdcRaw_ = -1, bool relayTransient_ = false)
       : soilAdcRaw(soilAdcRaw_),
         lightPercent(lightPercent_),
         waterPercent(waterPercent_),
@@ -52,7 +52,8 @@ struct ControlInput {
         waterScaleEnabled(waterScaleEnabled_),
         watchdogReady(watchdogReady_),
         lightAutomationEnabled(lightAutomationEnabled_),
-        waterAdcRaw(waterAdcRaw_) {}
+        waterAdcRaw(waterAdcRaw_),
+        relayTransient(relayTransient_) {}
 
   int soilAdcRaw;
   int lightPercent;
@@ -64,6 +65,10 @@ struct ControlInput {
   // Raw water ADC for the pump cutoff. Negative keeps the older percentage
   // behavior for fixtures that only model a relative level.
   int waterAdcRaw;
+  // A pump run or a recent relay edge is corrupting the shared analog rail.
+  // Raw values are still logged, but no automatic pump start or lamp change is
+  // allowed until the window ends.
+  bool relayTransient;
 };
 
 inline bool controlPercentValid(int value) { return value >= 0 && value <= 100; }
@@ -169,6 +174,7 @@ class RelayController {
     pumpAutoStartedMs_ = nowMs;
     pumpAutoStartSoilAdc_ = -1;
     dryConfirm_ = 0;
+    lightConfirm_ = 0;
     waterLowRunningConfirm_ = 0;
     lightHoldBypass_ = false;
     pumpReason_ = "boot_grace";
@@ -182,6 +188,7 @@ class RelayController {
                                pumpManualDurationMs_)) {
       pumpManual_ = false;
       pumpOn_ = false;
+      pumpStoppedMs_ = nowMs;
       pumpReason_ = "manual_expired";
     }
     if (lightManual_ && lightManualOn_ && lightManualDurationMs_ > 0 &&
@@ -201,12 +208,14 @@ class RelayController {
     }
     if (hasSample_ && controlIntervalElapsed(nowMs, lastSampleMs_, kSampleStaleMs)) {
       stopPump(nowMs, "sample_stale");
+      clearManual();
       setLight(nowMs, false, "sample_stale");
     }
   }
 
   void inhibit(uint32_t nowMs, const char* reason) {
     stopPump(nowMs, reason);
+    clearManual();
     setLight(nowMs, false, reason);
   }
 
@@ -223,21 +232,38 @@ class RelayController {
                                               : durationMs))
            : 0;
     pumpOn_ = on;
-    if (on) pumpStartedMs_ = nowMs;
+    if (on) {
+      pumpStartedMs_ = nowMs;
+    } else {
+      pumpStoppedMs_ = nowMs;
+    }
     pumpReason_ = on ? "manual_on" : "manual_off";
   }
 
-  void setPumpAuto() {
+  void setPumpAuto() { setPumpAuto(lastSampleMs_); }
+
+  void setPumpAuto(uint32_t nowMs) {
     pumpManual_ = false;
     pumpManualOn_ = false;
     pumpManualDurationMs_ = 0;
     // Releasing a manual override must re-evaluate from a neutral output, not
     // keep the pump running until the next sample or until the wet threshold.
+    const bool wasOn = pumpOn_;
     pumpOn_ = false;
+    if (wasOn) pumpStoppedMs_ = nowMs;
     pumpAutoStartSoilAdc_ = -1;
     dryConfirm_ = 0;
     waterLowRunningConfirm_ = 0;
     pumpReason_ = "manual_released";
+  }
+
+  /// Drop manual authority. Used when a hard safety interlock stops the pump;
+  /// otherwise the manual re-apply at the end of accept() would turn it back on
+  /// after the safety stop.
+  void clearManual() {
+    pumpManual_ = false;
+    pumpManualOn_ = false;
+    pumpManualDurationMs_ = 0;
   }
 
   void setLightManual(bool on) { setLightManual(0, on, 0); }
@@ -247,6 +273,7 @@ class RelayController {
     lightManualOn_ = on;
     lightManualExpired_ = false;
     lightHoldBypass_ = false;
+    lightConfirm_ = 0;
     lightManualSinceMs_ = nowMs;
     lightManualDurationMs_ =
         on && durationMs > 0
@@ -265,8 +292,9 @@ class RelayController {
     lightManualDurationMs_ = 0;
     lightManualExpired_ = false;
     lightHoldBypass_ = true;
+    lightConfirm_ = 0;
     // Let the immediate re-evaluation decide from LDR; do not keep the manual
-    // state until the next 5-second sample.
+    // state until the next 2-second sample.
     lightOn_ = false;
     lightReason_ = "manual_released";
   }
@@ -312,9 +340,33 @@ class RelayController {
       return;
     }
 
-    if (!input.waterScaleEnabled || !controlPercentValid(input.waterPercent)) {
-      stopPump(nowMs, "water_unavailable");
-    } else if (!pumpOn_ && pumpWaterLow(input)) {
+    if (pumpManual_) {
+      if (pumpManualOn_) {
+        // Manual ON still obeys the hard water/watchdog/stale interlocks. It
+        // deliberately ignores the automatic soil-moisture stop: the user is
+        // asking for a short manual run even when the probe already reads wet.
+        const bool waterUnavailable =
+            !input.waterScaleEnabled ||
+            !controlPercentValid(input.waterPercent);
+        if (waterUnavailable) {
+          stopPump(nowMs, "water_unavailable");
+          clearManual();
+        } else if (pumpWaterLow(input)) {
+          stopPump(nowMs, "water_low");
+          clearManual();
+        } else {
+          pumpOn_ = true;
+          pumpReason_ = "manual_on";
+        }
+      } else {
+        pumpOn_ = false;
+        pumpReason_ = "manual_off";
+      }
+    }
+    if (!pumpManual_) {
+      if (!input.waterScaleEnabled || !controlPercentValid(input.waterPercent)) {
+        stopPump(nowMs, "water_unavailable");
+      } else if (!pumpOn_ && pumpWaterLow(input)) {
       // The reservoir is checked while the pump is idle, where the reading is
       // not disturbed by the pump's own load. One low sample blocks a start.
       stopPump(nowMs, "water_low");
@@ -368,6 +420,11 @@ class RelayController {
         pumpReason_ = pumpCooldownMs_ == kPumpRuntimeSoakMs
                           ? "runtime_limit"
                           : "cooldown";
+      } else if (input.relayTransient) {
+        // A relay edge or a pump run is moving the analog rail. Never start a
+        // second load from a value that may be a transient.
+        dryConfirm_ = 0;
+        pumpReason_ = "relay_settle";
       } else {
         ++dryConfirm_;
         if (dryConfirm_ < kPumpDryConfirmSamples) {
@@ -382,34 +439,47 @@ class RelayController {
         }
       }
     }
+    }
 
+    // Lamp OFF is immediate; lamp ON needs consecutive samples and is blocked
+    // while a relay/pump transient is active.
     if (!input.lightAutomationEnabled) {
+      lightConfirm_ = 0;
       setLight(nowMs, false, "light_inhibited");
     } else {
       const LightDecision decision = ldrLightDecision(input.lightPercent);
       if (decision == LightDecision::off) {
+        lightConfirm_ = 0;
         lightHoldBypass_ = false;
         setLight(nowMs, false, "ldr_sufficient");
       } else if (decision == LightDecision::unavailable) {
+        lightConfirm_ = 0;
         lightHoldBypass_ = false;
         setLight(nowMs, false, "ldr_input_unavailable");
       } else if (decision == LightDecision::on && !lightOn_) {
-        if (lightHoldBypass_ ||
-            controlIntervalElapsed(nowMs, lightChangedMs_, kLightMinStateMs)) {
-          lightHoldBypass_ = false;
-          setLight(nowMs, true, "ldr_low");
+        if (input.relayTransient) {
+          lightConfirm_ = 0;
+          lightReason_ = "relay_settle";
         } else {
-          lightReason_ = "minimum_hold";
+          ++lightConfirm_;
+          if (lightConfirm_ < kLightConfirmSamples) {
+            lightReason_ = "light_confirm";
+          } else if (lightHoldBypass_ ||
+                     controlIntervalElapsed(nowMs, lightChangedMs_,
+                                            kLightMinStateMs)) {
+            lightConfirm_ = 0;
+            lightHoldBypass_ = false;
+            setLight(nowMs, true, "ldr_low");
+          } else {
+            lightReason_ = "minimum_hold";
+          }
         }
       } else {
+        lightConfirm_ = 0;
         lightReason_ = decision == LightDecision::hold ? "hysteresis" : "ldr_low";
       }
     }
 
-    if (pumpManual_) {
-      pumpOn_ = pumpManualOn_;
-      pumpReason_ = pumpManualOn_ ? "manual_on" : "manual_off";
-    }
     if (lightManual_) {
       lightOn_ = lightManualOn_;
       lightReason_ = lightManualExpired_
@@ -427,13 +497,20 @@ class RelayController {
     if (pumpOn_) {
       pumpOn_ = false;
       pumpStoppedMs_ = nowMs;
-      pumpCooldown_ = true;
-      pumpCooldownMs_ =
-          strcmp(reason, "runtime_limit") == 0
-              ? kPumpRuntimeSoakMs
-              : (strcmp(reason, "soil_no_response") == 0
-                     ? kPumpNoResponseCooldownMs
-                     : kPumpCooldownMs);
+      // A manual run is a bounded user request. Stopping it (expiry or a hard
+      // safety interlock) must not create an automatic "will start again"
+      // cooldown. Automatic stops keep the existing cooldown/soak behavior.
+      if (!pumpManual_) {
+        pumpCooldown_ = true;
+        pumpCooldownMs_ =
+            strcmp(reason, "runtime_limit") == 0
+                ? kPumpRuntimeSoakMs
+                : (strcmp(reason, "soil_no_response") == 0
+                       ? kPumpNoResponseCooldownMs
+                       : kPumpCooldownMs);
+      } else {
+        pumpCooldown_ = false;
+      }
     }
     pumpAutoStartSoilAdc_ = -1;
     dryConfirm_ = 0;
@@ -456,6 +533,7 @@ class RelayController {
   bool pumpCooldown_ = true;
   uint32_t pumpCooldownMs_ = kPumpCooldownMs;
   int dryConfirm_ = 0;
+  int lightConfirm_ = 0;
   int waterLowRunningConfirm_ = 0;
   int pumpAutoStartSoilAdc_ = -1;
   uint32_t pumpAutoStartedMs_ = 0;

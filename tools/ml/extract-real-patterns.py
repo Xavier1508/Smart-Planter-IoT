@@ -38,6 +38,13 @@ def rows_from_log(path: Path) -> list[dict]:
     rows: list[dict] = []
     for index, item in enumerate(samples):
         adc = item.get("adc") or {}
+        # v45 shipped with the LDR direction inverted. Its light_percent values
+        # must never enter an ML dataset; v46 adds light_direction explicitly.
+        if item.get("firmware_version") == 45:
+            continue
+        direction = adc.get("light_direction")
+        if direction is not None and direction != "adc_high_is_dark":
+            continue
         water = item.get("water_level") or {}
         dht = item.get("dht") or {}
         mq = item.get("mq135") or {}

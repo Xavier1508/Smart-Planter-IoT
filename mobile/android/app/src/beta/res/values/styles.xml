@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Only the private tester variant contains the App Distribution UI. -->
-    <style name="MossBetaAppTheme" parent="Theme.AppCompat.DayNight.NoActionBar" />
-</resources>

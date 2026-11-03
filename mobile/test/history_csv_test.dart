@@ -14,7 +14,7 @@ void main() {
       waterObservationPercent: 0,
       waterEmpty: false,
       waterLow: true,
-      lightAdc: 800,
+      lightAdc: 720,
       lightPercent: 60,
       temperatureC: 26.5,
       humidityPercent: 65,
@@ -60,6 +60,36 @@ void main() {
     expect(parsed.state.pumpReason, 'watering');
     expect(parsed.state.lightCommand, isFalse);
     expect(parsed.state.lightReason, 'ldr_sufficient');
+  });
+
+  test('local CSV header is the exact mapped contract', () {
+    expect(HistoryCsv.header.split(','), const [
+      'timestamp_utc',
+      'device_id',
+      'firmware_version',
+      'uptime_ms',
+      'soil_adc',
+      'soil_percent',
+      'water_adc',
+      'water_percent',
+      'water_observation_percent',
+      'water_empty',
+      'water_low',
+      'light_adc',
+      'light_percent',
+      'temperature_c',
+      'humidity_percent',
+      'uv_adc',
+      'uv_index',
+      'mq_adc',
+      'mq_gas_index',
+      'pump_cmd',
+      'pump_reason',
+      'light_cmd',
+      'light_reason',
+      'emotion',
+      'confidence',
+    ]);
   });
 
   test('history CSV rejects malformed rows', () {
