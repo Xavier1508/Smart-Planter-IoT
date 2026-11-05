@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-// Device-specific calibration is optional and Git-ignored; defaults are generic.
+// Device-specific references override these generic defaults when present.
 #if !defined(MOSS_DISABLE_LOCAL_CALIBRATION) && __has_include("planter-calibration.local.h")
 #include "planter-calibration.local.h"
 #endif
@@ -44,8 +44,7 @@
 namespace planter {
 
 constexpr unsigned kFirmwareVersion = 52;
-// Kept for older tooling that still reads the serial JSON. The active local
-// CSV is the fixed 25-column HistoryCsv in the app.
+// Older serial tooling uses this schema; the app CSV has 25 columns.
 constexpr unsigned kDatasetSchemaVersion = 2;
 
 // Historical project assignments, not a verified wiring diagram.
@@ -59,35 +58,28 @@ constexpr int kLegacyLightRelayPin = 26;
 constexpr int kLegacyI2cSdaPin = 21;
 constexpr int kLegacyI2cSclPin = 22;
 
-// GPIO25 was switched as the soil sensor's supply in the original program.
-// Leave it as INPUT until the conflicting wiring, pinout and current have been
-// independently verified. This does not electrically isolate other inputs.
+// Keep GPIO25 as INPUT until the supply wiring and current are verified.
+// This does not electrically isolate the other inputs.
 constexpr bool kSoilPowerWiringVerified = false;
-// Try the ADC input independently of GPIO25. The sensor supply and pin voltage
-// are still unverified; a number may come from a floating or unsafe circuit.
+// ADC34 can be read separately; check its supply and input voltage.
 constexpr bool kSoilAdcReadEnabled = true;
 constexpr uint32_t kSoilPowerSettleMs = 300;
 
-// The working reference uses an active-LOW pump module (ON = LOW, OFF = HIGH)
-// and an active-HIGH lamp module (ON = HIGH, OFF = LOW). Neither setting proves
-// the physical contact state.
+// Pump ON is LOW, lamp ON is HIGH. These levels do not prove contact state.
 constexpr bool kPumpActiveLow = true;
 constexpr bool kLightActiveLow = false;
 constexpr bool kLightAutomationEnabled = true;
-// The I2C LCD backpack exposes the backlight as a single PCF8574 bit, not a
-// PWM channel. Firmware can only turn it off after this idle window; 50% dim
-// requires a hardware PWM/MOSFET or a series resistor.
+// The LCD backlight is on/off only; dimming needs additional hardware.
 constexpr uint32_t kLcdBacklightIdleMs = 0;
 constexpr bool relayLevel(bool activeLow, bool on) {
   return activeLow ? !on : on;
 }
 
-// Relay staging: hold both coils inactive after boot and space ON transitions
-// by 500 ms. OFF is always immediate.
+// Delay relay ON after boot and space ON transitions. OFF is immediate.
 constexpr uint32_t kRelayEnableDelayMs = 2000;
 constexpr uint32_t kRelaySwitchGapMs = 500;
-// Freeze automatic pump/lamp decisions for 3 s after a relay edge; raw values
-// are still logged. Hardware separation remains the real transient fix.
+// Hold automatic ON decisions after a relay edge; raw readings are still logged.
+// Separate power and ground wiring remains important.
 constexpr uint32_t kRelaySettleMs = 3000;
 // DHT11 is assumed; a successful read does not verify the model.
 constexpr bool kDhtEnabled = true;
@@ -100,36 +92,30 @@ constexpr int kSoilRelativeFullAdc = MOSS_SOIL_RELATIVE_FULL_ADC;
 // A disconnected probe can also read 0; pump guards still apply.
 constexpr bool kSoilZeroIsDry = MOSS_SOIL_ZERO_IS_DRY == 1;
 
-// Brightness scale: 0% at the dark endpoint, 100% at the bright endpoint.
-// This LDR is descending: ~2100 ADC dark, 0 ADC bright.
+// LDR scale: 2100 ADC is dark and 0 ADC is bright.
 constexpr int kLightRelativeZeroAdc = MOSS_LIGHT_RELATIVE_DARK_ADC;
 constexpr int kLightRelativeFullAdc = MOSS_LIGHT_RELATIVE_BRIGHT_ADC;
 
-// Hysteresis for the pump. ON below 1000, OFF at/above 1200. The gap keeps a
-// just-lifted, still-wet probe from starting the pump on a transient drop.
-// A single 0/rail-like soil sample (for example a relay/load transient) must
-// not start the pump; require five consecutive dry samples = ~10 s at 2 s.
-// Host tests may override this to keep their short fixtures.
+// Pump hysteresis: ON below 1000 and OFF at or above 1200 ADC.
+// Five dry samples reduce transient starts; host tests may override the count.
 constexpr int kPumpOnBelowRawAdc = 1000;
 constexpr int kPumpOffAtOrAboveRawAdc = 1200;
 #ifndef MOSS_PUMP_DRY_CONFIRM_SAMPLES
 #define MOSS_PUMP_DRY_CONFIRM_SAMPLES 5
 #endif
 constexpr int kPumpDryConfirmSamples = MOSS_PUMP_DRY_CONFIRM_SAMPLES;
-// A lamp ON request must also persist. One dark reading during a relay edge is
-// not enough to click the lamp relay.
+// Confirm lamp ON over multiple samples to reduce transient switching.
 #ifndef MOSS_LIGHT_CONFIRM_SAMPLES
 #define MOSS_LIGHT_CONFIRM_SAMPLES 3
 #endif
 constexpr int kLightConfirmSamples = MOSS_LIGHT_CONFIRM_SAMPLES;
-// User-requested single LDR edge: below 65% relative brightness requests ON,
-// 65% or more requests OFF. UV remains monitoring only and never controls it.
+// LDR below 65% requests ON; UV is for monitoring only.
 constexpr int kLightOnBelowPercent = 65;
 constexpr int kLightOffAtOrAbovePercent = 65;
 constexpr int kWaterLowBelowPercent = 20;
 // Pump cutoff is lower than the display warning so a tilted tank can still water.
 constexpr int kPumpWaterLowRawAdc = 600;
-// While running, require six consecutive low samples (12 s) before stopping.
+// Stop automatic watering after six consecutive low-water samples.
 constexpr int kWaterLowRunningConfirmSamples = 6;
 
 // Local-only WPA2 access point; no router credentials are stored.
@@ -153,13 +139,11 @@ constexpr uint32_t kLightMinStateMs = 5000;
 constexpr uint32_t kSampleStaleMs = 15000;
 constexpr uint32_t kWatchdogTimeoutSeconds = 8;
 
-// Explicitly allow the user-requested test with the unverified soil input;
-// missing/rail inputs, low water and watchdog failures still prevent ON.
+// Allow the provisional soil scale; water and watchdog guards still apply.
 constexpr bool kPumpSoilScaleConfirmed = false;
 constexpr bool kPumpAllowEstimatedSoil = true;
 
-// Provisional low-to-near-full references for the water safety condition, not
-// measured empty/full calibration. Rails and missing reads remain unavailable.
+// Provisional water references; missing and rail readings remain unavailable.
 constexpr bool kWaterRelativeScaleEnabled = true;
 constexpr int kWaterEmptyAdc = MOSS_WATER_OBSERVED_LOW_ADC;
 constexpr int kWaterFullAdc = MOSS_WATER_OBSERVED_NEAR_FULL_ADC;
@@ -167,15 +151,12 @@ constexpr int kWaterFullAdc = MOSS_WATER_OBSERVED_NEAR_FULL_ADC;
 // Display-only low reference bands; these do not authorize pump operation.
 constexpr int kWaterLowRawReferenceAdc = MOSS_WATER_LOW_REFERENCE_ADC;
 constexpr int kWaterNearRawReferenceAdc = MOSS_WATER_NEAR_REFERENCE_ADC;
-// User-requested scale: FULL starts at 1500 ADC. Values between LOW and FULL
-// are MEDIUM, so the display does not jump from LOW straight to FULL.
+// The display reports MEDIUM between LOW and FULL.
 constexpr int kWaterFullRawReferenceAdc = MOSS_WATER_FULL_REFERENCE_ADC;
-// The user observed ~400 ADC only when the level sensor was completely out of
-// water. At or below this raw value the UI reports EMPTY, distinct from LOW.
+// EMPTY is distinct from the LOW warning.
 constexpr int kWaterEmptyRawReferenceAdc = 450;
 
-// Relative references shared by the display and provisional water control;
-// they are not measured tank volume or verified empty/full calibration.
+// Shared relative references, not calibrated tank volume.
 constexpr int kWaterObservedLowMeanAdc = MOSS_WATER_OBSERVED_LOW_ADC;
 constexpr int kWaterObservedNearFullMeanAdc = MOSS_WATER_OBSERVED_NEAR_FULL_ADC;
 

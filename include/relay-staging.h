@@ -89,9 +89,7 @@ class RelayStager {
     lightOn_ = on;
   }
 
-  // These only drive the output; they never change the tracked state. The
-  // stager owns pumpOn_/lightOn_ so a re-assert cannot silently claim a relay
-  // actually switched.
+  // Re-assertion drives outputs without changing the tracked state.
   void writePumpState(Gpio& gpio, bool on) {
     gpio.write(kLegacyPumpRelayPin, relayLevel(kPumpActiveLow, on));
   }

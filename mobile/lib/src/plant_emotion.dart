@@ -93,9 +93,7 @@ class EmotionReading {
   int get confidencePercent => (confidence * 100).round().clamp(0, 100);
 }
 
-/// Runs the holistic tree and turns its class probabilities into a score.
-/// Only extreme measurements override the model; ordinary "85% soil" or a low
-/// reservoir becomes a watch factor instead of an automatic red alert.
+/// Turns model probabilities into a presentation score with safety checks.
 class PlantEmotionEngine {
   const PlantEmotionEngine(this.model);
 
@@ -367,9 +365,7 @@ class PlantEmotionEngine {
         ),
       );
     } else {
-      // The probe is a relative ADC scale, not a volumetric water sensor.
-      // Wet soil (including the user's ~1900 ADC) is normal; do not turn a
-      // high reading into an overwatering warning.
+      // Soil uses a relative ADC scale, not a volumetric water measurement.
       factors.add(
         ConditionFactor(
           label: 'Tanah',

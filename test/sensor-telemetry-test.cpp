@@ -87,9 +87,7 @@ int main() {
   assert(commandGpio.calls[2].pin == 13 && !commandGpio.calls[2].high);
   assert(commandGpio.calls[3].pin == 26 && commandGpio.calls[3].high);
 
-  // Relay staging: both coils start inactive, stay inactive for the 2-second
-  // settle window, and two ON transitions are 500 milliseconds apart. OFF is
-  // always immediate. 500 is milliseconds, not seconds.
+  // Relay staging delays ON and keeps OFF immediate.
   planter::RelayStager<LevelGpio> staged;
   LevelGpio stagedLevel;
   staged.begin(0, stagedLevel);
@@ -420,8 +418,7 @@ int main() {
       (planter::kWaterEmptyAdc + planter::kWaterFullAdc) / 2,
       true, true, false, -1, 1, true, false, -1,
       planter::AdcCalibrationMethod::unavailable};
-  // LDR rails follow the local 0(bright)..2100(dark) calibration.
-  // A raw 4095 is above the bright endpoint and maps to 100% brightness.
+  // Check the dark and bright LDR endpoints.
   SensorSnapshot ldrRail = trialSample;
   ldrRail.lightAdcRaw = planter::kLightRelativeZeroAdc;
   assert(planter::previewRules(ldrRail).lightOn == 1);  // Dark endpoint.

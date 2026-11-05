@@ -62,19 +62,15 @@ struct ControlInput {
   bool waterScaleEnabled;
   bool watchdogReady;
   bool lightAutomationEnabled;
-  // Raw water ADC for the pump cutoff. Negative keeps the older percentage
-  // behavior for fixtures that only model a relative level.
+  // A negative raw value uses the relative level, mainly for older fixtures.
   int waterAdcRaw;
-  // A pump run or a recent relay edge is corrupting the shared analog rail.
-  // Raw values are still logged, but no automatic pump start or lamp change is
-  // allowed until the window ends.
+  // Pump and relay transients can affect ADC readings; raw values are logged.
   bool relayTransient;
 };
 
 inline bool controlPercentValid(int value) { return value >= 0 && value <= 100; }
 
-// The pump uses the raw cutoff when available; the visible "low" warning can
-// still trigger earlier at the 20% display reference.
+// The pump cutoff and the 20% display warning use different thresholds.
 inline bool pumpWaterLow(const ControlInput& input) {
   if (input.waterAdcRaw >= 0) return input.waterAdcRaw < kPumpWaterLowRawAdc;
   return input.waterPercent < kWaterLowBelowPercent;
@@ -119,8 +115,7 @@ inline const char* pumpSoilBandLcd(PumpSoilBand band) {
 
 enum class LightDecision { off, on, hold, unavailable };
 
-// LDR only, one user-requested edge: below 65% requests ON and 65% or more
-// requests OFF. The minimum-hold timer still prevents rapid toggling.
+// LDR below 65% requests ON; the hold timer limits rapid switching.
 inline LightDecision ldrLightDecision(int lightPercent) {
   if (!controlPercentValid(lightPercent)) return LightDecision::unavailable;
   if (lightPercent >= kLightOffAtOrAbovePercent) return LightDecision::off;
@@ -166,8 +161,7 @@ class RelayController {
     lastSampleMs_ = nowMs;
     pumpStartedMs_ = nowMs;
     pumpStoppedMs_ = nowMs;
-    // Initial activation can occur after boot grace; later changes still honor
-    // the normal hold/cooldown intervals and the pump runtime limit.
+    // Initial activation follows boot grace; later changes use normal guards.
     lightChangedMs_ = nowMs - kLightMinStateMs;
     pumpCooldown_ = false;
     pumpCooldownMs_ = kPumpCooldownMs;
@@ -194,8 +188,7 @@ class RelayController {
     if (lightManual_ && lightManualOn_ && lightManualDurationMs_ > 0 &&
         controlIntervalElapsed(nowMs, lightManualSinceMs_,
                                lightManualDurationMs_)) {
-      // A timed lamp run ends OFF and stays manually OFF until the user
-      // selects AUTO; returning to AUTO in a dark room would turn it back on.
+      // A timed lamp run stays manually OFF until AUTO is selected.
       lightManualOn_ = false;
       lightManualDurationMs_ = 0;
       lightManualExpired_ = true;
@@ -219,9 +212,7 @@ class RelayController {
     setLight(nowMs, false, reason);
   }
 
-  // Manual commands are explicit user overrides. Pump ON is always bounded by
-  // the 30-second hardware runtime limit; pump OFF and lamp states persist
-  // until the user selects automatic again.
+  // Manual pump ON is limited to 30 seconds.
   void setPumpManual(uint32_t nowMs, bool on, uint32_t durationMs) {
     pumpManual_ = true;
     pumpManualOn_ = on;
@@ -246,8 +237,7 @@ class RelayController {
     pumpManual_ = false;
     pumpManualOn_ = false;
     pumpManualDurationMs_ = 0;
-    // Releasing a manual override must re-evaluate from a neutral output, not
-    // keep the pump running until the next sample or until the wet threshold.
+    // Re-evaluate from OFF when releasing manual pump control.
     const bool wasOn = pumpOn_;
     pumpOn_ = false;
     if (wasOn) pumpStoppedMs_ = nowMs;
@@ -257,9 +247,7 @@ class RelayController {
     pumpReason_ = "manual_released";
   }
 
-  /// Drop manual authority. Used when a hard safety interlock stops the pump;
-  /// otherwise the manual re-apply at the end of accept() would turn it back on
-  /// after the safety stop.
+  /// Clear manual control after a safety stop.
   void clearManual() {
     pumpManual_ = false;
     pumpManualOn_ = false;
@@ -293,8 +281,7 @@ class RelayController {
     lightManualExpired_ = false;
     lightHoldBypass_ = true;
     lightConfirm_ = 0;
-    // Let the immediate re-evaluation decide from LDR; do not keep the manual
-    // state until the next 2-second sample.
+    // Re-evaluate the lamp from LDR without retaining its manual state.
     lightOn_ = false;
     lightReason_ = "manual_released";
   }
@@ -310,9 +297,7 @@ class RelayController {
            static_cast<uint32_t>(nowMs - pumpManualSinceMs_);
   }
 
-  /// Remaining automatic-pump lockout. The 30-minute soak after a 5-minute
-  /// runtime limit is the usual reason the pump refuses to start while the
-  /// soil is dry; expose it instead of only naming the reason.
+  /// Remaining automatic-pump cooldown or runtime lockout.
   uint32_t pumpCooldownRemainingMs(uint32_t nowMs) const {
     if (!pumpCooldown_) return 0;
     if (controlIntervalElapsed(nowMs, pumpStoppedMs_, pumpCooldownMs_)) {
@@ -342,9 +327,8 @@ class RelayController {
 
     if (pumpManual_) {
       if (pumpManualOn_) {
-        // Manual ON still obeys the hard water/watchdog/stale interlocks. It
-        // deliberately ignores the automatic soil-moisture stop: the user is
-        // asking for a short manual run even when the probe already reads wet.
+        // Manual ON keeps the water, watchdog and stale-data interlocks.
+        // The automatic soil stop does not apply to a short manual run.
         const bool waterUnavailable =
             !input.waterScaleEnabled ||
             !controlPercentValid(input.waterPercent);
@@ -367,17 +351,14 @@ class RelayController {
       if (!input.waterScaleEnabled || !controlPercentValid(input.waterPercent)) {
         stopPump(nowMs, "water_unavailable");
       } else if (!pumpOn_ && pumpWaterLow(input)) {
-      // The reservoir is checked while the pump is idle, where the reading is
-      // not disturbed by the pump's own load. One low sample blocks a start.
+      // One low water sample blocks an automatic start while idle.
       stopPump(nowMs, "water_low");
     } else if (!input.soilControlAllowed) {
       stopPump(nowMs, "soil_unverified");
     } else if (!soilAnalogUsable(input.soilAdcRaw)) {
       stopPump(nowMs, "soil_unavailable");
     } else if (pumpOn_) {
-      // A running pump disturbs the water-level sensor, so require the low
-      // reading to persist before treating it as an empty reservoir. Otherwise
-      // a healthy tank would stop the pump every few seconds.
+      // Confirm low water while running to reduce transient stops.
       if (pumpWaterLow(input)) {
         ++waterLowRunningConfirm_;
       } else {
@@ -396,8 +377,7 @@ class RelayController {
       } else if (input.soilAdcRaw >= kPumpOffAtOrAboveRawAdc) {
         stopPump(nowMs, "soil_moist");
       } else if (soilNotResponding) {
-        // The pump ran but the probe did not move. Stop before the hard cap
-        // and retry later instead of flooding or locking auto for 30 minutes.
+        // Stop and retry later if the soil reading does not respond.
         stopPump(nowMs, "soil_no_response");
       } else {
         pumpReason_ = "watering";
@@ -415,14 +395,12 @@ class RelayController {
         dryConfirm_ = 0;
         pumpReason_ = "dry_confirm";
       } else if (pumpCooldown_) {
-        // Keep the 30-minute runtime-limit lockout visible instead of hiding it
-        // behind the shorter ordinary cooldown label.
+        // Keep the runtime-limit reason visible during its lockout.
         pumpReason_ = pumpCooldownMs_ == kPumpRuntimeSoakMs
                           ? "runtime_limit"
                           : "cooldown";
       } else if (input.relayTransient) {
-        // A relay edge or a pump run is moving the analog rail. Never start a
-        // second load from a value that may be a transient.
+        // Do not start the pump during an analog transient.
         dryConfirm_ = 0;
         pumpReason_ = "relay_settle";
       } else {
@@ -497,9 +475,7 @@ class RelayController {
     if (pumpOn_) {
       pumpOn_ = false;
       pumpStoppedMs_ = nowMs;
-      // A manual run is a bounded user request. Stopping it (expiry or a hard
-      // safety interlock) must not create an automatic "will start again"
-      // cooldown. Automatic stops keep the existing cooldown/soak behavior.
+      // Only automatic stops create an automatic cooldown or lockout.
       if (!pumpManual_) {
         pumpCooldown_ = true;
         pumpCooldownMs_ =

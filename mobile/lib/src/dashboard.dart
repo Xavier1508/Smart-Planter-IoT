@@ -229,8 +229,7 @@ class _DashboardState extends State<Dashboard> {
         .map(HistoryCsv.parse)
         .whereType<HistoryPoint>()
         .toList(growable: false);
-    // Merge instead of replacing. A slow or empty native read must never make
-    // samples that are already visible in this session disappear.
+    // Merge stored samples without dropping the current session.
     final merged = <String, HistoryPoint>{
       for (final point in _history) point.at.toIso8601String(): point,
       for (final point in stored) point.at.toIso8601String(): point,
@@ -275,8 +274,7 @@ class _DashboardState extends State<Dashboard> {
     _lastNoticeStatus = status;
     if (status == LocalWifiStatus.live &&
         previousStatus != LocalWifiStatus.live) {
-      // The first live frame after a reconnect is a good moment to merge any
-      // rows written while this page was not watching the stream.
+      // Merge stored rows after reconnecting.
       unawaited(_loadHistory());
     }
     if (status == LocalWifiStatus.disconnected &&
@@ -750,9 +748,7 @@ class _DashboardState extends State<Dashboard> {
   Future<void> _addSchedule(ScheduleEntry entry) async {
     final next = _orderedSchedules([..._schedules, entry]);
     setState(() => _schedules = next);
-    // Persisting must not delay an immediate action. The store catches its own
-    // platform errors, so the in-memory schedule stays authoritative for this
-    // session.
+    // Persist without delaying an immediate action.
     unawaited(_scheduleStore.write(next));
     // "Sekarang" must not wait for the next one-second timer tick.
     if (entry.immediate) await _runSchedules();
@@ -785,9 +781,7 @@ class _DashboardState extends State<Dashboard> {
   }
 
   Future<void> _runSchedules() async {
-    // One clock read per tick. Due-time comparison, command start and the
-    // countdown all use the same instant, so two jobs can never race each
-    // other inside one scheduler pass.
+    // Use one clock value for the entire scheduler pass.
     final now = DateTime.now();
     final stillRunning = _runningSchedules
         .where((running) => !running.expired(now))
@@ -803,9 +797,7 @@ class _DashboardState extends State<Dashboard> {
     if (due.isEmpty) return;
     final entry = due.first;
 
-    // A calendar job that could not run while the phone was offline is
-    // discarded once it is clearly stale; an immediate job may wait for the
-    // next connection instead.
+    // Discard stale calendar jobs; immediate jobs may await reconnection.
     if (!entry.immediate &&
         now.difference(entry.at) > const Duration(minutes: 2)) {
       await _deleteSchedule(entry.id);

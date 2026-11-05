@@ -93,9 +93,8 @@ class PlantTelemetry {
   }
 }
 
-/// One device-protocol sample from a serial snapshot or local Wi-Fi stream.
-/// Uptime is not a wall-clock timestamp; parsing alone does not establish
-/// freshness, authentication, calibration, or a cloud record.
+/// A serial or local Wi-Fi sample. Uptime is not a wall-clock timestamp.
+/// Parsing does not establish freshness, calibration or authentication.
 class SerialSensorSnapshot {
   const SerialSensorSnapshot._({
     this.uptimeMs,
@@ -178,8 +177,7 @@ class SerialSensorSnapshot {
   final bool? pumpCommand;
   final String? pumpReason;
 
-  /// Remaining automatic-pump cooldown, in seconds. The 30-minute value after
-  /// a 5-minute runtime limit explains why a dry pot may not start the pump.
+  /// Remaining automatic-pump cooldown or lockout, in seconds.
   final int? pumpCooldownSeconds;
   final bool? pumpRuntimeLockout;
   final bool? lightCommand;
@@ -198,9 +196,7 @@ class SerialSensorSnapshot {
       mqAdc != null ||
       mqDigital != null;
 
-  /// Accept only a single bounded sample from the serial JSON protocol.
-  /// Invalid or explicitly unavailable fields remain null; a valid zero stays
-  /// zero. Nothing is sent to cloud or stored persistently by this parser.
+  /// Parse one bounded serial sample; unavailable fields remain null.
   static SerialSensorSnapshot parse(String input) {
     if (input.length > 4096) throw const FormatException('Sample too long');
     final decoded = jsonDecode(input);
@@ -251,8 +247,7 @@ class SerialSensorSnapshot {
         !mqReadFailed && readable(mq['status']) && readable(mq['adc_status'])
         ? integer(mq['adc_raw'], 0, 4095)
         : null;
-    // Keep rail values as raw diagnostics, but do not present an ambiguous
-    // disconnected/saturated input as a calibrated-looking percentage.
+    // Keep rail values as raw diagnostics, not calibrated percentages.
     bool usableAdc(int? raw) => raw != null && raw > 0 && raw < 4095;
     final soilPercent = !soilUsable
         ? null

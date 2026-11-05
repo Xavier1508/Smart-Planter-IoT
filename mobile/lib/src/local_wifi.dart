@@ -99,18 +99,14 @@ class LocalWifiController {
 
   Future<void> connect() async {
     if (_disposed) return;
-    // Pull-to-refresh and the settings button must not tear down a healthy
-    // socket. Reconnect only after an explicit disconnect or a failed link;
-    // the deadline/retry path still recovers a half-open stream.
+    // Keep a healthy socket; the retry path handles failed connections.
     if (_wanted && status != LocalWifiStatus.disconnected) return;
     _wanted = true;
     _retry?.cancel();
     _retry = null;
     final generation = ++_generation;
     _closeTransport();
-    // Keep the last good sample while reconnecting. The status and message
-    // still say the link is down, so the UI can mark the values as stale
-    // instead of incorrectly clearing every reading.
+    // Retain the last sample as stale while reconnecting.
     status = LocalWifiStatus.connecting;
     message = 'Menghubungkan Wi-Fi lokal…';
     notifyListeners();
@@ -206,8 +202,7 @@ class LocalWifiController {
       notifyListeners();
       return !_disposed && generation == _generation;
     } catch (_) {
-      // One damaged line should not tear down a working stream. Keep the last
-      // good sample until several consecutive frames are unusable.
+      // Tolerate a damaged line while retaining the last good sample.
       _invalidFrames++;
       if (_invalidFrames >= 3) {
         _fail(generation, 'Data Wi-Fi lokal tidak valid.');
@@ -229,15 +224,11 @@ class LocalWifiController {
     if (_disposed || generation != _generation) return;
     final retryGeneration = ++_generation;
     _closeTransport();
-    // A transient timeout or peer reset must not erase the last reading. The
-    // disconnected status is enough to mark it stale; manual disconnect still
-    // clears it explicitly.
+    // A timeout marks the last reading stale; manual disconnect clears it.
     status = LocalWifiStatus.disconnected;
     message = reason;
     notifyListeners();
-    // An explicit connection selection remains active until the user stops it.
-    // The retained sample is marked stale by status/message, never presented
-    // as a fresh live reading.
+    // Retain the selected connection and mark its last sample stale.
     if (_wanted && !_disposed && _generation == retryGeneration) {
       _retry?.cancel();
       _retry = Timer(reconnectDelay, () {

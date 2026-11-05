@@ -1,5 +1,8 @@
 # Pemantauan lokal Moss
 
+Dokumen ini memuat catatan perkembangan, termasuk perilaku versi lama. Untuk
+pengaturan saat ini, lihat source firmware dan aplikasi.
+
 Moss menggunakan aplikasi Android yang sama untuk pemantauan Wi-Fi ESP32.
 ESP32 membuat jaringan WPA2 `Moss-xxxx` sendiri,
 bukan bergabung ke router. Setelah ponsel bergabung ke `Moss-xxxx` dan memilih
@@ -129,8 +132,7 @@ Firmware v14 dan sesudahnya dapat meminta relay ON sesuai aturannya; perintah ON
 ditampilkan aplikasi bukan pengukuran keadaan kontak atau beban fisik. Aplikasi
 tidak mengirim perintah relay dan tidak menggunakan model sintetis sebagai data.
 
-Konfigurasi firmware dalam repositori menggunakan acuan umum yang belum
-terverifikasi. Acuan khusus perangkat dapat disimpan di
-`include/planter-calibration.local.h`; berkas ini diabaikan Git agar observasi
-privat tidak ikut dipublikasikan. Kode dan APK tidak boleh memuat log atau
-snapshot sensor pengguna.
+Konfigurasi `include/planter-calibration.local.h` berisi acuan relatif untuk
+perangkat ini dan digunakan firmware saat berkas tersedia. Nilainya bukan
+kalibrasi laboratorium. Pembacaan tanah 0 ADC juga dapat muncul saat probe
+terputus. Kode dan APK tidak boleh memuat log atau snapshot sensor pengguna.

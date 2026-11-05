@@ -43,8 +43,7 @@ struct SensorSnapshot {
   AdcCalibrationMethod mqAdcCalibration;
   // GPIO35 UV output voltage estimate. Diagnostic only; -1 means unavailable.
   int uvAdcPinMillivolts;
-  // True while a pump run or a recent relay edge can corrupt the analog rail.
-  // Raw values are still reported; consumers can exclude these rows from ML.
+  // Marks possible analog transients; raw values are still reported.
   bool relayTransient;
 };
 
@@ -63,8 +62,8 @@ inline bool validHumidity(float value) {
 
 inline bool validAdcRaw(int value) { return value >= 0 && value <= 4095; }
 
-// Quality labels describe the electrical reading only, never sensor health or
-// the environment. A rail can be a real extreme or a fault/disconnection.
+// Quality labels describe the electrical reading, not sensor health.
+// A rail may be a real extreme or a disconnected sensor.
 inline const char* adcSignalQuality(int raw, bool enabled = true) {
   if (!enabled) return "not_configured";
   if (!validAdcRaw(raw)) return "unavailable";
@@ -79,8 +78,7 @@ inline const char* mqSignalQuality(const SensorSnapshot& sample) {
   return adcSignalQuality(sample.mqAdcRaw);
 }
 
-// An operator-provided raw ADC reference, not a calibrated percentage or a
-// water-presence guarantee. Rails are ambiguous and remain explicitly unknown.
+// Raw ADC reference only; rails are ambiguous and do not prove water presence.
 inline const char* waterRawReferenceBand(int raw) {
   if (!validAdcRaw(raw)) return "unavailable";
   if (raw == 0 || raw == 4095) return "rail_unverified";
@@ -101,8 +99,7 @@ inline int relativePercent(int raw, int zeroAdc, int fullAdc) {
   return value < 0 ? 0 : (value > 100 ? 100 : value);
 }
 
-// Rounded variant for the user-facing soil percentage. With local references
-// 308..1800, the 1200 ADC pump edge displays as 60% instead of truncating to 59.
+// Round the displayed soil percentage instead of truncating it.
 inline int relativePercentRounded(int raw, int zeroAdc, int fullAdc) {
   if (!validAdcRaw(raw) || !validAdcRaw(zeroAdc) || !validAdcRaw(fullAdc) ||
       zeroAdc == fullAdc) {
@@ -124,9 +121,7 @@ inline int observedWaterRelativePercent(const SensorSnapshot& sample) {
                          kWaterObservedNearFullMeanAdc);
 }
 
-// Zero on this scale means at or below a reported low reference, not that the
-// tank is empty. Keep the number for the safety guard, but do not display it
-// as an exact percentage when the true volume below that reference is unknown.
+// Zero is the low reference, not proof of an empty tank or exact volume.
 inline int waterDisplayRelativePercent(int relativePercent) {
   return relativePercent > 0 && relativePercent <= 100 ? relativePercent : -1;
 }
@@ -202,8 +197,7 @@ struct RulePreview {
 };
 
 // The supplied endpoints define a relative scale, not a physical calibration.
-// Invalid or disabled water endpoints leave both the percentage and warning
-// unavailable. Callers must not interpret a dry-run result as actuator state.
+// Invalid water endpoints are unavailable; rule previews are not relay states.
 inline RulePreview previewRules(const SensorSnapshot& sample,
                                 bool waterScaleEnabled, int waterEmptyAdc,
                                 int waterFullAdc) {
@@ -363,9 +357,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
     } else {
       std::snprintf(mqDigital, sizeof(mqDigital), "null");
     }
-    // Old mobile versions associate adc_read_failed with ADC2/Wi-Fi. This
-    // ADC1 firmware uses unavailable there and keeps the failure detail in
-    // signal_quality, avoiding a false ADC2 explanation on the old app.
+    // Preserve ADC1 failure detail without implying an ADC2/Wi-Fi conflict.
     const char* adcStatus = sample.mqAdcReadable && validAdcRaw(sample.mqAdcRaw)
                                 ? "unverified" : "unavailable";
     const bool pinMvAvailable = sample.mqAdcReadable &&
@@ -397,8 +389,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
     std::snprintf(mq135, sizeof(mq135), "null");
   }
 
-  // Labels are drawn only from the allowlisted operator command handler. They
-  // are not automatically inferred from ADC values or water reference bands.
+  // Labels come from operator commands, not inferred sensor readings.
   if (label) {
     std::snprintf(labelJson, sizeof(labelJson),
                   "{\"sensor\":\"%s\",\"condition\":\"%s\","
@@ -410,8 +401,7 @@ inline bool formatTelemetry(const SensorSnapshot& sample, char* output,
     std::snprintf(labelJson, sizeof(labelJson), "null");
   }
 
-  // Do not put hypothetical pump_on/growlight_on values beside real commands:
-  // a preview may disagree with safety interlocks and be mistaken for state.
+  // Rule previews must not be confused with actual actuator commands.
   if (control) {
     std::snprintf(controlPreview, sizeof(controlPreview), "null");
   } else {

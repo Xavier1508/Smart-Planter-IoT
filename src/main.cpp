@@ -73,9 +73,7 @@ char localWifiPassword[planter::kLocalWifiPasswordLength + 1] = {};
 char bootResetReason[24] = "unknown";
 uint32_t bootBrownoutCount = 0;
 
-// Any relay edge starts a quiet window during which automatic decisions are
-// frozen. `relayQuietUntilMs` uses millis() wrap-safe subtraction, so a 49-day
-// uptime does not break the guard.
+// Relay edges start a quiet window; the timer handles millis() wraparound.
 uint32_t relayQuietUntilMs = 0;
 bool relayQuietSet = false;
 
@@ -179,8 +177,7 @@ void lcdLine(uint8_t row, const char* text) {
 }
 
 void updateLcd(uint32_t nowMs) {
-  // The phone needs the AP name and password. They are printed once on boot
-  // and kept visible; no sensor pages compete for the 16x2 display.
+  // Keep the AP connection details visible on the LCD.
   char line[17] = {};
   const char* ssid = localWifiName[0] != '\0' ? localWifiName : "Moss";
   snprintf(line, sizeof(line), "WiFi:%s", ssid);
@@ -254,8 +251,7 @@ void sendControlAck(const planter::ControlCommand& command, bool ok,
   sendLocalLine(ack);
 }
 
-// Manual ON is still a physical pump command. Empty water, a missing reading,
-// a stale sample, or an unavailable watchdog must reject it just like AUTO.
+// Manual ON also requires valid water data, a fresh sample and watchdog.
 const char* pumpStartBlockReason() {
   if (millis() < planter::kBootGraceMs) return "boot_grace";
   if (strcmp(bootResetReason, "brownout") == 0 &&
@@ -305,8 +301,7 @@ void applyControlCommand(const planter::ControlCommand& command, bool localAck) 
     }
   }
   if (autoRequested && hasControlInput) {
-    // Apply the last measured sample immediately so AUTO does not keep a
-    // manual ON output until the next 2-second sample.
+    // Re-evaluate AUTO immediately using the last sample.
     planter::ControlInput input = lastControlInput;
     input.relayTransient = relayTransient(nowMs);
     relayController.accept(nowMs, input);
@@ -324,8 +319,7 @@ void applyControlLine(const char* line) {
   applyControlCommand(command, true);
 }
 
-// Relay edge tracking. The stager may delay an ON request, so the actual GPIO
-// change is the event that starts a new quiet window.
+// Start the quiet window at the GPIO transition, not at the request.
 void noteRelayEdge(uint32_t nowMs, const planter::ControlStatus& status) {
   relayQuietUntilMs = nowMs + planter::kRelaySettleMs;
   relayQuietSet = true;
@@ -346,9 +340,7 @@ bool relayQuiet(uint32_t nowMs) {
   return true;
 }
 
-// A running pump always disturbs the shared analog rail. A relay edge keeps it
-// disturbed for kRelaySettleMs. Raw values are still logged; only automatic
-// decisions are frozen.
+// Pump and relay transients can affect ADC readings; raw values are still logged.
 bool relayTransient(uint32_t nowMs) {
   return relayController.status().pumpOn || relayQuiet(nowMs);
 }
@@ -380,8 +372,7 @@ void syncRelayCommands(bool immediate) {
       beforeLight != relayStager.lightOn()) {
     noteRelayEdge(nowMs, status);
   }
-  // Re-assert every loop. This is the only software defence against a relay
-  // module that a pump transient knocked into the wrong state.
+  // Re-assert requested levels; this does not measure relay contacts.
   relayStager.reassert(relayGpio);
 }
 
@@ -392,17 +383,14 @@ int readSoilRaw() {
                                  planter::kSoilPowerWiringVerified);
 }
 
-// User-reported SVP/GPIO36 is ADC1 channel 0. ADC1 remains usable while Wi-Fi
-// runs; neither an ADC value nor firmware can verify safe module voltages.
+// SVP/GPIO36 is ADC1 channel 0. Check module voltages separately.
 int readMqRaw() {
   static_assert(extra_sensors::kMq135Pin == 36, "Update ADC1 channel for MQ pin");
   if (!mqAdcReady) return -1;
   return planter::medianAdc([]() { return readAdc1Settled(ADC1_CHANNEL_0); });
 }
 
-// GPIO35 is ADC1 channel 7. Reading the channel explicitly avoids relying on
-// Arduino pin remapping and makes a 0 V output distinguishable from a missing
-// read. A 0 V result is reported as rail_low, never as a valid UV index.
+// GPIO35 is ADC1 channel 7; a 0 V UV reading is reported as rail_low.
 void logUvProbe() {
   Serial.printf(
       "{\"type\":\"uv_probe\",\"gpio32\":%d,\"gpio33\":%d,\"gpio34\":%d,"
@@ -508,8 +496,7 @@ void readObservationCommands() {
 void printSample(uint32_t nowMs) {
   const bool transient = relayTransient(nowMs);
   const int uvRaw = readUvRaw();
-  // esp_adc_cal returns a non-zero intercept for raw 0. Report 0 mV
-  // explicitly so a 0 V rail is not mistaken for a live 142 mV signal.
+  // Keep raw 0 at 0 mV despite the ADC calibration intercept.
   const int uvPinMillivolts =
       uvRaw == 0
           ? 0
@@ -557,9 +544,7 @@ void printSample(uint32_t nowMs) {
     }
   }
   const planter::RulePreview preview = planter::previewRules(sample);
-  // A rail can be a real extreme or a disconnected signal. For actuator
-  // control, reject the ambiguity rather than interpreting it as darkness or
-  // dryness. The unmodified raw values remain visible in telemetry.
+  // Rail values can indicate a fault; keep raw data visible in telemetry.
   const bool soilUsable = planter::soilAnalogUsable(sample.soilAdcRaw);
   // LDR rails are valid bright/dark extremes; a failed read is still -1.
   const bool lightUsable = planter::validAdcRaw(sample.lightAdcRaw);
@@ -568,9 +553,8 @@ void printSample(uint32_t nowMs) {
     lastStableWaterRaw = sample.waterAdcRaw;
     lastStableWaterMs = nowMs;
   }
-  // A transient can rail the water ADC for one cycle. Keep the last known-good
-  // value for the safety decision (never for telemetry) so a pump does not stop
-  // on a fake "unavailable" reading. The value expires after 30 s.
+  // Use the last valid water value for control for at most 30 seconds.
+  // Telemetry still reports the current raw value.
   int controlWaterRaw = waterUsable ? sample.waterAdcRaw : -1;
   if (transient && !waterUsable && lastStableWaterRaw >= 0 &&
       static_cast<uint32_t>(nowMs - lastStableWaterMs) <= 30000) {
@@ -628,13 +612,11 @@ void startLocalAccessPoint() {
     return;
   }
   WiFi.setTxPower(WIFI_POWER_11dBm);
-  // Disable modem sleep so the first command after idle does not wait for a
-  // Wi-Fi wake-up interval.
+  // Avoid a Wi-Fi wake-up delay on the first command after idle.
   WiFi.setSleep(false);
   bool passwordReady = false;
 #ifdef MOSS_LOCAL_WIFI_PASSWORD
-  // Fixed AP password from the ignored local header; fall back to a boot-random
-  // password if the header is missing or invalid.
+  // Use the local AP password or generate one at boot.
   const size_t fixedLength = strlen(MOSS_LOCAL_WIFI_PASSWORD);
   if (fixedLength >= 8 && fixedLength < sizeof(localWifiPassword)) {
     memcpy(localWifiPassword, MOSS_LOCAL_WIFI_PASSWORD, fixedLength + 1);
@@ -774,8 +756,7 @@ void pollLocalWifi() {
     localClient.stop();
   }
   if (localClient) {
-    // Read a bounded number of command bytes per loop so serial/telemetry and
-    // the watchdog are never starved. The command reader is line-bounded.
+    // Bound command reads so telemetry and watchdog work can continue.
     for (unsigned count = 0; count < 64 && localClient.available() > 0; ++count) {
       const int value = localClient.read();
       if (value < 0) break;
@@ -822,8 +803,7 @@ void setup() {
   }
 
   Wire.begin(planter::kLegacyI2cSdaPin, planter::kLegacyI2cSclPin);
-  // A relay transient can disturb the I2C bus. A timeout prevents a stuck
-  // bus from blocking the loop and tripping the task watchdog.
+  // Limit I2C stalls so the loop and watchdog can continue.
   Wire.setTimeOut(50);
   lcd.init();
   lcd.backlight();
@@ -832,8 +812,7 @@ void setup() {
   if (planter::kDhtEnabled) climateSensor.begin();
   analogReadResolution(12);
 
-  // ADC characterization estimates GPIO36 voltage from the averaged sample.
-  // It does not establish the module's supply, divider ratio, or safety.
+  // GPIO36 voltage is an estimate, not a check of the MQ135 supply or divider.
   const bool adcWidthReady = adc1_config_width(ADC_WIDTH_BIT_12) == ESP_OK;
   mqAdcReady = adcWidthReady &&
                adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_12) == ESP_OK;
@@ -924,8 +903,7 @@ void loop() {
     lastSampleMs = nowMs;
     printSample(nowMs);
   }
-  // A shorter loop while a relay is active gives the re-assert path more
-  // chances to correct a module that was knocked into the wrong state.
+  // Re-assert requested relay levels more often while active.
   delay(relayController.status().pumpOn || relayController.status().lightOn ? 5
                                                                              : 10);
 }

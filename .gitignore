@@ -3,7 +3,6 @@
 /analysis/
 # Local campus report and technical docs are intentionally not published.
 /docs/
-/include/planter-calibration.local.h
 /include/local-wifi-secret.local.h
 
 # Local credentials and generated Android signing/Firebase files.

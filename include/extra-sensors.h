@@ -1,12 +1,10 @@
 #pragma once
 
-// The user reports moving the water sensor signal to GPIO33 (ADC1). The
-// physical wiring, input voltage, and sensor calibration remain unverified.
+// Water sensor on GPIO33. Check wiring, input voltage and calibration.
 namespace extra_sensors {
 constexpr int kWaterLevelPin = 33;
 
-// The user reports moving A0 to SVP/GPIO36 and leaving D0 on GPIO14. Electrical
-// levels, heater supply, and sensor calibration are unverified; diagnostic only.
+// MQ135 A0 uses GPIO36 and D0 uses GPIO14. Check voltage and heater supply.
 constexpr int kMq135Pin = 36;
 constexpr int kMq135DigitalPin = 14;
 }  // namespace extra_sensors
